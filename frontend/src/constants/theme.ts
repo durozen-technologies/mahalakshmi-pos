@@ -1,0 +1,16 @@
+export const appTheme = {
+  background: "#FFF9F1",
+  surface: "#FFFDF8",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#1F2937",
+  muted: "#6B7280",
+  accent: "#D97706",
+  accentSoft: "#FDE7C3",
+  success: "#166534",
+  successSoft: "#DCFCE7",
+  danger: "#B91C1C",
+  dangerSoft: "#FEE2E2",
+  warning: "#92400E",
+  warningSoft: "#FEF3C7",
+};

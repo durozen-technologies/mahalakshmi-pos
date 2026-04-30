@@ -1,0 +1,7 @@
+.env
+.expo/
+node_modules/
+dist/
+.cache/
+.parcel-cache/
+web-build/

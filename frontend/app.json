@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Meat Billing POS",
+    "slug": "meat-billing-pos",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "meatbillingpos",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {},
+    "plugins": []
+  }
+}

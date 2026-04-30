@@ -1,0 +1,36 @@
+import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+import { AUTH_STORAGE_KEY } from "@/constants/config";
+import { UserSession } from "@/types/api";
+import { secureStorage } from "@/utils/secure-storage";
+
+type AuthState = {
+  token: string | null;
+  user: UserSession | null;
+  hydrated: boolean;
+  setSession: (token: string, user: UserSession) => void;
+  setHydrated: (value: boolean) => void;
+  clearSession: () => void;
+};
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      token: null,
+      user: null,
+      hydrated: false,
+      setSession: (token, user) => set({ token, user }),
+      setHydrated: (hydrated) => set({ hydrated }),
+      clearSession: () => set({ token: null, user: null }),
+    }),
+    {
+      name: AUTH_STORAGE_KEY,
+      storage: createJSONStorage(() => secureStorage),
+      partialize: (state) => ({ token: state.token, user: state.user }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHydrated(true);
+      },
+    },
+  ),
+);
