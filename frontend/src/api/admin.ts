@@ -2,10 +2,7 @@ import { apiClient } from "@/api/client";
 import {
   AdminBillSummary,
   AuditLogRead,
-  DailyPriceCreate,
-  DailyPriceRead,
   PaymentSplitSummary,
-  ShopBootstrapResponse,
   ShopCreate,
   ShopRead,
   ShopSalesSummary,
@@ -44,25 +41,5 @@ export async function fetchDailyBills() {
 
 export async function fetchAuditLogs() {
   const { data } = await apiClient.get<AuditLogRead[]>("/api/v1/admin/audit-logs");
-  return data;
-}
-
-export async function fetchGlobalPriceBootstrap() {
-  const { data } = await apiClient.get<ShopBootstrapResponse>("/api/v1/admin/prices/bootstrap");
-  return data;
-}
-
-export async function saveGlobalDailyPrices(payload: DailyPriceCreate) {
-  const { data } = await apiClient.post<DailyPriceRead[]>("/api/v1/admin/daily-prices", payload);
-  return data;
-}
-
-export async function fetchShopPriceBootstrap(shopId: number) {
-  const { data } = await apiClient.get<ShopBootstrapResponse>(`/api/v1/admin/shops/${shopId}/prices/bootstrap`);
-  return data;
-}
-
-export async function saveShopDailyPrices(shopId: number, payload: DailyPriceCreate) {
-  const { data } = await apiClient.post<DailyPriceRead[]>(`/api/v1/admin/shops/${shopId}/daily-prices`, payload);
   return data;
 }

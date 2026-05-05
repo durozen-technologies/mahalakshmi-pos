@@ -1,5 +1,4 @@
-import React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Text, View } from "react-native";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +21,12 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
   const removeItem = useCartStore((state) => state.removeItem);
   const resetCart = useCartStore((state) => state.resetCart);
   const [quantities, setQuantities] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (bootstrap && !bootstrap.prices_set) {
+      navigation.replace("DailyPriceSetup");
+    }
+  }, [bootstrap, navigation]);
 
   function handleQuantityChange(itemId: number, value: string) {
     setQuantities((state) => ({ ...state, [itemId]: value }));
@@ -61,6 +66,28 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
     navigation.replace("DailyPriceSetup");
   }
 
+  function handleChangeTodayPrice() {
+    if (cartItems.length === 0) {
+      openPriceSetup();
+      return;
+    }
+
+    Alert.alert(
+      "Change today's prices?",
+      "Updating today's prices will clear the current cart so all new bill items use the latest rates.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear Cart And Continue",
+          style: "destructive",
+          onPress: () => {
+            resetCart();
+            openPriceSetup();
+          },
+        },
+      ],
+    );
+  }
 
   const previewTotal = formatCurrency(getCartTotal(cartItems));
 
@@ -74,6 +101,12 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
               subtitle="Add meat items, track the live total, and move to checkout when ready."
             />
           </View>
+          <Button
+            label="Change Today's Price"
+            onPress={handleChangeTodayPrice}
+            variant="secondary"
+            size="sm"
+          />
         </View>
 
         {bootstrap?.items.map((item) => (

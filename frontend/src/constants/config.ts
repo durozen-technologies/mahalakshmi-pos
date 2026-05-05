@@ -46,17 +46,6 @@ function isPrivateIpv4Host(host: string) {
   );
 }
 
-function isLoopbackHost(host: string) {
-  const normalizedHost = host.trim().toLowerCase();
-
-  return (
-    normalizedHost === "localhost" ||
-    normalizedHost === "127.0.0.1" ||
-    normalizedHost === "::1" ||
-    normalizedHost === "[::1]"
-  );
-}
-
 function isDirectlyReachableDevHost(host: string) {
   const normalizedHost = host.trim().toLowerCase();
 
@@ -64,7 +53,11 @@ function isDirectlyReachableDevHost(host: string) {
     return false;
   }
 
-  if (isLoopbackHost(normalizedHost)) {
+  if (
+    normalizedHost === "localhost" ||
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost === "::1"
+  ) {
     return true;
   }
 
@@ -80,17 +73,17 @@ function getWebHost() {
 }
 
 function getDefaultApiHost() {
+  const expoDevHost = getExpoDevHost();
+  if (expoDevHost) {
+    return expoDevHost;
+  }
+
   if (Platform.OS === "android") {
     return "10.0.2.2";
   }
 
   if (Platform.OS === "web") {
     return getWebHost() ?? "127.0.0.1";
-  }
-
-  const expoDevHost = getExpoDevHost();
-  if (expoDevHost) {
-    return expoDevHost;
   }
 
   return "127.0.0.1";
@@ -105,21 +98,13 @@ function normalizeApiBaseUrl(value: string) {
 
   try {
     const parsedUrl = new URL(withHttpProtocol(value));
-    if (
-      parsedUrl.hostname === "0.0.0.0" ||
-      parsedUrl.hostname === "::" ||
-      isLoopbackHost(parsedUrl.hostname)
-    ) {
+    if (parsedUrl.hostname === "0.0.0.0" || parsedUrl.hostname === "::") {
       parsedUrl.hostname = runtimeHost;
     }
 
     return parsedUrl.toString().replace(/\/$/, "");
   } catch {
-    return withHttpProtocol(value)
-      .replace("localhost", runtimeHost)
-      .replace("127.0.0.1", runtimeHost)
-      .replace("0.0.0.0", runtimeHost)
-      .replace(/\/$/, "");
+    return withHttpProtocol(value).replace("0.0.0.0", runtimeHost).replace(/\/$/, "");
   }
 }
 

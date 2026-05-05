@@ -93,8 +93,8 @@ function ShopNavigator() {
 
   return (
     <ShopStack.Navigator
-      key={bootstrap?.shop_id ? "shop" : "loading"}
-      initialRouteName="Billing"
+      key={bootstrap?.prices_set ? "priced" : "unpriced"}
+      initialRouteName={bootstrap?.prices_set ? "Billing" : "DailyPriceSetup"}
       screenOptions={screenOptions}
     >
       <ShopStack.Screen
