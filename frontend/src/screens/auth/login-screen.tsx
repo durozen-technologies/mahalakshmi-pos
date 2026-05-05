@@ -4,7 +4,7 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import { login, registerAdmin } from "@/api/auth";
+import { login } from "@/api/auth";
 import { toApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,22 +20,9 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-const registerSchema = z
-  .object({
-    username: z.string().min(3, "Username must be at least 3 characters"),
-    password: z.string().min(8, "Password must be at least 8 characters"),
-    confirmPassword: z.string().min(8, "Confirm your password"),
-  })
-  .refine((value) => value.password === value.confirmPassword, {
-    path: ["confirmPassword"],
-    message: "Passwords do not match",
-  });
-
 type LoginFormValues = z.infer<typeof loginSchema>;
-type RegisterFormValues = z.infer<typeof registerSchema>;
 
 export function LoginScreen() {
-  const [mode, setMode] = useState<"login" | "register">("login");
   const [submitting, setSubmitting] = useState(false);
   const setSession = useAuthStore((state) => state.setSession);
   const resetCart = useCartStore((state) => state.resetCart);
@@ -46,38 +33,17 @@ export function LoginScreen() {
     defaultValues: { username: "", password: "" },
   });
 
-  const registerForm = useForm<RegisterFormValues>({
-    resolver: zodResolver(registerSchema),
-    defaultValues: { username: "", password: "", confirmPassword: "" },
-  });
-
   async function handleLogin(values: LoginFormValues) {
     setSubmitting(true);
     try {
       const response = await login(values);
+      // console.log("login response:", response);
       resetCart();
       clearPrices();
       setSession(response.access_token, response.user);
     } catch (error) {
+      console.error("login error:", error);
       Alert.alert("Login failed", toApiError(error).message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleRegister(values: RegisterFormValues) {
-    setSubmitting(true);
-    try {
-      const response = await registerAdmin({
-        username: values.username,
-        password: values.password,
-        confirm_password: values.confirmPassword,
-      });
-      resetCart();
-      clearPrices();
-      setSession(response.access_token, response.user);
-    } catch (error) {
-      Alert.alert("Registration failed", toApiError(error).message);
     } finally {
       setSubmitting(false);
     }
@@ -103,112 +69,43 @@ export function LoginScreen() {
           </View>
 
           <Card className="gap-4">
-            <View className="flex-row flex-wrap rounded-[28px] bg-accentSoft p-1">
-              <Button
-                label="Login"
-                onPress={() => setMode("login")}
-                variant={mode === "login" ? "primary" : "secondary"}
-                className="min-w-[120px] flex-1"
+            <View className="gap-4">
+              <SectionHeading
+                title="Unified Login"
+                subtitle="Use admin or shop credentials from the backend."
               />
-              <View className="h-2 w-2" />
+              <Controller
+                control={loginForm.control}
+                name="username"
+                render={({ field, fieldState }) => (
+                  <TextField
+                    label="Username"
+                    autoCapitalize="none"
+                    value={field.value}
+                    onChangeText={field.onChange}
+                    error={fieldState.error?.message}
+                  />
+                )}
+              />
+              <Controller
+                control={loginForm.control}
+                name="password"
+                render={({ field, fieldState }) => (
+                  <TextField
+                    label="Password"
+                    secureTextEntry
+                    value={field.value}
+                    onChangeText={field.onChange}
+                    error={fieldState.error?.message}
+                  />
+                )}
+              />
               <Button
-                label="Create Admin"
-                onPress={() => setMode("register")}
-                variant={mode === "register" ? "primary" : "secondary"}
-                className="min-w-[120px] flex-1"
+                label="Continue"
+                onPress={loginForm.handleSubmit(handleLogin)}
+                loading={submitting}
               />
             </View>
-
-            {mode === "login" ? (
-              <View className="gap-4">
-                <SectionHeading
-                  title="Unified Login"
-                  subtitle="Use admin or shop credentials from the backend."
-                />
-                <Controller
-                  control={loginForm.control}
-                  name="username"
-                  render={({ field, fieldState }) => (
-                    <TextField
-                      label="Username"
-                      autoCapitalize="none"
-                      value={field.value}
-                      onChangeText={field.onChange}
-                      error={fieldState.error?.message}
-                    />
-                  )}
-                />
-                <Controller
-                  control={loginForm.control}
-                  name="password"
-                  render={({ field, fieldState }) => (
-                    <TextField
-                      label="Password"
-                      secureTextEntry
-                      value={field.value}
-                      onChangeText={field.onChange}
-                      error={fieldState.error?.message}
-                    />
-                  )}
-                />
-                <Button
-                  label="Continue"
-                  onPress={loginForm.handleSubmit(handleLogin)}
-                  loading={submitting}
-                />
-              </View>
-            ) : (
-              <View className="gap-4">
-                <SectionHeading
-                  title="First Admin Registration"
-                  subtitle="This works only until the first admin account is created."
-                />
-                <Controller
-                  control={registerForm.control}
-                  name="username"
-                  render={({ field, fieldState }) => (
-                    <TextField
-                      label="Admin username"
-                      autoCapitalize="none"
-                      value={field.value}
-                      onChangeText={field.onChange}
-                      error={fieldState.error?.message}
-                    />
-                  )}
-                />
-                <Controller
-                  control={registerForm.control}
-                  name="password"
-                  render={({ field, fieldState }) => (
-                    <TextField
-                      label="Password"
-                      secureTextEntry
-                      value={field.value}
-                      onChangeText={field.onChange}
-                      error={fieldState.error?.message}
-                    />
-                  )}
-                />
-                <Controller
-                  control={registerForm.control}
-                  name="confirmPassword"
-                  render={({ field, fieldState }) => (
-                    <TextField
-                      label="Confirm password"
-                      secureTextEntry
-                      value={field.value}
-                      onChangeText={field.onChange}
-                      error={fieldState.error?.message}
-                    />
-                  )}
-                />
-                <Button
-                  label="Create Admin"
-                  onPress={registerForm.handleSubmit(handleRegister)}
-                  loading={submitting}
-                />
-              </View>
-            )}
           </Card>
         </View>
       </Screen>

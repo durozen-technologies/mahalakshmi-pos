@@ -1,5 +1,6 @@
+import React from "react";
 import { useEffect, useState } from "react";
-import { Alert, Modal, Switch, Text, View } from "react-native";
+import { Alert, Modal, ScrollView, Switch, Text, View } from "react-native";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -8,9 +9,11 @@ import {
   createShop,
   fetchAuditLogs,
   fetchDailyBills,
+  fetchGlobalPriceBootstrap,
   fetchPaymentSummary,
   fetchSalesSummary,
   fetchShops,
+  saveGlobalDailyPrices,
   updateShopStatus,
 } from "@/api/admin";
 import { toApiError } from "@/api/client";
@@ -32,6 +35,7 @@ import type {
 } from "@/types/api";
 import { money } from "@/utils/decimal";
 import { formatCurrency, formatDateTime } from "@/utils/format";
+import { isPositiveNumber, toMoneyString } from "@/utils/decimal";
 
 const createShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
@@ -45,6 +49,9 @@ export function AdminDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [priceModalOpen, setPriceModalOpen] = useState(false);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceBootstrap, setPriceBootstrap] = useState<any | null>(null);
   const [shops, setShops] = useState<ShopRead[]>([]);
   const [salesSummary, setSalesSummary] = useState<ShopSalesSummary[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<PaymentSplitSummary[]>([]);
@@ -106,6 +113,58 @@ export function AdminDashboardScreen() {
     }
   }
 
+  async function openPriceModal() {
+    setPriceLoading(true);
+    try {
+      const bootstrap = await fetchGlobalPriceBootstrap();
+      setPriceBootstrap(bootstrap);
+      setPriceModalOpen(true);
+    } catch (error) {
+      Alert.alert("Unable to load items", toApiError(error).message);
+    } finally {
+      setPriceLoading(false);
+    }
+  }
+
+  function closePriceModal() {
+    setPriceModalOpen(false);
+    setPriceBootstrap(null);
+  }
+
+  const priceForm = useForm<Record<string, string>>({ defaultValues: {} });
+
+  // reset form defaults when bootstrap changes
+  useEffect(() => {
+    if (!priceBootstrap) return;
+    const defaults = Object.fromEntries(
+      priceBootstrap.items.map((item: any) => [`price_${item.item_id}`, item.current_price ?? ""]),
+    );
+    priceForm.reset(defaults);
+  }, [priceBootstrap]);
+
+  async function handleSavePrices(values: Record<string, string>) {
+    if (!priceBootstrap) return;
+    const entries: Array<{ item_id: number; price_per_unit: string }> = [];
+    for (const item of priceBootstrap.items) {
+      const raw = values[`price_${item.item_id}`]?.trim() ?? "";
+      if (!isPositiveNumber(raw)) {
+        Alert.alert("Invalid price", `Enter a valid price for ${item.item_name}.`);
+        return;
+      }
+      entries.push({ item_id: item.item_id, price_per_unit: toMoneyString(raw) });
+    }
+
+    try {
+      await saveGlobalDailyPrices({ entries });
+      // refresh dashboard and close
+      await loadDashboard(true);
+      closePriceModal();
+      Alert.alert("Prices saved", "Global prices have been updated for all shops.");
+    } catch (error) {
+      Alert.alert("Unable to save prices", toApiError(error).message);
+    }
+  }
+
   async function handleToggleShop(shop: ShopRead, isActive: boolean) {
     try {
       await updateShopStatus(shop.id, { is_active: isActive });
@@ -134,7 +193,10 @@ export function AdminDashboardScreen() {
             <Text className="text-[28px] font-bold leading-[36px] text-white">
               Control shops, track live sales, and manage the day.
             </Text>
-            <Button label="Create Shop Account" onPress={() => setModalOpen(true)} />
+            <View className="gap-2">
+              <Button label="Create Shop Account" onPress={() => setModalOpen(true)} />
+              <Button label="Change Today's Prices" onPress={() => void openPriceModal()} variant="secondary" />
+            </View>
           </Card>
 
           <View className="flex-row flex-wrap gap-3">
@@ -249,6 +311,57 @@ export function AdminDashboardScreen() {
           )}
         </View>
       </Screen>
+
+      <Modal visible={priceModalOpen} transparent animationType="slide" onRequestClose={closePriceModal}>
+        <View className="flex-1 justify-end bg-black/30">
+          <View className="max-h-[90%] rounded-t-[32px] bg-white p-5">
+            <View className="mb-4 flex-row flex-wrap items-start justify-between gap-3">
+              <View className="flex-1">
+                <SectionHeading
+                  title="Change Today's Prices"
+                  subtitle="Update prices for all shops globally."
+                />
+              </View>
+              <Button label="Close" onPress={closePriceModal} variant="secondary" size="sm" />
+            </View>
+
+            {priceLoading ? (
+              <LoadingState fullscreen={false} label="Loading items..." />
+            ) : priceBootstrap ? (
+            <ScrollView showsVerticalScrollIndicator={true} className="max-h-[70vh]">
+              <View className="gap-4 pr-3">
+                {priceBootstrap.items.map((item: any) => (
+                  <Card key={item.item_id} className="gap-3">
+                    <View className="gap-1">
+                      <Text className="text-lg font-semibold text-ink">{item.item_name}</Text>
+                      <Text className="text-sm leading-6 text-muted">Unit: {item.base_unit}</Text>
+                    </View>
+                    <Controller
+                      control={priceForm.control}
+                      name={`price_${item.item_id}`}
+                      render={({ field }) => (
+                        <TextField
+                          label="Price per unit"
+                          keyboardType="decimal-pad"
+                          value={field.value}
+                          onChangeText={field.onChange}
+                          suffix={item.base_unit}
+                        />
+                      )}
+                    />
+                  </Card>
+                ))}
+              </View>
+            </ScrollView>
+            ) : (
+              <EmptyState title="No items" description="No billing items available to set prices." />
+            )}
+            {priceBootstrap && !priceLoading && (
+              <Button label="Save Prices" onPress={priceForm.handleSubmit(handleSavePrices)} />
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={modalOpen} transparent animationType="slide" onRequestClose={() => setModalOpen(false)}>
         <View className="flex-1 justify-end bg-black/30">

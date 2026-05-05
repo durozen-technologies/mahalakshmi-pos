@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Bill, BillItem, BillStatus, DailyPrice, Item, Payment, Receipt, Shop, User
 from app.schemas.billing import BillCheckoutRequest, BillLineRead, BillRead
 from app.services.audit import log_action
+from app.services.pricing import _get_shop_price_map
 
 TWOPLACES = Decimal("0.01")
 
@@ -30,20 +31,19 @@ async def _generate_bill_no(db: AsyncSession, shop: Shop) -> str:
 
 async def create_bill(db: AsyncSession, shop: Shop, payload: BillCheckoutRequest, actor: User) -> BillRead:
     today = date.today()
-    prices_result = await db.scalars(
+    today_prices_result = await db.scalars(
         select(DailyPrice).where(
             DailyPrice.shop_id == shop.id,
             DailyPrice.price_date == today,
         )
     )
-    prices = prices_result.all()
-    if not prices:
+    today_prices = today_prices_result.all()
+    price_map = await _get_shop_price_map(db, shop)
+    if not price_map:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Today's prices must be configured before billing",
+            detail="No prices have been configured for this shop",
         )
-
-    price_map = {price.item_id: price for price in prices}
     item_ids = [line.item_id for line in payload.items]
     items_result = await db.scalars(select(Item).where(Item.id.in_(item_ids), Item.is_active.is_(True)))
     items = items_result.all()

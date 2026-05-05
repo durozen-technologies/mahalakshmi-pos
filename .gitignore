@@ -1,35 +1,41 @@
-# General
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-*.log
+desktop.ini
 
-# Editors
+# IDE & Editors
 .vscode/
+.vscode-oss/
 .idea/
+.sublime-project
+.sublime-workspace
+*.swp
+*.swo
+*~
+.vim/
 
-# Root-level local files
-.codex
+# Logs
+*.log
+*.logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment files (should never be committed)
 .env
 .env.local
+.env.*.local
+.codex
 
-# Python backend
+# Python backend (delegate to backend/.gitignore)
 backend/.env
 backend/.git.backup/
-backend/.venv/
-backend/__pycache__/
-backend/.pytest_cache/
-backend/.mypy_cache/
-backend/.ruff_cache/
-backend/.coverage
-backend/htmlcov/
-backend/*.sqlite3
 
-# Node/Expo frontend
+# Node/Expo frontend (delegate to frontend/.gitignore)
 frontend/.env
-frontend/.expo/
 frontend/.git.backup/
-frontend/node_modules/
-frontend/dist/
-frontend/.cache/
-frontend/.parcel-cache/
-frontend/web-build/
