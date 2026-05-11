@@ -34,7 +34,7 @@ class ItemPriceRead(BaseModel):
 
 
 class ShopBootstrapResponse(BaseModel):
-    shop_id: int
+    shop_id: int | None = None
     shop_name: str
     price_date: date
     prices_set: bool

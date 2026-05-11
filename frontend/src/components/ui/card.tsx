@@ -9,5 +9,9 @@ type CardProps = {
 };
 
 export function Card({ children, className }: CardProps) {
-  return <View className={cn("rounded-[28px] bg-white p-4 shadow-pos", className)}>{children}</View>;
+  return (
+    <View className={cn("rounded-[32px] border border-border/90 bg-card p-5 shadow-soft", className)}>
+      {children}
+    </View>
+  );
 }

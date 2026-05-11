@@ -8,13 +8,16 @@ Thumbs.db
 .idea/
 
 # Root-level local files
+.agents/
 .codex
 .env
 .env.local
 
 # Python backend
 backend/.env
+backend/.env.example
 backend/.git.backup/
+backend/.python-version
 backend/.venv/
 backend/__pycache__/
 backend/.pytest_cache/
@@ -23,6 +26,7 @@ backend/.ruff_cache/
 backend/.coverage
 backend/htmlcov/
 backend/*.sqlite3
+backend/uv.lock
 
 # Node/Expo frontend
 frontend/.env

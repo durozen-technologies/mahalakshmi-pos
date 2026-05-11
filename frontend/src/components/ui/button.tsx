@@ -24,14 +24,14 @@ export function Button({
   textClassName,
 }: ButtonProps) {
   const palette = {
-    primary: "bg-accent",
-    secondary: "bg-white border border-border",
-    danger: "bg-red-700",
+    primary: "border border-accent bg-accent shadow-pos",
+    secondary: "border border-border bg-card shadow-soft",
+    danger: "border border-[#9F4335] bg-[#9F4335] shadow-soft",
   }[variant];
 
   const textColor = variant === "secondary" ? "text-ink" : "text-white";
-  const sizeStyles = size === "sm" ? "min-h-10 rounded-2xl px-4" : "min-h-14 rounded-3xl px-5";
-  const textSize = size === "sm" ? "text-sm" : "text-base";
+  const sizeStyles = size === "sm" ? "min-h-11 rounded-[18px] px-4" : "min-h-[58px] rounded-[24px] px-5";
+  const textSize = size === "sm" ? "text-sm" : "text-[15px]";
 
   return (
     <Pressable
@@ -46,9 +46,9 @@ export function Button({
       )}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "secondary" ? "#1F2937" : "#FFFFFF"} />
+        <ActivityIndicator color={variant === "secondary" ? "#1E2B22" : "#FFFFFF"} />
       ) : (
-        <Text className={cn("font-semibold", textColor, textSize, textClassName)}>{label}</Text>
+        <Text className={cn("font-semibold tracking-[0.3px]", textColor, textSize, textClassName)}>{label}</Text>
       )}
     </Pressable>
   );

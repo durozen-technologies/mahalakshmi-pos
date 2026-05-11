@@ -1,6 +1,16 @@
 module.exports = function (api) {
   api.cache(true);
   return {
-    presets: ["babel-preset-expo", "nativewind/babel"],
+    presets: [
+      [
+        "babel-preset-expo",
+        {
+          web: {
+            unstable_transformImportMeta: true,
+          },
+        },
+      ],
+      "nativewind/babel",
+    ],
   };
 };

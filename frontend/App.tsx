@@ -1,5 +1,7 @@
 import "./global.css";
 
+import "./src/navigation/bootstrap";
+
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -11,11 +13,11 @@ const navigationTheme = {
   ...DefaultTheme,
   colors: {
     ...DefaultTheme.colors,
-    background: "#FFF9F1",
+    background: "#F4FBF5",
     card: "#FFFFFF",
-    text: "#1F2937",
-    border: "#E5E7EB",
-    primary: "#D97706",
+    text: "#163322",
+    border: "#D6E5D8",
+    primary: "#1F8A4D",
     notification: "#B91C1C",
   },
 };

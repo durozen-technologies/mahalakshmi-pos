@@ -15,6 +15,8 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {},
-    "plugins": []
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }

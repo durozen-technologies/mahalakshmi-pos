@@ -10,26 +10,31 @@ type StatusPillProps = {
 export function StatusPill({ label, tone = "neutral" }: StatusPillProps) {
   const toneStyles = {
     success: {
-      container: "bg-successSoft",
-      text: "text-green-800",
+      container: "border-green-200 bg-successSoft",
+      text: "text-green-900",
+      dot: "bg-green-700",
     },
     warning: {
-      container: "bg-warningSoft",
-      text: "text-amber-800",
+      container: "border-amber-200 bg-warningSoft",
+      text: "text-amber-900",
+      dot: "bg-amber-700",
     },
     danger: {
-      container: "bg-dangerSoft",
-      text: "text-red-800",
+      container: "border-red-200 bg-dangerSoft",
+      text: "text-red-900",
+      dot: "bg-red-700",
     },
     neutral: {
-      container: "bg-accentSoft",
-      text: "text-amber-900",
+      container: "border-border bg-surface",
+      text: "text-accentDeep",
+      dot: "bg-accent",
     },
   }[tone];
 
   return (
-    <View className={cn("self-start rounded-full px-3 py-1", toneStyles.container)}>
-      <Text className={cn("text-xs font-semibold uppercase tracking-[1px]", toneStyles.text)}>{label}</Text>
+    <View className={cn("self-start flex-row items-center gap-2 rounded-full border px-3 py-1.5", toneStyles.container)}>
+      <View className={cn("h-2 w-2 rounded-full", toneStyles.dot)} />
+      <Text className={cn("text-[11px] font-semibold uppercase tracking-[1.2px]", toneStyles.text)}>{label}</Text>
     </View>
   );
 }

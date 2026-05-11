@@ -12,6 +12,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { TextField } from "@/components/ui/text-field";
 import { CheckoutScreenProps } from "@/navigation/types";
 import { getCartTotal, useCartStore } from "@/store/cart-store";
+import { useReceiptStore } from "@/store/receipt-store";
 import { money, toMoneyString } from "@/utils/decimal";
 import { formatCurrency, formatUnit } from "@/utils/format";
 
@@ -23,7 +24,9 @@ type CheckoutFormValues = {
 export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
   const cartItems = useCartStore((state) => state.items);
   const resetCart = useCartStore((state) => state.resetCart);
+  const setLastBill = useReceiptStore((state) => state.setLastBill);
   const [submitting, setSubmitting] = useState(false);
+  const [checkoutCompleted, setCheckoutCompleted] = useState(false);
 
   const form = useForm<CheckoutFormValues>({
     defaultValues: {
@@ -33,10 +36,10 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
   });
 
   useEffect(() => {
-    if (cartItems.length === 0) {
+    if (cartItems.length === 0 && !checkoutCompleted) {
       navigation.replace("Billing");
     }
-  }, [cartItems.length, navigation]);
+  }, [cartItems.length, checkoutCompleted, navigation]);
 
   const totalAmount = money(getCartTotal(cartItems));
   const cashAmount = money(form.watch("cashAmount"));
@@ -64,6 +67,8 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
         },
       });
 
+      setCheckoutCompleted(true);
+      setLastBill(bill);
       resetCart();
       navigation.replace("Receipt", { bill });
     } catch (error) {
@@ -75,15 +80,47 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
 
   return (
     <Screen>
-      <SectionHeading
-        title="Checkout"
-        subtitle="Receipt stays locked until cash and UPI exactly match the backend bill total."
-      />
+      <Card className="gap-5 overflow-hidden bg-card p-0">
+        <View className="gap-4 rounded-[30px] bg-accent px-5 py-5">
+          <View className="flex-row flex-wrap items-start justify-between gap-4">
+            <View className="min-w-[220px] flex-1 gap-2">
+              <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-white/75">Payment Review</Text>
+              <Text className="text-[30px] font-bold leading-[38px] text-white">Checkout</Text>
+              <Text className="text-sm leading-6 text-white/85">
+                The receipt stays locked until the split payment exactly matches the backend bill total.
+              </Text>
+            </View>
+            <View className="min-w-[170px] rounded-[24px] border border-white/15 bg-white/10 px-4 py-4">
+              <Text className="text-[11px] font-semibold uppercase tracking-[1.8px] text-white/70">Total due</Text>
+              <Text className="mt-2 text-[30px] font-bold text-white">{formatCurrency(totalAmount.toFixed(2))}</Text>
+              <Text className="mt-1 text-xs text-white/75">{cartItems.length} line items in this bill</Text>
+            </View>
+          </View>
+        </View>
+        <View className="flex-row flex-wrap gap-3 px-5 pb-5">
+          <View className="min-w-[140px] flex-1 rounded-[24px] bg-surface px-4 py-4">
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Paid so far</Text>
+            <Text className="mt-1 text-2xl font-bold text-ink">{formatCurrency(paidAmount.toFixed(2))}</Text>
+          </View>
+          <View className="min-w-[140px] flex-1 rounded-[24px] bg-surface px-4 py-4">
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Balance</Text>
+            <Text className="mt-1 text-2xl font-bold text-ink">{formatCurrency(balanceAmount.toFixed(2))}</Text>
+          </View>
+          <View className="min-w-[140px] flex-1 rounded-[24px] bg-surface px-4 py-4">
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Receipt state</Text>
+            <Text className="mt-1 text-lg font-semibold text-ink">{isExact ? "Unlocked" : "Locked"}</Text>
+          </View>
+        </View>
+      </Card>
 
       <Card className="gap-3">
-        <Text className="text-lg font-semibold text-ink">Order Summary</Text>
+        <SectionHeading
+          eyebrow="Order Summary"
+          title="Review the current bill"
+          subtitle="Double-check quantities and totals before you confirm payment."
+        />
         {cartItems.map((item) => (
-          <View key={item.item_id} className="flex-row flex-wrap items-start justify-between gap-3">
+          <View key={item.item_id} className="flex-row flex-wrap items-start justify-between gap-3 rounded-[22px] bg-surface px-4 py-4">
             <View className="flex-1">
               <Text className="text-sm font-semibold text-ink">{item.item_name}</Text>
               <Text className="text-xs leading-5 text-muted">
@@ -102,6 +139,11 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
       </Card>
 
       <Card className="gap-4">
+        <SectionHeading
+          eyebrow="Split Payment"
+          title="Enter payment amounts"
+          subtitle="Keep cash and UPI aligned with the exact bill total to unlock receipt printing."
+        />
         <Controller
           control={form.control}
           name="cashAmount"
@@ -109,6 +151,8 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
             <TextField
               label="Cash amount"
               keyboardType="decimal-pad"
+              placeholder="0.00"
+              suffix="Rs"
               value={field.value}
               onChangeText={field.onChange}
             />
@@ -121,33 +165,46 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
             <TextField
               label="UPI amount"
               keyboardType="decimal-pad"
+              placeholder="0.00"
+              suffix="Rs"
               value={field.value}
               onChangeText={field.onChange}
             />
           )}
         />
 
-        <View className="rounded-[24px] bg-surface p-4">
-          <View className="mb-2 flex-row flex-wrap items-center justify-between gap-2">
-            <Text className="text-sm text-muted">Paid amount</Text>
-            <Text className="text-base font-semibold text-ink">{formatCurrency(paidAmount.toFixed(2))}</Text>
-          </View>
+        <View className="rounded-[26px] border border-border bg-surface p-4">
           <View className="mb-3 flex-row flex-wrap items-center justify-between gap-2">
-            <Text className="text-sm text-muted">Balance amount</Text>
-            <Text className="text-base font-semibold text-ink">{formatCurrency(balanceAmount.toFixed(2))}</Text>
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.4px] text-muted">Receipt control</Text>
+            {isExact ? (
+              <StatusPill label="Payment matched" tone="success" />
+            ) : isOverpaid ? (
+              <StatusPill label="Overpaid - receipt locked" tone="danger" />
+            ) : (
+              <StatusPill label="Pending balance" tone="warning" />
+            )}
           </View>
-
-          {isExact ? (
-            <StatusPill label="Payment matched" tone="success" />
-          ) : isOverpaid ? (
-            <StatusPill label="Overpaid - receipt locked" tone="danger" />
-          ) : (
-            <StatusPill label="Pending balance" tone="warning" />
-          )}
+          <View className="gap-3 rounded-[22px] bg-card px-4 py-4">
+            <View className="flex-row flex-wrap items-center justify-between gap-2">
+              <Text className="text-sm text-muted">Paid amount</Text>
+              <Text className="text-base font-semibold text-ink">{formatCurrency(paidAmount.toFixed(2))}</Text>
+            </View>
+            <View className="flex-row flex-wrap items-center justify-between gap-2">
+              <Text className="text-sm text-muted">Balance amount</Text>
+              <Text className="text-base font-semibold text-ink">{formatCurrency(balanceAmount.toFixed(2))}</Text>
+            </View>
+            <Text className="text-sm leading-6 text-muted">
+              {isExact
+                ? "Payment matches the bill total. Receipt printing is now unlocked."
+                : isOverpaid
+                  ? "The entered amount is higher than the bill total. Adjust the split to continue."
+                  : "Add the remaining balance to match the exact bill total."}
+            </Text>
+          </View>
         </View>
 
         <Button
-          label="Print Receipt"
+          label={isExact ? "Print Receipt" : "Receipt Locked"}
           onPress={form.handleSubmit(handleCheckout)}
           disabled={!isExact}
           loading={submitting}
