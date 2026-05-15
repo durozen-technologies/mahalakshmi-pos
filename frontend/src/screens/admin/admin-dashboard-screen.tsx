@@ -21,6 +21,9 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { z } from "zod";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { usePriceStore } from "@/store/price-store";
 import type { AnalyticsPeriod } from "@/types/api";
 import { isPositiveNumber, money, toMoneyString } from "@/utils/decimal";
 import { formatCurrency, formatDateTime } from "@/utils/format";
@@ -88,6 +91,9 @@ export function AdminDashboardScreen() {
   const heroPrimaryTextColor = "#000000";
   const heroSecondaryTextColor = "rgba(0,0,0,0.84)";
   const heroLabelTextColor = "rgba(0,0,0,0.72)";
+  const clearSession = useAuthStore((state) => state.clearSession);
+  const resetCart = useCartStore((state) => state.resetCart);
+  const clearPrices = usePriceStore((state) => state.clear);
 
   const [analyticsPeriod, setAnalyticsPeriod] = useState<AnalyticsPeriod>("date");
   const [analyticsReferenceDate, setAnalyticsReferenceDate] = useState(
@@ -167,6 +173,13 @@ export function AdminDashboardScreen() {
   const showToast = useCallback((tone: ToastTone, message: string) => {
     setToast({ tone, message });
   }, []);
+
+  const handleLogout = useCallback(() => {
+    triggerHaptic(Haptics.ImpactFeedbackStyle.Medium);
+    clearSession();
+    resetCart();
+    clearPrices();
+  }, [clearPrices, clearSession, resetCart]);
 
   useEffect(() => {
     if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -663,6 +676,14 @@ export function AdminDashboardScreen() {
                   style={[styles.iconButton, styles.heroIconButton, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
                 >
                   <MaterialCommunityIcons name="refresh" size={18} color={palette.textPrimary} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Logout"
+                  onPress={handleLogout}
+                  style={[styles.iconButton, styles.heroIconButton, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+                >
+                  <MaterialCommunityIcons name="logout" size={18} color={palette.textPrimary} />
                 </Pressable>
               </View>
             </View>
