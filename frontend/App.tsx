@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import "./global.css";
 
 import "./src/navigation/bootstrap";
@@ -8,6 +9,10 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AppNavigator } from "@/navigation/app-navigator";
+
+if (__DEV__ && Constants.appOwnership !== "expo") {
+  void import("expo-dev-client");
+}
 
 const navigationTheme = {
   ...DefaultTheme,

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Alert, KeyboardAvoidingView, Platform, Text, TextInput, View } from "react-native";
 
 import { login } from "@/api/auth";

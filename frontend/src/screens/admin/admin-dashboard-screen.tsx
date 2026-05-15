@@ -1,54 +1,69 @@
-import { ComponentProps, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import * as Haptics from "expo-haptics";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import {
-  Alert,
+  Animated,
   LayoutAnimation,
-  Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
-  Switch,
+  StyleSheet,
   Text,
-  TextInput,
   UIManager,
+  useColorScheme,
   View,
-  useWindowDimensions,
 } from "react-native";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Controller, useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { z } from "zod";
 
-import {
-  createShop,
-  fetchAuditLogs,
-  fetchDailyBills,
-  fetchGlobalPriceBootstrap,
-  fetchPaymentSummary,
-  fetchSalesSummary,
-  fetchShops,
-  saveGlobalDailyPrices,
-  updateShopStatus,
-} from "@/api/admin";
-import { toApiError } from "@/api/client";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
-import { LoadingState } from "@/components/ui/loading-state";
-import { Screen } from "@/components/ui/screen";
-import { SectionHeading } from "@/components/ui/section-heading";
-import { StatusPill } from "@/components/ui/status-pill";
-import { TextField } from "@/components/ui/text-field";
-import type {
-  AdminBillSummary,
-  AuditLogRead,
-  PaymentSplitSummary,
-  ShopBootstrapResponse,
-  ShopRead,
-  ShopSalesSummary,
-} from "@/types/api";
-import { cn } from "@/utils/cn";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import type { AnalyticsPeriod } from "@/types/api";
 import { isPositiveNumber, money, toMoneyString } from "@/utils/decimal";
 import { formatCurrency, formatDateTime } from "@/utils/format";
+
+import {
+  adminShadow,
+  getAdminPalette,
+} from "./admin-dashboard-theme";
+import {
+  BottomNav,
+  ChipButton,
+  DashboardSkeleton,
+  EmptyStateCard,
+  MetricCard,
+  PrimaryButton,
+  SearchField,
+  SectionCard,
+  ToastBanner,
+} from "./components/admin-dashboard-primitives";
+import {
+  CreateShopSheet,
+  PriceUpdateSheet,
+} from "./components/admin-dashboard-sheets";
+import { useAdminDashboardData } from "./hooks/use-admin-dashboard-data";
+import {
+  AUDIT_FILTER_OPTIONS,
+  buildDateOptions,
+  buildMonthOptions,
+  buildYearOptions,
+  formatAnalyticsReference,
+  formatCompactCurrency,
+  formatRelativeTime,
+  getSeverityMeta,
+  getUnitLabel,
+  groupBillsByDate,
+  NAV_ITEMS,
+  triggerHaptic,
+  type AdminNavTab,
+  type AnalyticsSectionKey,
+  type AuditFilter,
+  type SectionKey,
+  type ToastTone,
+} from "./admin-dashboard-utils";
 
 const createShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
@@ -56,372 +71,102 @@ const createShopSchema = z.object({
 });
 
 type CreateShopFormValues = z.infer<typeof createShopSchema>;
-type PriceFormValues = Record<string, string>;
-type IconName = ComponentProps<typeof MaterialCommunityIcons>["name"];
-type ShopFilter = "all" | "active" | "inactive";
-type ShopSort = "revenue" | "name" | "activity";
-type LogSeverity = "info" | "warning" | "error" | "critical";
-type ExpandableSection = "shops" | "pricing" | "analytics" | "activity";
-type ShopOperationalState = "ACTIVE" | "IDLE" | "OFFLINE" | "DISABLED";
 
-type ShopDashboardRow = {
-  shop: ShopRead;
-  totalSales: string;
-  cashTotal: string;
-  upiTotal: string;
-  billCount: number;
-  lastActivityAt: string;
-  status: ShopOperationalState;
-};
-
-type ActionChipProps = {
-  label: string;
-  icon: IconName;
-  onPress: () => void;
-  tone?: "primary" | "secondary";
-};
-
-type FilterChipProps = {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  icon?: IconName;
-};
-
-type OverviewCardProps = {
-  label: string;
-  value: string;
-  icon: IconName;
-  note: string;
-  tone?: "primary" | "success" | "warning" | "neutral";
-};
-
-type SearchFieldProps = {
-  value: string;
-  onChangeText: (value: string) => void;
-  placeholder: string;
-};
-
-type SectionCardProps = {
-  eyebrow: string;
-  title: string;
-  subtitle: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-  rightSlot?: React.ReactNode;
-};
-
-type AnalyticsCardProps = {
-  title: string;
-  subtitle: string;
-  children: React.ReactNode;
-  className?: string;
-};
-
-type SeverityMeta = {
-  tone: "success" | "warning" | "danger" | "neutral";
-  label: LogSeverity;
-  icon: IconName;
-  accentClassName: string;
-};
-
-function formatCompactCurrency(value: string | number) {
-  const numericValue = Number(money(value).toFixed(2));
-  const compact = new Intl.NumberFormat("en-IN", {
-    notation: "compact",
-    maximumFractionDigits: numericValue >= 100000 ? 1 : 0,
-  }).format(numericValue);
-
-  return `Rs. ${compact}`;
-}
-
-function formatShortTime(value: string) {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("en-IN", { timeStyle: "short" }).format(date);
-}
-
-function formatRelativeTime(value?: string | null) {
-  if (!value) {
-    return "No recent activity";
-  }
-
-  const date = new Date(value);
-  const diffMs = Date.now() - date.getTime();
-  const diffMinutes = Math.round(diffMs / 60000);
-
-  if (diffMinutes < 1) {
-    return "Updated just now";
-  }
-
-  if (diffMinutes < 60) {
-    return `${diffMinutes}m ago`;
-  }
-
-  const diffHours = Math.round(diffMinutes / 60);
-  if (diffHours < 24) {
-    return `${diffHours}h ago`;
-  }
-
-  const diffDays = Math.round(diffHours / 24);
-  return `${diffDays}d ago`;
-}
-
-function getShopStatus(shop: ShopRead, lastActivityAt?: string | null): ShopOperationalState {
-  if (!shop.is_active) {
-    return "DISABLED";
-  }
-
-  if (!lastActivityAt) {
-    return "OFFLINE";
-  }
-
-  const diffHours = (Date.now() - new Date(lastActivityAt).getTime()) / 3600000;
-  if (diffHours <= 1) {
-    return "ACTIVE";
-  }
-
-  if (diffHours <= 6) {
-    return "IDLE";
-  }
-
-  return "OFFLINE";
-}
-
-function getSeverityMeta(log: AuditLogRead): SeverityMeta {
-  const text = `${log.action} ${log.details}`.toLowerCase();
-
-  if (text.includes("failed") || text.includes("error") || text.includes("denied")) {
-    return {
-      tone: "danger",
-      label: "error",
-      icon: "alert-circle-outline",
-      accentClassName: "bg-dangerSoft border-red-200",
-    };
-  }
-
-  if (text.includes("disabled") || text.includes("invalid") || text.includes("warning")) {
-    return {
-      tone: "warning",
-      label: "warning",
-      icon: "alert-outline",
-      accentClassName: "bg-warningSoft border-amber-200",
-    };
-  }
-
-  if (text.includes("deleted") || text.includes("critical")) {
-    return {
-      tone: "danger",
-      label: "critical",
-      icon: "alert-decagram-outline",
-      accentClassName: "bg-dangerSoft border-red-300",
-    };
-  }
-
-  return {
-    tone: "success",
-    label: "info",
-    icon: "information-outline",
-    accentClassName: "bg-successSoft border-green-200",
-  };
-}
-
-function ActionChip({ label, icon, onPress, tone = "secondary" }: ActionChipProps) {
-  const palette =
-    tone === "primary"
-      ? "border-accent bg-accent"
-      : "border-border bg-card";
-  const textColor = tone === "primary" ? "text-white" : "text-ink";
-  const iconColor = tone === "primary" ? "#FFFFFF" : "#244734";
-
-  return (
-    <Pressable
-      onPress={onPress}
-      className={cn(
-        "mr-3 flex-row items-center gap-2 rounded-full border px-4 py-3 shadow-soft",
-        palette,
-      )}
-    >
-      <MaterialCommunityIcons name={icon} size={18} color={iconColor} />
-      <Text className={cn("text-sm font-semibold", textColor)}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function FilterChip({ label, active, onPress, icon }: FilterChipProps) {
-  return (
-    <Pressable
-      onPress={onPress}
-      className={cn(
-        "flex-row items-center gap-2 rounded-full border px-3 py-2",
-        active ? "border-accent bg-accentSoft" : "border-border bg-card",
-      )}
-    >
-      {icon ? <MaterialCommunityIcons name={icon} size={16} color={active ? "#183224" : "#657366"} /> : null}
-      <Text className={cn("text-xs font-semibold", active ? "text-accentDeep" : "text-muted")}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SearchField({ value, onChangeText, placeholder }: SearchFieldProps) {
-  return (
-    <View className="flex-row items-center rounded-[24px] border border-border bg-surface px-4 py-3">
-      <MaterialCommunityIcons name="magnify" size={18} color="#657366" />
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#95A293"
-        className="ml-3 flex-1 text-sm text-ink"
-      />
-      {value ? (
-        <Pressable onPress={() => onChangeText("")}>
-          <MaterialCommunityIcons name="close-circle" size={18} color="#95A293" />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function OverviewCard({ label, value, icon, note, tone = "neutral" }: OverviewCardProps) {
-  const toneMap = {
-    primary: {
-      bg: "bg-accent",
-      iconWrap: "bg-white/15",
-      label: "text-white/80",
-      value: "text-white",
-      note: "text-white",
-      icon: "#FFFFFF",
-    },
-    success: {
-      bg: "bg-card",
-      iconWrap: "bg-successSoft",
-      label: "text-muted",
-      value: "text-ink",
-      note: "text-accentDeep",
-      icon: "#244734",
-    },
-    warning: {
-      bg: "bg-card",
-      iconWrap: "bg-warningSoft",
-      label: "text-muted",
-      value: "text-ink",
-      note: "text-amber-700",
-      icon: "#A36A20",
-    },
-    neutral: {
-      bg: "bg-card",
-      iconWrap: "bg-surface",
-      label: "text-muted",
-      value: "text-ink",
-      note: "text-muted",
-      icon: "#244734",
-    },
-  }[tone];
-
-  return (
-    <View className={cn("min-w-[156px] flex-1 basis-[160px] rounded-[28px] border border-border px-4 py-4 shadow-soft", toneMap.bg)}>
-      <View className="flex-row items-start justify-between gap-3">
-        <View className={cn("rounded-2xl p-3", toneMap.iconWrap)}>
-          <MaterialCommunityIcons name={icon} size={20} color={toneMap.icon} />
-        </View>
-      </View>
-      <Text className={cn("mt-4 text-xs font-semibold uppercase tracking-[1px]", toneMap.label)}>{label}</Text>
-      <Text className={cn("mt-1 text-[24px] font-bold leading-8", toneMap.value)}>{value}</Text>
-      <Text className={cn("mt-2 text-xs font-medium", toneMap.note)}>{note}</Text>
-    </View>
-  );
-}
-
-function SectionCard({
-  eyebrow,
-  title,
-  subtitle,
-  collapsed,
-  onToggle,
-  children,
-  rightSlot,
-}: SectionCardProps) {
-  return (
-    <Card className="gap-4 overflow-hidden p-0">
-      <Pressable onPress={onToggle} className="flex-row items-start justify-between gap-3 px-5 py-5">
-        <View className="flex-1 gap-1">
-          <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-accentDeep">{eyebrow}</Text>
-          <Text className="text-[24px] font-bold leading-8 text-ink">{title}</Text>
-          <Text className="text-sm leading-6 text-muted">{subtitle}</Text>
-        </View>
-        <View className="items-end gap-3">
-          {rightSlot}
-          <View className="rounded-full border border-border bg-surface p-2">
-            <MaterialCommunityIcons
-              name={collapsed ? "chevron-down" : "chevron-up"}
-              size={18}
-              color="#244734"
-            />
-          </View>
-        </View>
-      </Pressable>
-      {!collapsed ? <View className="px-5 pb-5">{children}</View> : null}
-    </Card>
-  );
-}
-
-function AnalyticsCard({ title, subtitle, children, className }: AnalyticsCardProps) {
-  return (
-    <Card className={cn("min-w-[280px] flex-1 gap-4", className)}>
-      <View className="gap-1">
-        <Text className="text-base font-semibold text-ink">{title}</Text>
-        <Text className="text-sm leading-6 text-muted">{subtitle}</Text>
-      </View>
-      {children}
-    </Card>
-  );
-}
+const PERIOD_OPTIONS: { key: AnalyticsPeriod; label: string }[] = [
+  { key: "date", label: "Date" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+];
 
 export function AdminDashboardScreen() {
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 960;
+  const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
+  const palette = getAdminPalette(colorScheme);
+  const dateOptions = useMemo(() => buildDateOptions(), []);
+  const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const yearOptions = useMemo(() => buildYearOptions(), []);
+  const heroPrimaryTextColor = "#000000";
+  const heroSecondaryTextColor = "rgba(0,0,0,0.84)";
+  const heroLabelTextColor = "rgba(0,0,0,0.72)";
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [priceLoading, setPriceLoading] = useState(false);
-  const [priceBootstrap, setPriceBootstrap] = useState<ShopBootstrapResponse | null>(null);
-  const [shops, setShops] = useState<ShopRead[]>([]);
-  const [salesSummary, setSalesSummary] = useState<ShopSalesSummary[]>([]);
-  const [paymentSummary, setPaymentSummary] = useState<PaymentSplitSummary[]>([]);
-  const [dailyBills, setDailyBills] = useState<AdminBillSummary[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLogRead[]>([]);
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Record<ExpandableSection, boolean>>({
-    shops: true,
-    pricing: false,
-    analytics: true,
-    activity: true,
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<AnalyticsPeriod>("date");
+  const [analyticsReferenceDate, setAnalyticsReferenceDate] = useState(
+    dateOptions[0]?.value ?? new Date().toISOString().slice(0, 10),
+  );
+  const [selectedShopId, setSelectedShopId] = useState<number | null>(null);
+  const [shopSelectorOpen, setShopSelectorOpen] = useState(false);
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false);
+  const [activeNav, setActiveNav] = useState<AdminNavTab>("dashboard");
+  const [itemSearch, setItemSearch] = useState("");
+  const [billSearch, setBillSearch] = useState("");
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
+  const [collapsedSections, setCollapsedSections] = useState<Record<AnalyticsSectionKey, boolean>>({
+    inventory: false,
+    reports: false,
+    billing: true,
+    settings: true,
   });
-  const [expandedShopId, setExpandedShopId] = useState<number | null>(null);
-  const [expandedBillId, setExpandedBillId] = useState<number | null>(null);
-  const [focusedShopId, setFocusedShopId] = useState<number | null>(null);
-  const [shopQuery, setShopQuery] = useState("");
-  const [shopFilter, setShopFilter] = useState<ShopFilter>("all");
-  const [shopSort, setShopSort] = useState<ShopSort>("revenue");
-  const [billQuery, setBillQuery] = useState("");
-  const [auditQuery, setAuditQuery] = useState("");
-  const [severityFilter, setSeverityFilter] = useState<LogSeverity | "all">("all");
-  const [priceSearch, setPriceSearch] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [priceSheetOpen, setPriceSheetOpen] = useState(false);
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [selectedPriceItemId, setSelectedPriceItemId] = useState<number | null>(null);
+  const [draftPrice, setDraftPrice] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(dateOptions[0]?.value ?? new Date().toISOString().slice(0, 10));
+  const [itemPickerOpen, setItemPickerOpen] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
+  const [sectionOffsets, setSectionOffsets] = useState<Record<SectionKey, number>>({
+    dashboard: 0,
+    inventory: 0,
+    reports: 0,
+    billing: 0,
+    settings: 0,
+  });
 
-  const deferredShopQuery = useDeferredValue(shopQuery.trim().toLowerCase());
-  const deferredBillQuery = useDeferredValue(billQuery.trim().toLowerCase());
-  const deferredAuditQuery = useDeferredValue(auditQuery.trim().toLowerCase());
-  const deferredPriceSearch = useDeferredValue(priceSearch.trim().toLowerCase());
+  const debouncedItemSearch = useDebouncedValue(itemSearch.trim().toLowerCase());
+  const debouncedBillSearch = useDebouncedValue(billSearch.trim().toLowerCase());
+  const debouncedAuditSearch = useDebouncedValue(auditSearch.trim().toLowerCase());
+  const toastAnimation = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<ScrollView>(null);
+  const latestDashboardError = useRef<string | null>(null);
 
   const form = useForm<CreateShopFormValues>({
     resolver: zodResolver(createShopSchema),
     defaultValues: { name: "", code: "" },
   });
-  const priceForm = useForm<PriceFormValues>({ defaultValues: {} });
-  const priceValues = priceForm.watch();
+
+  const {
+    auditLogs,
+    createBranch,
+    dailyBills,
+    dashboardError,
+    isOfflineSnapshot,
+    itemSales,
+    lastSyncAt,
+    loadDashboard,
+    loadPriceBootstrap,
+    loading,
+    priceBootstrap,
+    priceLoading,
+    refreshing,
+    saveGlobalPriceBook,
+    selectedShopName,
+    setPriceBootstrap,
+    shops,
+    toggleBranchStatus,
+    visibleShopRows,
+  } = useAdminDashboardData({
+    analyticsPeriod,
+    analyticsReferenceDate,
+    selectedShopId,
+  });
+
+  const showToast = useCallback((tone: ToastTone, message: string) => {
+    setToast({ tone, message });
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -429,1116 +174,1777 @@ export function AdminDashboardScreen() {
     }
   }, []);
 
-  async function loadDashboard(isRefresh = false) {
-    if (isRefresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
+  useEffect(() => {
+    if (!toast) {
+      Animated.timing(toastAnimation, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+      return;
     }
 
-    try {
-      const [shopsData, salesData, paymentsData, billsData, logsData] = await Promise.all([
-        fetchShops(),
-        fetchSalesSummary(),
-        fetchPaymentSummary(),
-        fetchDailyBills(),
-        fetchAuditLogs(),
-      ]);
+    Animated.timing(toastAnimation, {
+      toValue: 1,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
 
-      setShops(shopsData);
-      setSalesSummary(salesData);
-      setPaymentSummary(paymentsData);
-      setDailyBills(billsData);
-      setAuditLogs(logsData);
-      setLastSyncAt(new Date().toISOString());
-    } catch (error) {
-      Alert.alert("Unable to load dashboard", toApiError(error).message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    const timer = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(timer);
+  }, [toast, toastAnimation]);
+
+  useEffect(() => {
+    if (!dashboardError || latestDashboardError.current === dashboardError) {
+      return;
+    }
+
+    latestDashboardError.current = dashboardError;
+    if (shops.length > 0) {
+      showToast("error", dashboardError);
+    }
+  }, [dashboardError, shops.length, showToast]);
+
+  useEffect(() => {
+    if (!priceBootstrap) {
+      return;
+    }
+
+    const nextItem = priceBootstrap.items.find((item) => item.item_id === selectedPriceItemId) ?? priceBootstrap.items[0];
+    if (!nextItem) {
+      return;
+    }
+
+    setSelectedPriceItemId(nextItem.item_id);
+    setDraftPrice(nextItem.current_price ?? "");
+  }, [priceBootstrap, selectedPriceItemId]);
+
+  const currentPriceItem = useMemo(
+    () => priceBootstrap?.items.find((item) => item.item_id === selectedPriceItemId) ?? null,
+    [priceBootstrap, selectedPriceItemId],
+  );
+
+  const filteredItemSales = useMemo(() => {
+    return itemSales.filter((item) => {
+      if (!debouncedItemSearch) {
+        return true;
+      }
+
+      return `${item.item_name} ${item.base_unit}`.toLowerCase().includes(debouncedItemSearch);
+    });
+  }, [debouncedItemSearch, itemSales]);
+
+  const visibleBills = useMemo(() => {
+    const scopedBills = selectedShopId ? dailyBills.filter((bill) => bill.shop_id === selectedShopId) : dailyBills;
+
+    return scopedBills.filter((bill) => {
+      const matchesQuery =
+        !debouncedBillSearch ||
+        `${bill.bill_no} ${bill.shop_name} ${bill.status}`.toLowerCase().includes(debouncedBillSearch);
+
+      return matchesQuery;
+    });
+  }, [dailyBills, debouncedBillSearch, selectedShopId]);
+
+  const filteredAuditLogs = useMemo(() => {
+    const scopedLogs =
+      selectedShopId && selectedShopName !== "All Branches"
+        ? auditLogs.filter((log) => `${log.action} ${log.details}`.toLowerCase().includes(selectedShopName.toLowerCase()))
+        : auditLogs;
+
+    return scopedLogs.filter((log) => {
+      const severity = getSeverityMeta(log, palette).label;
+      const matchesFilter = auditFilter === "all" || severity === auditFilter;
+      const matchesQuery =
+        !debouncedAuditSearch ||
+        `${log.action} ${log.details}`.toLowerCase().includes(debouncedAuditSearch);
+
+      return matchesFilter && matchesQuery;
+    });
+  }, [auditFilter, auditLogs, debouncedAuditSearch, palette, selectedShopId, selectedShopName]);
+
+  const totalRevenue = useMemo(
+    () => visibleShopRows.reduce((sum, row) => sum.plus(money(row.totalSales)), money(0)),
+    [visibleShopRows],
+  );
+  const totalCash = useMemo(
+    () => visibleShopRows.reduce((sum, row) => sum.plus(money(row.cashTotal)), money(0)),
+    [visibleShopRows],
+  );
+  const totalUpi = useMemo(
+    () => visibleShopRows.reduce((sum, row) => sum.plus(money(row.upiTotal)), money(0)),
+    [visibleShopRows],
+  );
+  const paymentTotal = useMemo(() => totalCash.plus(totalUpi), [totalCash, totalUpi]);
+  const cashShare = paymentTotal.greaterThan(0) ? totalCash.div(paymentTotal).mul(100).toNumber() : 0;
+  const topShop = useMemo(
+    () => [...visibleShopRows].sort((left, right) => money(right.totalSales).minus(left.totalSales).toNumber())[0],
+    [visibleShopRows],
+  );
+  const largestBill = useMemo(
+    () => [...visibleBills].sort((left, right) => money(right.total_amount).minus(left.total_amount).toNumber())[0],
+    [visibleBills],
+  );
+  const activeBranchCount = useMemo(
+    () => visibleShopRows.filter((row) => row.shop.is_active).length,
+    [visibleShopRows],
+  );
+  const severeLogsCount = useMemo(
+    () =>
+      filteredAuditLogs.filter((log) => {
+        const severity = getSeverityMeta(log, palette).label;
+        return severity === "error" || severity === "critical";
+      }).length,
+    [filteredAuditLogs, palette],
+  );
+  const itemRevenueAverage = useMemo(
+    () =>
+      filteredItemSales.length > 0
+        ? filteredItemSales.reduce((sum, item) => sum.plus(money(item.total_amount)), money(0)).div(filteredItemSales.length).toNumber()
+        : 0,
+    [filteredItemSales],
+  );
+  const branchRanking = useMemo(() => {
+    const rankMap = new Map<number, number>();
+    [...visibleShopRows]
+      .sort((left, right) => money(right.totalSales).minus(left.totalSales).toNumber())
+      .forEach((row, index) => rankMap.set(row.shop.id, index + 1));
+
+    return rankMap;
+  }, [visibleShopRows]);
+  const groupedBills = useMemo(() => groupBillsByDate(visibleBills), [visibleBills]);
+  const analyticsReferenceOptions = useMemo(() => {
+    if (analyticsPeriod === "date") {
+      return dateOptions;
+    }
+
+    if (analyticsPeriod === "month") {
+      return monthOptions;
+    }
+
+    return yearOptions;
+  }, [analyticsPeriod, dateOptions, monthOptions, yearOptions]);
+  const analyticsReferenceLabel = useMemo(
+    () => formatAnalyticsReference(analyticsPeriod, analyticsReferenceDate),
+    [analyticsPeriod, analyticsReferenceDate],
+  );
+  const metricSparklineValues = useMemo(() => {
+    const revenue = visibleShopRows
+      .map((row) => money(row.totalSales).toNumber())
+      .filter((value) => value > 0)
+      .sort((left, right) => right - left)
+      .slice(0, 6);
+    const bills = visibleShopRows
+      .map((row) => row.billCount)
+      .filter((value) => value > 0)
+      .sort((left, right) => right - left)
+      .slice(0, 6);
+    const cash = visibleShopRows
+      .map((row) => money(row.cashTotal).toNumber())
+      .filter((value) => value > 0)
+      .sort((left, right) => right - left)
+      .slice(0, 6);
+    const upi = visibleShopRows
+      .map((row) => money(row.upiTotal).toNumber())
+      .filter((value) => value > 0)
+      .sort((left, right) => right - left)
+      .slice(0, 6);
+
+    return {
+      revenue: revenue.length > 0 ? revenue : [0],
+      bills: bills.length > 0 ? bills : [0],
+      cash: cash.length > 0 ? cash : [0],
+      upi: upi.length > 0 ? upi : [0],
+    };
+  }, [visibleShopRows]);
+
+  function updateSectionOffset(section: SectionKey, y: number) {
+    setSectionOffsets((current) => {
+      if (current[section] === y) {
+        return current;
+      }
+
+      return { ...current, [section]: y };
+    });
+  }
+
+  function handleScrollNavigation(scrollY: number) {
+    const marker = scrollY + 176;
+    const orderedSections = NAV_ITEMS.map((item) => ({
+      key: item.key as AdminNavTab,
+      offset: sectionOffsets[item.key as SectionKey],
+    })).sort((left, right) => left.offset - right.offset);
+
+    let nextActive: AdminNavTab = "dashboard";
+    for (const section of orderedSections) {
+      if (marker >= section.offset) {
+        nextActive = section.key;
+      }
+    }
+
+    if (nextActive !== activeNav) {
+      setActiveNav(nextActive);
     }
   }
 
-  useEffect(() => {
-    void loadDashboard();
-  }, []);
+  function scrollToSection(section: string) {
+    const key = section as SectionKey;
+    const target = Math.max(0, (sectionOffsets[key] ?? 0) - 140);
+    scrollRef.current?.scrollTo({ y: target, animated: true });
+    setActiveNav(section as AdminNavTab);
+  }
+
+  function toggleSection(section: AnalyticsSectionKey) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCollapsedSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+
+  function handleSelectPeriod(period: AnalyticsPeriod) {
+    if (period === analyticsPeriod) {
+      return;
+    }
+
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    triggerHaptic();
+    setAnalyticsPeriod(period);
+    setReferencePickerOpen(false);
+
+    const nextReferenceDate =
+      period === "date"
+        ? dateOptions[0]?.value
+        : period === "month"
+          ? monthOptions[0]?.value
+          : yearOptions[0]?.value;
+
+    if (nextReferenceDate) {
+      setAnalyticsReferenceDate(nextReferenceDate);
+    }
+  }
+
+  function toggleReferencePicker() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    triggerHaptic();
+    setReferencePickerOpen((current) => !current);
+  }
+
+  function handleSelectReferenceDate(value: string) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setAnalyticsReferenceDate(value);
+    setReferencePickerOpen(false);
+  }
+
+  function toggleShopSelector() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    triggerHaptic();
+    setShopSelectorOpen((current) => !current);
+  }
+
+  function handleSelectShop(shopId: number | null) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedShopId(shopId);
+    setShopSelectorOpen(false);
+    showToast("success", shopId ? "Branch focus updated." : "Showing all branches.");
+  }
 
   async function handleCreateShop(values: CreateShopFormValues) {
     setCreating(true);
     try {
-      await createShop({
+      await createBranch({
         name: values.name,
         code: values.code?.trim() ? values.code.trim() : null,
       });
       form.reset();
       setModalOpen(false);
-      await loadDashboard(true);
-      Alert.alert("Shop created", "New shop credentials are ready in the admin list.");
+      showToast("success", "New branch created successfully.");
     } catch (error) {
-      Alert.alert("Unable to create shop", toApiError(error).message);
+      showToast("error", error instanceof Error ? error.message : "Unable to create branch.");
     } finally {
       setCreating(false);
     }
   }
 
-  async function loadPriceBootstrap(forceRefresh = false) {
-    if (priceBootstrap && !forceRefresh) {
+  async function handleToggleShop(shopId: number, isActive: boolean) {
+    const row = visibleShopRows.find((item) => item.shop.id === shopId);
+    if (!row) {
       return;
     }
 
-    setPriceLoading(true);
     try {
-      const bootstrap = await fetchGlobalPriceBootstrap();
-      setPriceBootstrap(bootstrap);
-      setPriceSearch("");
+      await toggleBranchStatus(row.shop, isActive);
+      showToast("success", `${row.shop.name} ${isActive ? "enabled" : "disabled"}.`);
     } catch (error) {
-      Alert.alert("Unable to load items", toApiError(error).message);
-    } finally {
-      setPriceLoading(false);
+      showToast("error", error instanceof Error ? error.message : "Unable to update branch.");
     }
   }
 
-  async function openPricePanel(forceRefresh = false) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedSections((current) => ({ ...current, pricing: true }));
-    await loadPriceBootstrap(forceRefresh);
+  async function openPriceSheet() {
+    setPriceSheetOpen(true);
+    setEffectiveDate(dateOptions[0]?.value ?? new Date().toISOString().slice(0, 10));
+
+    try {
+      const bootstrap = await loadPriceBootstrap();
+      const firstItem = bootstrap?.items[0];
+      if (firstItem) {
+        setSelectedPriceItemId(firstItem.item_id);
+        setDraftPrice(firstItem.current_price ?? "");
+      }
+      setPriceError(null);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Unable to load price controls.");
+    }
   }
 
-  useEffect(() => {
-    if (!priceBootstrap) {
+  function closePriceSheet() {
+    setPriceSheetOpen(false);
+    setItemPickerOpen(false);
+    setDatePickerOpen(false);
+    setPriceError(null);
+  }
+
+  function handleSelectPriceItem(itemId: number, currentPrice?: string | null) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedPriceItemId(itemId);
+    setDraftPrice(currentPrice ?? "");
+    setItemPickerOpen(false);
+    setPriceError(null);
+  }
+
+  function handleChangeDraftPrice(value: string) {
+    setDraftPrice(value.replace(/[^\d.]/g, ""));
+    setPriceError(null);
+  }
+
+  function handleSelectDate(value: string) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setEffectiveDate(value);
+    setDatePickerOpen(false);
+  }
+
+  async function handleSavePrice() {
+    if (!priceBootstrap || !selectedPriceItemId || !currentPriceItem) {
       return;
     }
 
-    const defaults = Object.fromEntries(
-      priceBootstrap.items.map((item) => [`price_${item.item_id}`, item.current_price ?? ""]),
-    );
-    priceForm.reset(defaults);
-  }, [priceBootstrap, priceForm]);
-
-  async function handleSavePrices(values: PriceFormValues) {
-    if (!priceBootstrap) {
+    const normalizedValue = draftPrice.trim();
+    if (!isPositiveNumber(normalizedValue)) {
+      setPriceError("Enter a valid numeric price before saving.");
+      triggerHaptic(Haptics.ImpactFeedbackStyle.Heavy);
       return;
     }
 
     const entries: { item_id: number; price_per_unit: string }[] = [];
     for (const item of priceBootstrap.items) {
-      const raw = values[`price_${item.item_id}`]?.trim() ?? "";
-      if (!isPositiveNumber(raw)) {
-        Alert.alert("Invalid price", `Enter a valid price for ${item.item_name}.`);
+      const rawValue = item.item_id === selectedPriceItemId ? normalizedValue : item.current_price ?? "";
+      if (!isPositiveNumber(rawValue)) {
+        setPriceError(`Missing a valid baseline price for ${item.item_name}.`);
+        triggerHaptic(Haptics.ImpactFeedbackStyle.Heavy);
         return;
       }
 
-      entries.push({ item_id: item.item_id, price_per_unit: toMoneyString(raw) });
-    }
-
-    try {
-      await saveGlobalDailyPrices({ entries });
-      await loadPriceBootstrap(true);
-      await loadDashboard(true);
-      Alert.alert("Prices saved", "Global prices have been updated for all shops.");
-    } catch (error) {
-      Alert.alert("Unable to save prices", toApiError(error).message);
-    }
-  }
-
-  async function handleToggleShop(shop: ShopRead, isActive: boolean) {
-    try {
-      await updateShopStatus(shop.id, { is_active: isActive });
-      await loadDashboard(true);
-    } catch (error) {
-      Alert.alert("Unable to update shop", toApiError(error).message);
-    }
-  }
-
-  function toggleSection(section: ExpandableSection) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedSections((current) => ({ ...current, [section]: !current[section] }));
-  }
-
-  function toggleShopRow(shopId: number) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedShopId((current) => (current === shopId ? null : shopId));
-  }
-
-  function toggleBillRow(billId: number) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedBillId((current) => (current === billId ? null : billId));
-  }
-
-  function focusShop(shopId: number | null) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setFocusedShopId(shopId);
-  }
-
-  function applyBulkAdjustment(multiplier: number) {
-    if (!priceBootstrap) {
-      return;
-    }
-
-    for (const item of priceBootstrap.items) {
-      const currentValue = priceValues[`price_${item.item_id}`] ?? item.current_price ?? "0";
-      const nextValue = money(currentValue || "0").mul(multiplier).toFixed(2);
-      priceForm.setValue(`price_${item.item_id}`, nextValue, { shouldDirty: true });
-    }
-  }
-
-  function resetPriceChanges() {
-    if (!priceBootstrap) {
-      return;
-    }
-
-    const defaults = Object.fromEntries(
-      priceBootstrap.items.map((item) => [`price_${item.item_id}`, item.current_price ?? ""]),
-    );
-    priceForm.reset(defaults);
-  }
-
-  const salesByShopId = useMemo(
-    () =>
-      new Map(
-        salesSummary.map((item) => [
-          item.shop_id,
-          {
-            totalSales: item.total_sales,
-            shopName: item.shop_name,
-            shopCode: item.shop_code,
-          },
-        ]),
-      ),
-    [salesSummary],
-  );
-
-  const paymentsByShopId = useMemo(
-    () =>
-      new Map(
-        paymentSummary.map((item) => [
-          item.shop_id,
-          { cashTotal: item.cash_total, upiTotal: item.upi_total },
-        ]),
-      ),
-    [paymentSummary],
-  );
-
-  const latestBillByShopId = useMemo(() => {
-    const map = new Map<number, AdminBillSummary>();
-
-    for (const bill of dailyBills) {
-      const current = map.get(bill.shop_id);
-      if (!current || new Date(bill.created_at).getTime() < new Date(bill.created_at).getTime()) {
-        map.set(bill.shop_id, bill);
-      }
-    }
-
-    return map;
-  }, [dailyBills]);
-
-  const shopRows = useMemo<ShopDashboardRow[]>(() => {
-    return shops.map((shop) => {
-      const latestBill = latestBillByShopId.get(shop.id);
-      const payment = paymentsByShopId.get(shop.id);
-      const sales = salesByShopId.get(shop.id);
-      const billCount = dailyBills.filter((bill) => bill.shop_id === shop.id).length;
-      const lastActivityAt = latestBill?.created_at ?? shop.created_at;
-
-      return {
-        shop,
-        totalSales: sales?.totalSales ?? "0",
-        cashTotal: payment?.cashTotal ?? "0",
-        upiTotal: payment?.upiTotal ?? "0",
-        billCount,
-        lastActivityAt,
-        status: getShopStatus(shop, lastActivityAt),
-      };
-    });
-  }, [dailyBills, latestBillByShopId, paymentsByShopId, salesByShopId, shops]);
-
-  const filteredShopRows = useMemo(() => {
-    const rows = shopRows
-      .filter((item) => {
-        if (shopFilter === "active" && !item.shop.is_active) {
-          return false;
-        }
-
-        if (shopFilter === "inactive" && item.shop.is_active) {
-          return false;
-        }
-
-        if (!deferredShopQuery) {
-          return true;
-        }
-
-        const searchable = `${item.shop.name} ${item.shop.code} ${item.shop.username}`.toLowerCase();
-        return searchable.includes(deferredShopQuery);
-      })
-      .sort((left, right) => {
-        if (shopSort === "name") {
-          return left.shop.name.localeCompare(right.shop.name);
-        }
-
-        if (shopSort === "activity") {
-          return new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime();
-        }
-
-        return money(right.totalSales).minus(left.totalSales).toNumber();
+      entries.push({
+        item_id: item.item_id,
+        price_per_unit: toMoneyString(rawValue),
       });
-
-    if (!focusedShopId) {
-      return rows;
     }
 
-    return rows.filter((item) => item.shop.id === focusedShopId);
-  }, [deferredShopQuery, focusedShopId, shopFilter, shopRows, shopSort]);
-
-  const focusedShopName = focusedShopId
-    ? shops.find((shop) => shop.id === focusedShopId)?.name ?? "Focused Shop"
-    : null;
-
-  const totalSales = salesSummary.reduce((sum, item) => sum.plus(money(item.total_sales)), money(0));
-  const totalCash = paymentSummary.reduce((sum, item) => sum.plus(money(item.cash_total)), money(0));
-  const totalUpi = paymentSummary.reduce((sum, item) => sum.plus(money(item.upi_total)), money(0));
-  const totalBillsValue = dailyBills.reduce((sum, item) => sum.plus(money(item.total_amount)), money(0));
-  const averageBillValue = dailyBills.length > 0 ? totalBillsValue.div(dailyBills.length) : money(0);
-  const topPerformer = [...shopRows].sort((left, right) => money(right.totalSales).minus(left.totalSales).toNumber())[0];
-  const paymentTotal = totalCash.plus(totalUpi);
-  const cashShare = paymentTotal.greaterThan(0) ? totalCash.div(paymentTotal).mul(100).toNumber() : 0;
-  const upiShare = paymentTotal.greaterThan(0) ? totalUpi.div(paymentTotal).mul(100).toNumber() : 0;
-  const activeShopsCount = shops.filter((shop) => shop.is_active).length;
-  const severeLogsCount = auditLogs.filter((log) => {
-    const severity = getSeverityMeta(log).label;
-    return severity === "error" || severity === "critical";
-  }).length;
-
-  const healthSummary =
-    severeLogsCount > 0
-      ? { label: "Attention", note: `${severeLogsCount} issue logs`, tone: "warning" as const }
-      : activeShopsCount === shops.length && shops.length > 0
-        ? { label: "Healthy", note: "All shops are running", tone: "success" as const }
-        : { label: "Stable", note: `${shops.length - activeShopsCount} shops disabled`, tone: "neutral" as const };
-
-  const kpiCards = [
-    {
-      label: "Total Revenue",
-      value: formatCompactCurrency(totalSales.toString()),
-      icon: "cash-multiple",
-      note: `${dailyBills.length} bills today`,
-      tone: "primary" as const,
-    },
-    {
-      label: "Active Shops",
-      value: `${activeShopsCount}/${shops.length}`,
-      icon: "store-check-outline",
-      note: focusedShopName ? `Focused on ${focusedShopName}` : "Live shop network",
-      tone: "success" as const,
-    },
-    {
-      label: "Cash Collected",
-      value: formatCompactCurrency(totalCash.toString()),
-      icon: "cash",
-      note: `${cashShare.toFixed(0)}% of collections`,
-      tone: "neutral" as const,
-    },
-    {
-      label: "UPI Collected",
-      value: formatCompactCurrency(totalUpi.toString()),
-      icon: "cellphone-nfc",
-      note: `${upiShare.toFixed(0)}% digital`,
-      tone: "neutral" as const,
-    },
-    {
-      label: "Bills Today",
-      value: `${dailyBills.length}`,
-      icon: "receipt-text-outline",
-      note: `Avg ${formatCompactCurrency(averageBillValue.toString())}`,
-      tone: "neutral" as const,
-    },
-    {
-      label: "Operational Health",
-      value: healthSummary.label,
-      icon: healthSummary.tone === "warning" ? "alert-circle-outline" : "shield-check-outline",
-      note: healthSummary.note,
-      tone: healthSummary.tone,
-    },
-  ];
-
-  const filteredBills = useMemo(() => {
-    const source = focusedShopId ? dailyBills.filter((bill) => bill.shop_id === focusedShopId) : dailyBills;
-
-    return source.filter((bill) => {
-      if (!deferredBillQuery) {
-        return true;
-      }
-
-      const searchable = `${bill.bill_no} ${bill.shop_name} ${bill.status}`.toLowerCase();
-      return searchable.includes(deferredBillQuery);
+    const previousBootstrap = priceBootstrap;
+    setSavingPrice(true);
+    setPriceError(null);
+    setPriceBootstrap({
+      ...priceBootstrap,
+      items: priceBootstrap.items.map((item) =>
+        item.item_id === selectedPriceItemId ? { ...item, current_price: toMoneyString(normalizedValue) } : item,
+      ),
     });
-  }, [dailyBills, deferredBillQuery, focusedShopId]);
 
-  const analyticsRevenueRows = useMemo(() => {
-    const source = focusedShopId ? shopRows.filter((row) => row.shop.id === focusedShopId) : shopRows;
-    return [...source]
-      .sort((left, right) => money(right.totalSales).minus(left.totalSales).toNumber())
-      .slice(0, 5);
-  }, [focusedShopId, shopRows]);
-
-  const maxRevenue = analyticsRevenueRows.reduce(
-    (largest, row) => Math.max(largest, money(row.totalSales).toNumber()),
-    0,
-  );
-
-  const hourlyTrend = useMemo(() => {
-    const buckets = Array.from({ length: 8 }, (_, index) => ({
-      label: `${index + 9}:00`,
-      total: 0,
-      count: 0,
-    }));
-
-    for (const bill of filteredBills) {
-      const hour = new Date(bill.created_at).getHours();
-      if (hour < 9 || hour > 16) {
-        continue;
-      }
-
-      const bucket = buckets[hour - 9];
-      bucket.total += money(bill.total_amount).toNumber();
-      bucket.count += 1;
+    try {
+      await saveGlobalPriceBook({
+        entries,
+        price_date: effectiveDate,
+      });
+      closePriceSheet();
+      showToast("success", `Price saved for ${currentPriceItem.item_name} effective ${effectiveDate}.`);
+    } catch (error) {
+      setPriceBootstrap(previousBootstrap);
+      setPriceError(error instanceof Error ? error.message : "Unable to save price update.");
+      showToast("error", error instanceof Error ? error.message : "Unable to save price update.");
+    } finally {
+      setSavingPrice(false);
     }
+  }
 
-    return buckets;
-  }, [filteredBills]);
+  function handleQuickRefresh() {
+    void loadDashboard(true);
+  }
 
-  const maxHourlyTotal = hourlyTrend.reduce((largest, item) => Math.max(largest, item.total), 0);
+  const bottomNavOffset = 12 + insets.bottom;
+  const fabOffset = 92 + insets.bottom;
+  const bottomSpacer = 126 + insets.bottom;
 
-  const filteredAuditLogs = useMemo(() => {
-    const source = focusedShopId && focusedShopName
-      ? auditLogs.filter((log) => `${log.action} ${log.details}`.toLowerCase().includes(focusedShopName.toLowerCase()))
-      : auditLogs;
+  if (loading && shops.length === 0) {
+    return <DashboardSkeleton palette={palette} />;
+  }
 
-    return source.filter((log) => {
-      const severity = getSeverityMeta(log);
-      const matchesSeverity = severityFilter === "all" || severity.label === severityFilter;
-      const matchesQuery =
-        !deferredAuditQuery ||
-        `${log.action} ${log.details}`.toLowerCase().includes(deferredAuditQuery);
-
-      return matchesSeverity && matchesQuery;
-    });
-  }, [auditLogs, deferredAuditQuery, focusedShopId, focusedShopName, severityFilter]);
-
-  const priceItems = useMemo(() => {
-    if (!priceBootstrap) {
-      return [];
-    }
-
-    return priceBootstrap.items.filter((item) => {
-      if (!deferredPriceSearch) {
-        return true;
-      }
-
-      return `${item.item_name} ${item.base_unit}`.toLowerCase().includes(deferredPriceSearch);
-    });
-  }, [deferredPriceSearch, priceBootstrap]);
-
-  const modifiedPriceCount = useMemo(() => {
-    if (!priceBootstrap) {
-      return 0;
-    }
-
-    return priceBootstrap.items.filter((item) => {
-      const current = item.current_price ?? "";
-      const next = priceValues[`price_${item.item_id}`] ?? "";
-      return next.trim() !== current.trim();
-    }).length;
-  }, [priceBootstrap, priceValues]);
-
-  const topSlot = (
-    <View className="w-full max-w-[768px] self-center gap-3">
-      <View className="rounded-[28px] border border-border bg-card px-4 py-4 shadow-soft">
-        <View className="flex-row items-center justify-between gap-3">
-          <View className="flex-1">
-            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-accentDeep">Admin Console</Text>
-            <Text className="mt-1 text-base font-semibold text-ink">Operations command center</Text>
-            <Text className="mt-1 text-xs text-muted">
-              {lastSyncAt ? `Last sync ${formatRelativeTime(lastSyncAt)}` : "Syncing business data..."}
-            </Text>
-          </View>
-          <View className="flex-row items-center gap-2 rounded-full bg-successSoft px-3 py-2">
-            <View className="h-2.5 w-2.5 rounded-full bg-green-700" />
-            <Text className="text-xs font-semibold text-green-900">LIVE</Text>
-          </View>
+  if (!loading && shops.length === 0 && dashboardError) {
+    return (
+      <SafeAreaView style={[styles.screen, { backgroundColor: palette.background }]}>
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+        <View style={styles.emptyWrap}>
+          <EmptyStateCard
+            title="Unable to load admin dashboard"
+            subtitle={dashboardError}
+            actionLabel="Retry"
+            onAction={() => void loadDashboard(true)}
+            palette={palette}
+            icon="wifi-alert"
+          />
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="mt-4"
-          contentContainerStyle={{ paddingRight: 8 }}
-        >
-          <ActionChip label="Create Shop" icon="store-plus-outline" onPress={() => setModalOpen(true)} tone="primary" />
-          <ActionChip label="Update Prices" icon="cash-edit" onPress={() => void openPricePanel()} />
-          <ActionChip label="Refresh" icon="refresh" onPress={() => void loadDashboard(true)} />
-          {focusedShopId ? (
-            <ActionChip label="Clear Focus" icon="target-remove" onPress={() => focusShop(null)} />
-          ) : null}
-        </ScrollView>
-      </View>
-    </View>
-  );
-
-  if (loading) {
-    return <LoadingState fullscreen label="Loading admin dashboard..." />;
+      </SafeAreaView>
+    );
   }
 
   return (
-    <>
-      <Screen refreshing={refreshing} onRefresh={() => void loadDashboard(true)} topSlot={topSlot}>
-        <View className="gap-4">
-          <Card className="gap-5 overflow-hidden bg-card p-0">
-            <View className="rounded-[30px] bg-accent px-5 py-5">
-              <View className="flex-row flex-wrap items-start justify-between gap-3">
-                <View className="min-w-[220px] flex-1 gap-3">
-                  <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-white/75">Today&apos;s Operations</Text>
-                  <Text className="text-[30px] font-bold leading-[38px] text-white">
-                    One place to watch revenue, shop availability, payments, and critical activity.
-                  </Text>
-                  <Text className="text-sm leading-6 text-white/85">
-                    Designed for quick decisions during live business hours with compact signals and faster scanning.
+    <SafeAreaView style={[styles.screen, { backgroundColor: palette.background }]} edges={["top", "left", "right"]}>
+      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+
+      <View pointerEvents="none" style={styles.backgroundLayer}>
+        <View style={[styles.heroGlow, { backgroundColor: palette.emeraldSoft }]} />
+        <View style={[styles.goldGlow, { backgroundColor: palette.goldSoft }]} />
+      </View>
+
+      <ToastBanner toast={toast} palette={palette} animatedValue={toastAnimation} />
+
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: bottomSpacer }}
+        stickyHeaderIndices={[2]}
+        onScroll={(event) => handleScrollNavigation(event.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadDashboard(true)}
+            tintColor={palette.emerald}
+            colors={[palette.emerald]}
+          />
+        }
+      >
+        <View onLayout={(event) => updateSectionOffset("dashboard", event.nativeEvent.layout.y)}>
+          <View
+            style={[
+              styles.heroCard,
+              adminShadow(palette.shadow, 0.12, 16, 24),
+              { backgroundColor: palette.card, borderColor: palette.border },
+            ]}
+          >
+            <View style={[styles.heroOverlay, { backgroundColor: "rgba(255,255,255,0.38)" }]} />
+            <View style={[styles.heroOrbLarge, { backgroundColor: palette.goldSoft }]} />
+            <View style={[styles.heroOrbSmall, { backgroundColor: palette.emeraldSoft }]} />
+            <View style={[styles.heroAccentBar, { backgroundColor: palette.emerald }]} />
+
+            <View style={styles.heroTopRow}>
+              <View style={[styles.heroBadge, { backgroundColor: palette.emeraldSoft, borderColor: palette.emerald }]}>
+                <Text style={[styles.heroBadgeText, { color: heroPrimaryTextColor }]}>SRI MAHALAKSHMI BROILERS</Text>
+              </View>
+              <View style={styles.heroActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Show notifications"
+                  onPress={() => showToast("success", severeLogsCount > 0 ? `${severeLogsCount} alerts need review.` : "No new critical notifications.")}
+                  style={[styles.iconButton, styles.heroIconButton, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+                >
+                  <MaterialCommunityIcons name="bell-outline" size={18} color={palette.textPrimary} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Refresh dashboard"
+                  onPress={handleQuickRefresh}
+                  style={[styles.iconButton, styles.heroIconButton, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+                >
+                  <MaterialCommunityIcons name="refresh" size={18} color={palette.textPrimary} />
+                </Pressable>
+              </View>
+            </View>
+
+            <Text style={[styles.heroTitle, { color: heroPrimaryTextColor }]}>Smart Billing & Revenue Management</Text>
+            <Text style={[styles.heroSubtitle, { color: heroSecondaryTextColor }]}>
+              Premium mobile command center for poultry billing, branch monitoring, and inventory flow.
+            </Text>
+
+            <View style={styles.heroFooter}>
+              <View style={styles.heroChipRow}>
+                <View style={[styles.liveChip, styles.heroIconButton, { backgroundColor: palette.goldSoft, borderColor: palette.border }]}>
+                  <View style={[styles.liveDot, { backgroundColor: isOfflineSnapshot ? palette.gold : "#86EFAC" }]} />
+                  <Text style={[styles.liveChipText, { color: heroPrimaryTextColor }]}>
+                    {isOfflineSnapshot ? "Offline Snapshot" : "Live Sync"} {lastSyncAt ? formatRelativeTime(lastSyncAt) : ""}
                   </Text>
                 </View>
-                <Card className="min-w-[220px] gap-3 border-white/10 bg-white/95 shadow-none">
-                  <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Command Summary</Text>
-                  <View className="flex-row flex-wrap gap-3">
-                    <View className="min-w-[96px] flex-1 gap-1">
-                      <Text className="text-xs text-muted">Top performer</Text>
-                      <Text className="text-base font-semibold text-ink">
-                        {topPerformer ? topPerformer.shop.name : "No sales yet"}
-                      </Text>
-                    </View>
-                    <View className="min-w-[96px] flex-1 gap-1">
-                      <Text className="text-xs text-muted">Largest bill</Text>
-                      <Text className="text-base font-semibold text-ink">
-                        {dailyBills[0] ? formatCompactCurrency(dailyBills[0].total_amount) : "Rs. 0"}
-                      </Text>
-                    </View>
-                  </View>
-                </Card>
+                <View style={[styles.focusChip, styles.heroIconButton, { backgroundColor: palette.emeraldSoft, borderColor: palette.border }]}>
+                  <Text style={[styles.focusChipLabel, { color: heroLabelTextColor }]}>Focus</Text>
+                  <Text style={[styles.focusChipValue, { color: heroPrimaryTextColor }]}>{selectedShopName}</Text>
+                </View>
+              </View>
+              <View style={styles.heroHighlightRow}>
+                <View style={[styles.heroHighlightCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                  <Text style={[styles.heroHighlightLabel, { color: palette.textMuted }]}>Top Branch</Text>
+                  <Text style={[styles.heroHighlightValue, { color: palette.textPrimary }]}>
+                    {topShop ? topShop.shop.name : "No sales yet"}
+                  </Text>
+                </View>
+                <View style={[styles.heroHighlightCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                  <Text style={[styles.heroHighlightLabel, { color: palette.textMuted }]}>Viewing</Text>
+                  <Text style={[styles.heroHighlightValue, { color: palette.textPrimary }]}>{analyticsReferenceLabel}</Text>
+                </View>
               </View>
             </View>
-            <View className="flex-row flex-wrap gap-3 px-5 pb-5">
-              {kpiCards.map((item) => (
-                <OverviewCard
-                  key={item.label}
-                  label={item.label}
-                  value={item.value}
-                  icon={item.icon}
-                  note={item.note}
-                  tone={item.tone}
-                />
+          </View>
+        </View>
+
+        <View style={styles.selectorStack}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Choose shop focus"
+            onPress={toggleShopSelector}
+            style={[
+              styles.selectorCard,
+              adminShadow(palette.shadow, 0.05, 8, 16),
+              { backgroundColor: palette.card, borderColor: palette.border },
+            ]}
+          >
+            <View style={styles.selectorHeader}>
+              <Text style={[styles.selectorLabel, { color: palette.textMuted }]}>SHOP NAME</Text>
+              <MaterialCommunityIcons
+                name={shopSelectorOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={palette.textPrimary}
+              />
+            </View>
+            <Text style={[styles.selectorValue, { color: palette.textPrimary }]}>{selectedShopName}</Text>
+            <Text style={[styles.selectorHint, { color: palette.textSecondary }]}>
+              Keep the dashboard focused on one branch or switch back to the whole network instantly.
+            </Text>
+          </Pressable>
+
+          {shopSelectorOpen ? (
+            <View
+              style={[
+                styles.selectorDropdown,
+                adminShadow(palette.shadow, 0.05, 8, 14),
+                { backgroundColor: palette.card, borderColor: palette.border },
+              ]}
+            >
+              <Pressable onPress={() => handleSelectShop(null)} style={styles.selectorOption}>
+                <View>
+                  <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>All Branches</Text>
+                  <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>Network-wide analytics</Text>
+                </View>
+                {!selectedShopId ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
+              </Pressable>
+
+              {shops.map((shop) => (
+                <Pressable key={shop.id} onPress={() => handleSelectShop(shop.id)} style={styles.selectorOption}>
+                  <View>
+                    <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>{shop.name}</Text>
+                    <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>
+                      {shop.code} · {shop.is_active ? "Active" : "Disabled"}
+                    </Text>
+                  </View>
+                  {selectedShopId === shop.id ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
+                </Pressable>
               ))}
             </View>
-          </Card>
+          ) : null}
 
-          <SectionCard
-            eyebrow="Shop Management Center"
-            title="Operational shop control"
-            subtitle="Search, filter, sort, and manage shops without losing context."
-            collapsed={!expandedSections.shops}
-            onToggle={() => toggleSection("shops")}
-            rightSlot={
-              focusedShopName ? (
-                <StatusPill label={`Focused: ${focusedShopName}`} tone="neutral" />
-              ) : (
-                <StatusPill label={`${filteredShopRows.length} visible shops`} tone="neutral" />
-              )
-            }
+          {dashboardError && shops.length > 0 ? (
+            <View style={[styles.inlineBanner, { backgroundColor: palette.goldSoft, borderColor: palette.gold }]}>
+              <MaterialCommunityIcons name="wifi-alert" size={18} color={palette.cash} />
+              <Text style={[styles.inlineBannerText, { color: palette.textPrimary }]}>{dashboardError}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={[styles.toolbarWrap, { backgroundColor: palette.background }]}>
+          <View
+            style={[
+              styles.toolbarCard,
+              adminShadow(palette.shadow, 0.05, 8, 16),
+              { backgroundColor: palette.card, borderColor: palette.border },
+            ]}
           >
-            <View className="gap-4">
-              <SearchField
-                value={shopQuery}
-                onChangeText={setShopQuery}
-                placeholder="Search by shop name, code, or username"
-              />
+            <View style={styles.toolbarHeader}>
+              <Text style={[styles.toolbarTitle, { color: palette.textPrimary }]}>Date Filter</Text>
+            </View>
 
-              <View className="gap-3">
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View className="flex-row gap-2 pr-4">
-                    <FilterChip label="All shops" active={shopFilter === "all"} onPress={() => setShopFilter("all")} icon="view-grid-outline" />
-                    <FilterChip label="Active" active={shopFilter === "active"} onPress={() => setShopFilter("active")} icon="check-decagram-outline" />
-                    <FilterChip label="Inactive" active={shopFilter === "inactive"} onPress={() => setShopFilter("inactive")} icon="pause-circle-outline" />
-                  </View>
-                </ScrollView>
+            <View style={styles.segmentRow}>
+              {PERIOD_OPTIONS.map((option) => {
+                const active = analyticsPeriod === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`View ${option.label.toLowerCase()} analytics`}
+                    onPress={() => handleSelectPeriod(option.key)}
+                    style={[
+                      styles.segmentButton,
+                      {
+                        backgroundColor: active ? palette.emerald : palette.surfaceMuted,
+                        borderColor: active ? palette.emerald : palette.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.segmentText, { color: active ? "#FFFFFF" : palette.textSecondary }]}>{option.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View className="flex-row gap-2 pr-4">
-                    <FilterChip label="Sort: Revenue" active={shopSort === "revenue"} onPress={() => setShopSort("revenue")} icon="finance" />
-                    <FilterChip label="Sort: Name" active={shopSort === "name"} onPress={() => setShopSort("name")} icon="sort-alphabetical-ascending" />
-                    <FilterChip label="Sort: Activity" active={shopSort === "activity"} onPress={() => setShopSort("activity")} icon="history" />
-                  </View>
-                </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Choose ${analyticsPeriod} data`}
+              onPress={toggleReferencePicker}
+              style={[
+                styles.referenceSelector,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.border,
+                },
+              ]}
+            >
+              <View style={styles.referenceSelectorText}>
+                <Text style={[styles.referenceSelectorLabel, { color: palette.textMuted }]}>
+                  Select {analyticsPeriod}
+                </Text>
+                <Text style={[styles.referenceSelectorValue, { color: palette.textPrimary }]}>
+                  {analyticsReferenceLabel}
+                </Text>
               </View>
+              <MaterialCommunityIcons
+                name={referencePickerOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={palette.textSecondary}
+              />
+            </Pressable>
 
-              {filteredShopRows.length === 0 ? (
-                <EmptyState
-                  title="No shops match these filters"
-                  description="Try another search, clear the focus state, or create a new shop account."
-                  actionLabel="Clear Filters"
-                  onAction={() => {
-                    setShopQuery("");
-                    setShopFilter("all");
-                    setShopSort("revenue");
-                    focusShop(null);
-                  }}
+            {referencePickerOpen ? (
+              <View
+                style={[
+                  styles.referenceDropdown,
+                  {
+                    backgroundColor: palette.card,
+                    borderColor: palette.border,
+                  },
+                ]}
+              >
+                {analyticsReferenceOptions.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => handleSelectReferenceDate(option.value)}
+                    style={[
+                      styles.referenceOption,
+                      option.value === analyticsReferenceDate && {
+                        backgroundColor: palette.emeraldSoft,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.referenceOptionText, { color: palette.textPrimary }]}>
+                      {option.label}
+                    </Text>
+                    {option.value === analyticsReferenceDate ? (
+                      <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} />
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.metricGrid}>
+          <MetricCard
+            label="Total Revenue"
+            value={totalRevenue.toNumber()}
+            formatter={(value) => formatCurrency(value)}
+            note={`${analyticsReferenceLabel} revenue`}
+            icon="cash-multiple"
+            accent={palette.emerald}
+            accentSoft={palette.emeraldSoft}
+            sparklineValues={metricSparklineValues.revenue}
+            palette={palette}
+          />
+          <MetricCard
+            label="Number of Bills"
+            value={visibleBills.length}
+            formatter={(value) => `${Math.round(value)} Bills`}
+            note={largestBill ? `Largest ${formatCurrency(largestBill.total_amount)}` : `No bills in ${analyticsReferenceLabel}`}
+            icon="receipt-text-outline"
+            accent={palette.gold}
+            accentSoft={palette.goldSoft}
+            sparklineValues={metricSparklineValues.bills}
+            palette={palette}
+          />
+          <MetricCard
+            label="Cash Collection"
+            value={totalCash.toNumber()}
+            formatter={(value) => formatCurrency(value)}
+            note={`${cashShare.toFixed(0)}% of collections`}
+            icon="wallet-outline"
+            accent={palette.cash}
+            accentSoft={palette.cashSoft}
+            sparklineValues={metricSparklineValues.cash}
+            palette={palette}
+          />
+          <MetricCard
+            label="UPI Collection"
+            value={totalUpi.toNumber()}
+            formatter={(value) => formatCurrency(value)}
+            note={`${Math.max(0, 100 - cashShare).toFixed(0)}% digital mix`}
+            icon="qrcode-scan"
+            accent={palette.upi}
+            accentSoft={palette.upiSoft}
+            sparklineValues={metricSparklineValues.upi}
+            palette={palette}
+          />
+        </View>
+
+        <View onLayout={(event) => updateSectionOffset("inventory", event.nativeEvent.layout.y)}>
+          <SectionCard
+            title="Items Sold"
+            subtitle="Fast-moving items first, cleaner search, and compact sales visibility."
+            collapsed={collapsedSections.inventory}
+            onToggle={() => toggleSection("inventory")}
+            action={
+              <View style={styles.sectionBadge}>
+                <Text style={[styles.sectionBadgeText, { color: palette.emeraldDark, backgroundColor: palette.emeraldSoft }]}>
+                  {filteredItemSales.length} items
+                </Text>
+              </View>
+            }
+            palette={palette}
+          >
+            <View style={styles.sectionBody}>
+              <SearchField
+                value={itemSearch}
+                onChangeText={setItemSearch}
+                placeholder="Search items"
+                accessibilityLabel="Search sold items"
+                palette={palette}
+              />
+              {filteredItemSales.length === 0 ? (
+                <EmptyStateCard
+                  title="No item movement found"
+                  subtitle="Try a different branch or search term to find item sales."
+                  actionLabel="Clear Search"
+                  onAction={() => setItemSearch("")}
+                  icon="food-off-outline"
+                  palette={palette}
                 />
               ) : (
-                filteredShopRows.map((item) => {
-                  const statusTone =
-                    item.status === "ACTIVE"
-                      ? "success"
-                      : item.status === "IDLE"
-                        ? "warning"
-                        : item.status === "DISABLED"
-                          ? "danger"
-                          : "neutral";
-                  const isExpanded = expandedShopId === item.shop.id;
-
-                  return (
-                    <Card key={item.shop.id} className="gap-4">
-                      <Pressable onPress={() => toggleShopRow(item.shop.id)} className="gap-4">
-                        <View className="flex-row flex-wrap items-start justify-between gap-3">
-                          <View className="min-w-[180px] flex-1 gap-2">
-                            <View className="flex-row flex-wrap items-center gap-2">
-                              <Text className="text-lg font-semibold text-ink">{item.shop.name}</Text>
-                              <StatusPill label={item.status} tone={statusTone} />
-                            </View>
-                            <View className="flex-row flex-wrap gap-2">
-                              <View className="rounded-full bg-surface px-3 py-1">
-                                <Text className="text-xs font-semibold text-muted">{item.shop.code}</Text>
-                              </View>
-                              <View className="rounded-full bg-surface px-3 py-1">
-                                <Text className="text-xs font-semibold text-muted">{item.shop.username}</Text>
-                              </View>
-                            </View>
-                          </View>
-                          <View className="items-end gap-1">
-                            <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Today Sales</Text>
-                            <Text className="text-xl font-bold text-ink">{formatCurrency(item.totalSales)}</Text>
-                            <Text className="text-xs text-muted">{formatRelativeTime(item.lastActivityAt)}</Text>
-                          </View>
+                <View style={styles.cardStack}>
+                  {filteredItemSales.slice(0, collapsedSections.inventory ? 0 : 8).map((item, index) => {
+                    const itemTotal = money(item.total_amount).toNumber();
+                    const isHot = itemTotal >= itemRevenueAverage;
+                    return (
+                      <Pressable
+                        key={item.item_id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.item_name} sold ${getUnitLabel(item.base_unit, item.quantity_sold)} for ${formatCurrency(item.total_amount)}`}
+                        onPress={() => triggerHaptic()}
+                        style={({ pressed }) => [
+                          styles.itemCard,
+                          adminShadow(palette.shadow, 0.04, 8, 14),
+                          {
+                            backgroundColor: palette.surfaceMuted,
+                            borderColor: palette.border,
+                            marginTop: index === 0 ? 0 : 10,
+                            transform: [{ scale: pressed ? 0.995 : 1 }],
+                          },
+                        ]}
+                      >
+                        <View style={[styles.itemIconWrap, { backgroundColor: palette.card }]}>
+                          <MaterialCommunityIcons name="food-drumstick-outline" size={18} color={palette.emerald} />
                         </View>
-
-                        <View className={cn("flex-row flex-wrap gap-3", isTablet ? "" : "")}>
-                          <View className="min-w-[120px] flex-1 rounded-[22px] bg-surface px-4 py-3">
-                            <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Bills</Text>
-                            <Text className="mt-1 text-lg font-semibold text-ink">{item.billCount}</Text>
+                        <View style={styles.itemContent}>
+                          <View style={styles.itemHeader}>
+                            <View style={styles.itemTextWrap}>
+                              <Text style={[styles.itemTitle, { color: palette.textPrimary }]}>{item.item_name}</Text>
+                              <Text style={[styles.itemSubtitle, { color: palette.textMuted }]}>
+                                {getUnitLabel(item.base_unit, item.quantity_sold)} · {item.bill_count} bills
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.stateChip,
+                                {
+                                  backgroundColor: isHot ? palette.successSoft : palette.goldSoft,
+                                },
+                              ]}
+                            >
+                              <MaterialCommunityIcons
+                                name={isHot ? "trending-up" : "trending-neutral"}
+                                size={14}
+                                color={isHot ? palette.success : palette.cash}
+                              />
+                              <Text style={[styles.stateChipText, { color: isHot ? palette.success : palette.cash }]}>
+                                {isHot ? "Hot" : "Steady"}
+                              </Text>
+                            </View>
                           </View>
-                          <View className="min-w-[120px] flex-1 rounded-[22px] bg-surface px-4 py-3">
-                            <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Cash</Text>
-                            <Text className="mt-1 text-lg font-semibold text-ink">{formatCompactCurrency(item.cashTotal)}</Text>
-                          </View>
-                          <View className="min-w-[120px] flex-1 rounded-[22px] bg-surface px-4 py-3">
-                            <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">UPI</Text>
-                            <Text className="mt-1 text-lg font-semibold text-ink">{formatCompactCurrency(item.upiTotal)}</Text>
-                          </View>
+                          <Text style={[styles.itemAmount, { color: palette.textPrimary }]}>{formatCurrency(item.total_amount)}</Text>
                         </View>
                       </Pressable>
-
-                      <View className="flex-row items-center justify-between gap-3 rounded-[22px] border border-border bg-surface px-4 py-3">
-                        <View className="flex-1 gap-1">
-                          <Text className="text-sm font-semibold text-ink">Shop access</Text>
-                          <Text className="text-xs text-muted">Keep operations live or temporarily disable this login.</Text>
-                        </View>
-                        <View>
-                          <Switch
-                            value={item.shop.is_active}
-                            onValueChange={(value) => void handleToggleShop(item.shop, value)}
-                            trackColor={{ false: "#D6E5D8", true: "#86EFAC" }}
-                            thumbColor={item.shop.is_active ? "#166534" : "#FFFFFF"}
-                          />
-                        </View>
-                      </View>
-
-                      {isExpanded ? (
-                        <View className="gap-3 rounded-[24px] border border-border bg-surface px-4 py-4">
-                          <View className="flex-row flex-wrap gap-2">
-                            <FilterChip
-                              label="Focus Analytics"
-                              active={focusedShopId === item.shop.id}
-                              onPress={() => focusShop(focusedShopId === item.shop.id ? null : item.shop.id)}
-                              icon="chart-box-outline"
-                            />
-                            <FilterChip
-                              label="Open Bills Feed"
-                              active={focusedShopId === item.shop.id}
-                              onPress={() => focusShop(item.shop.id)}
-                              icon="receipt-text-search-outline"
-                            />
-                            <FilterChip
-                              label={item.shop.is_active ? "Disable Shop" : "Enable Shop"}
-                              active={false}
-                              onPress={() => void handleToggleShop(item.shop, !item.shop.is_active)}
-                              icon={item.shop.is_active ? "pause-circle-outline" : "play-circle-outline"}
-                            />
-                          </View>
-                          <View className="flex-row flex-wrap gap-3">
-                            <View className="min-w-[150px] flex-1">
-                              <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Last Activity</Text>
-                              <Text className="mt-1 text-sm font-semibold text-ink">{formatDateTime(item.lastActivityAt)}</Text>
-                            </View>
-                            <View className="min-w-[150px] flex-1">
-                              <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Created</Text>
-                              <Text className="mt-1 text-sm font-semibold text-ink">{formatDateTime(item.shop.created_at)}</Text>
-                            </View>
-                          </View>
-                        </View>
-                      ) : null}
-                    </Card>
-                  );
-                })
+                    );
+                  })}
+                </View>
               )}
             </View>
           </SectionCard>
+        </View>
 
+        <View onLayout={(event) => updateSectionOffset("reports", event.nativeEvent.layout.y)}>
           <SectionCard
-            eyebrow="Price Management"
-            title="Global price update"
-            subtitle="Update today's prices for all shops directly from the dashboard."
-            collapsed={!expandedSections.pricing}
-            onToggle={() => {
-              if (expandedSections.pricing) {
-                toggleSection("pricing");
-                return;
-              }
-
-              void openPricePanel();
-            }}
-            rightSlot={
-              <StatusPill
-                label={
-                  priceLoading
-                    ? "Loading prices"
-                    : priceBootstrap
-                      ? `${modifiedPriceCount} modified`
-                      : "Ready to load"
-                }
-                tone={priceLoading ? "warning" : "neutral"}
-              />
-            }
+            title="Performance Snapshot"
+            subtitle="Cleaner business signals with less visual clutter and faster scanning."
+            collapsed={collapsedSections.reports}
+            onToggle={() => toggleSection("reports")}
+            palette={palette}
           >
-            {priceLoading ? (
-              <LoadingState fullscreen={false} label="Loading price controls..." />
-            ) : priceBootstrap ? (
-              <View className="gap-4">
-                <View className="flex-row flex-wrap gap-3">
-                  <View className="min-w-[180px] flex-1 rounded-[24px] bg-surface px-4 py-4">
-                    <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Items Priced</Text>
-                    <Text className="mt-1 text-2xl font-bold text-ink">{priceBootstrap.items.length}</Text>
-                    <Text className="mt-1 text-xs text-muted">Global list for all shops</Text>
-                  </View>
-                  <View className="min-w-[180px] flex-1 rounded-[24px] bg-surface px-4 py-4">
-                    <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Modified Rows</Text>
-                    <Text className="mt-1 text-2xl font-bold text-ink">{modifiedPriceCount}</Text>
-                    <Text className="mt-1 text-xs text-muted">Unsaved changes in progress</Text>
-                  </View>
+            <View style={styles.reportGrid}>
+              <View style={[styles.reportCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Top Branch</Text>
+                <Text style={[styles.reportValue, { color: palette.textPrimary }]}>{topShop ? topShop.shop.name : "No sales yet"}</Text>
+                <Text style={[styles.reportHint, { color: palette.textSecondary }]}>
+                  {topShop ? formatCurrency(topShop.totalSales) : "Revenue ranking appears once billing starts."}
+                </Text>
+              </View>
+
+              <View style={[styles.reportCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Payment Mix</Text>
+                <View style={[styles.progressTrack, { backgroundColor: palette.card }]}>
+                  <View style={[styles.progressFill, { width: `${cashShare}%`, backgroundColor: palette.cash }]} />
                 </View>
-
-                <SearchField
-                  value={priceSearch}
-                  onChangeText={setPriceSearch}
-                  placeholder="Search items by name or unit"
-                />
-
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View className="flex-row gap-2 pr-4">
-                    <FilterChip label="+5%" active={false} onPress={() => applyBulkAdjustment(1.05)} icon="trending-up" />
-                    <FilterChip label="+10%" active={false} onPress={() => applyBulkAdjustment(1.1)} icon="trending-up" />
-                    <FilterChip label="-5%" active={false} onPress={() => applyBulkAdjustment(0.95)} icon="trending-down" />
-                    <FilterChip label="Reset" active={false} onPress={resetPriceChanges} icon="restore" />
-                    <FilterChip label="Reload" active={false} onPress={() => void openPricePanel(true)} icon="refresh" />
-                  </View>
-                </ScrollView>
-
-                {priceItems.length === 0 ? (
-                  <EmptyState
-                    title="No items match this search"
-                    description="Try another keyword to find the price entry you want to change."
-                    actionLabel="Clear Search"
-                    onAction={() => setPriceSearch("")}
-                  />
-                ) : (
-                  <View className="gap-3">
-                    {priceItems.map((item) => {
-                      const fieldName = `price_${item.item_id}`;
-                      const inputValue = priceValues[fieldName] ?? item.current_price ?? "";
-                      const originalValue = item.current_price ?? "";
-                      const isModified = inputValue.trim() !== originalValue.trim();
-                      const originalAmount = originalValue ? money(originalValue) : money(0);
-                      const nextAmount = inputValue ? money(inputValue) : money(0);
-                      const difference = nextAmount.minus(originalAmount);
-                      const hasDifference = isModified && !difference.isZero();
-
-                      return (
-                        <Card
-                          key={item.item_id}
-                          className={cn("gap-3", isModified ? "border-accent bg-accentSoft/40" : "")}
-                        >
-                          <View className="flex-row flex-wrap items-start justify-between gap-3">
-                            <View className="min-w-[160px] flex-1 gap-1">
-                              <Text className="text-base font-semibold text-ink">{item.item_name}</Text>
-                              <Text className="text-sm text-muted">Unit: {item.base_unit}</Text>
-                            </View>
-                            {isModified ? (
-                              <StatusPill
-                                label={hasDifference ? `${difference.greaterThan(0) ? "+" : ""}${difference.toFixed(2)}` : "Modified"}
-                                tone={hasDifference ? (difference.greaterThan(0) ? "success" : "warning") : "neutral"}
-                              />
-                            ) : (
-                              <StatusPill label="Current" tone="neutral" />
-                            )}
-                          </View>
-
-                          <View className="flex-row flex-wrap gap-3">
-                            <View className="min-w-[120px] flex-1 rounded-[20px] bg-surface px-4 py-3">
-                              <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Previous</Text>
-                              <Text className="mt-1 text-sm font-semibold text-ink">
-                                {originalValue ? formatCurrency(originalValue) : "Not set"}
-                              </Text>
-                            </View>
-                            <View className="min-w-[180px] flex-[1.2]">
-                              <Controller
-                                control={priceForm.control}
-                                name={fieldName}
-                                render={({ field }) => (
-                                  <TextField
-                                    label="Current price"
-                                    keyboardType="decimal-pad"
-                                    value={field.value}
-                                    onChangeText={field.onChange}
-                                    suffix={item.base_unit}
-                                  />
-                                )}
-                              />
-                            </View>
-                          </View>
-                        </Card>
-                      );
-                    })}
-                  </View>
-                )}
-
-                <View className="rounded-[26px] border border-border bg-white px-4 py-4 shadow-pos">
-                  <View className="mb-3 flex-row flex-wrap items-center justify-between gap-3">
-                    <View>
-                      <Text className="text-sm font-semibold text-ink">Ready to save</Text>
-                      <Text className="text-xs text-muted">
-                        {modifiedPriceCount} modified {modifiedPriceCount === 1 ? "item" : "items"}
-                      </Text>
-                    </View>
-                    <StatusPill
-                      label={priceBootstrap.items.length ? `${priceBootstrap.items.length} total items` : "No items"}
-                      tone="neutral"
-                    />
-                  </View>
-                  <Button label="Save Prices" onPress={priceForm.handleSubmit(handleSavePrices)} />
+                <View style={styles.reportMetaRow}>
+                  <Text style={[styles.reportHint, { color: palette.textSecondary }]}>Cash {cashShare.toFixed(0)}%</Text>
+                  <Text style={[styles.reportHint, { color: palette.textSecondary }]}>UPI {Math.max(0, 100 - cashShare).toFixed(0)}%</Text>
                 </View>
               </View>
-            ) : (
-              <EmptyState
-                title="Price controls not loaded"
-                description="Load today's global prices to review and update item rates for all shops."
-                actionLabel="Load Prices"
-                onAction={() => void openPricePanel(true)}
-              />
-            )}
+
+    
+            </View>
           </SectionCard>
+        </View>
 
+        <View onLayout={(event) => updateSectionOffset("billing", event.nativeEvent.layout.y)}>
           <SectionCard
-            eyebrow="Revenue & Payment Analytics"
-            title="Live financial picture"
-            subtitle="Revenue rankings, payment mix, and transaction tempo in one compact view."
-            collapsed={!expandedSections.analytics}
-            onToggle={() => toggleSection("analytics")}
-            rightSlot={<StatusPill label={focusedShopName ? focusedShopName : "All shops"} tone="neutral" />}
+            title="Billing & Audit Feed"
+            subtitle="Grouped transactions, compact filters, and severity-aware audit visibility."
+            collapsed={collapsedSections.billing}
+            onToggle={() => toggleSection("billing")}
+            palette={palette}
           >
-            <View className={cn("gap-4", isTablet && "flex-row flex-wrap")}>
-              <AnalyticsCard
-                title="Revenue leaderboard"
-                subtitle="Quick comparison across today's best-performing shops."
-                className={isTablet ? "basis-[48%]" : undefined}
-              >
-                {analyticsRevenueRows.length === 0 ? (
-                  <EmptyState
-                    title="No sales data"
-                    description="Revenue charts will appear here once shops start billing."
+            <View style={styles.sectionBody}>
+              <View style={styles.feedColumns}>
+                <View style={styles.feedColumn}>
+                  <SearchField
+                    value={billSearch}
+                    onChangeText={setBillSearch}
+                    placeholder="Search bills"
+                    accessibilityLabel="Search bills"
+                    palette={palette}
                   />
-                ) : (
-                  analyticsRevenueRows.map((item) => {
-                    const widthPercent = maxRevenue > 0 ? (money(item.totalSales).toNumber() / maxRevenue) * 100 : 0;
-                    return (
-                      <View key={item.shop.id} className="gap-2">
-                        <View className="flex-row items-center justify-between gap-3">
-                          <Text className="flex-1 text-sm font-semibold text-ink">{item.shop.name}</Text>
-                          <Text className="text-sm font-semibold text-ink">{formatCompactCurrency(item.totalSales)}</Text>
-                        </View>
-                        <View className="h-3 rounded-full bg-surface">
-                          <View className="h-3 rounded-full bg-accent" style={{ width: `${Math.max(widthPercent, 8)}%` }} />
-                        </View>
+
+                  {groupedBills.length === 0 ? (
+                    <EmptyStateCard
+                      title="No bills found"
+                      subtitle="Try another search or branch focus to view receipts."
+                      actionLabel="Clear Filters"
+                      onAction={() => {
+                        setBillSearch("");
+                      }}
+                      icon="receipt-text-remove-outline"
+                      palette={palette}
+                    />
+                  ) : (
+                    groupedBills.map((group) => (
+                      <View key={group.label} style={styles.billGroup}>
+                        <Text style={[styles.billGroupTitle, { color: palette.textMuted }]}>{group.label}</Text>
+                        {group.entries.map((bill) => (
+                          <View key={bill.bill_id} style={[styles.feedCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                            <View style={styles.feedHeader}>
+                              <View style={styles.feedTextWrap}>
+                                <Text style={[styles.feedTitle, { color: palette.textPrimary }]}>{bill.bill_no}</Text>
+                                <Text style={[styles.feedSubtitle, { color: palette.textMuted }]}>{bill.shop_name}</Text>
+                              </View>
+                              <Text style={[styles.feedAmount, { color: palette.textPrimary }]}>{formatCurrency(bill.total_amount)}</Text>
+                            </View>
+                            <View style={styles.feedMetaRow}>
+                              <Text style={[styles.feedMeta, { color: palette.textSecondary }]}>{formatDateTime(bill.created_at)}</Text>
+                              <View style={[styles.stateChip, { backgroundColor: palette.successSoft }]}>
+                                <Text style={[styles.stateChipText, { color: palette.success }]}>{bill.status}</Text>
+                              </View>
+                            </View>
+                          </View>
+                        ))}
                       </View>
-                    );
-                  })
-                )}
-              </AnalyticsCard>
-
-              <AnalyticsCard
-                title="Payment split"
-                subtitle="Cash and UPI distribution across the current billing day."
-                className={isTablet ? "basis-[48%]" : undefined}
-              >
-                <View className="gap-4">
-                  <View className="h-4 overflow-hidden rounded-full bg-surface">
-                    <View className="h-4 bg-accent" style={{ width: `${cashShare}%` }} />
-                    <View className="absolute right-0 top-0 h-4 bg-green-300" style={{ width: `${upiShare}%` }} />
-                  </View>
-                  <View className="flex-row flex-wrap gap-3">
-                    <View className="min-w-[140px] flex-1 rounded-[22px] bg-surface px-4 py-3">
-                      <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Cash</Text>
-                      <Text className="mt-1 text-xl font-bold text-ink">{formatCurrency(totalCash.toString())}</Text>
-                      <Text className="mt-1 text-xs text-muted">{cashShare.toFixed(0)}% share</Text>
-                    </View>
-                    <View className="min-w-[140px] flex-1 rounded-[22px] bg-surface px-4 py-3">
-                      <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">UPI</Text>
-                      <Text className="mt-1 text-xl font-bold text-ink">{formatCurrency(totalUpi.toString())}</Text>
-                      <Text className="mt-1 text-xs text-muted">{upiShare.toFixed(0)}% share</Text>
-                    </View>
-                  </View>
+                    ))
+                  )}
                 </View>
-              </AnalyticsCard>
 
-              <AnalyticsCard
-                title="Hourly billing trend"
-                subtitle="A lightweight read on transaction flow through the day."
-                className={isTablet ? "basis-[48%]" : undefined}
-              >
-                <View className="flex-row items-end justify-between gap-2">
-                  {hourlyTrend.map((point) => {
-                    const heightPercent = maxHourlyTotal > 0 ? (point.total / maxHourlyTotal) * 100 : 0;
+                <View style={styles.feedColumn}>
+                  <SearchField
+                    value={auditSearch}
+                    onChangeText={setAuditSearch}
+                    placeholder="Search audit events"
+                    accessibilityLabel="Search audit events"
+                    palette={palette}
+                  />
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.chipRow}>
+                      {AUDIT_FILTER_OPTIONS.map((chip) => (
+                        <ChipButton
+                          key={chip.key}
+                          label={chip.label}
+                          active={auditFilter === chip.key}
+                          onPress={() => setAuditFilter(chip.key)}
+                          palette={palette}
+                        />
+                      ))}
+                    </View>
+                  </ScrollView>
+
+                  {filteredAuditLogs.length === 0 ? (
+                    <EmptyStateCard
+                      title="No audit events found"
+                      subtitle="Adjust the query or severity chips to surface more activity."
+                      actionLabel="Reset Filters"
+                      onAction={() => {
+                        setAuditSearch("");
+                        setAuditFilter("all");
+                      }}
+                      icon="clipboard-text-search-outline"
+                      palette={palette}
+                    />
+                  ) : (
+                    filteredAuditLogs.slice(0, 6).map((log) => {
+                      const severity = getSeverityMeta(log, palette);
+                      return (
+                        <View key={log.id} style={[styles.auditCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                          <View style={[styles.auditIconWrap, { backgroundColor: severity.chipBackground }]}>
+                            <MaterialCommunityIcons name={severity.icon as never} size={16} color={severity.chipText} />
+                          </View>
+                          <View style={styles.auditContent}>
+                            <View style={styles.auditHeader}>
+                              <Text style={[styles.auditTitle, { color: palette.textPrimary }]}>{log.action}</Text>
+                              <View style={[styles.stateChip, { backgroundColor: severity.chipBackground }]}>
+                                <Text style={[styles.stateChipText, { color: severity.chipText }]}>{severity.label}</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.auditDescription, { color: palette.textSecondary }]}>{log.details}</Text>
+                            <Text style={[styles.auditMeta, { color: palette.textMuted }]}>{formatDateTime(log.created_at)}</Text>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              </View>
+            </View>
+          </SectionCard>
+        </View>
+
+        <View onLayout={(event) => updateSectionOffset("settings", event.nativeEvent.layout.y)}>
+          <SectionCard
+            title="Branch Control"
+            subtitle="Safer branch controls, ranking, and clearer online/offline status."
+            collapsed={collapsedSections.settings}
+            onToggle={() => toggleSection("settings")}
+            action={
+              <PrimaryButton
+                label="Create Shop"
+                onPress={() => setModalOpen(true)}
+                icon="store-plus-outline"
+                variant="secondary"
+                palette={palette}
+              />
+            }
+            palette={palette}
+          >
+            <View style={styles.sectionBody}>
+              {visibleShopRows.length === 0 ? (
+                <EmptyStateCard
+                  title="No branches available"
+                  subtitle="Create a branch to start tracking sales and operations."
+                  actionLabel="Create Branch"
+                  onAction={() => setModalOpen(true)}
+                  icon="store-off-outline"
+                  palette={palette}
+                />
+              ) : (
+                <View style={styles.cardStack}>
+                  {visibleShopRows.map((row, index) => {
+                    const statusColor =
+                      row.status === "ACTIVE"
+                        ? palette.success
+                        : row.status === "IDLE"
+                          ? palette.cash
+                          : row.status === "DISABLED"
+                            ? palette.danger
+                            : palette.textMuted;
+                    const rank = branchRanking.get(row.shop.id) ?? index + 1;
+
                     return (
-                      <View key={point.label} className="flex-1 items-center gap-2">
-                        <Text className="text-[10px] text-muted">{point.count}</Text>
-                        <View className="h-24 w-full items-center justify-end rounded-[18px] bg-surface px-1 pb-2">
-                          <View
-                            className="w-full rounded-full bg-accent"
-                            style={{ height: `${Math.max(heightPercent, point.total > 0 ? 12 : 0)}%` }}
+                      <View
+                        key={row.shop.id}
+                        style={[
+                          styles.branchCard,
+                          adminShadow(palette.shadow, 0.04, 8, 14),
+                          { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+                        ]}
+                      >
+                        <View style={styles.branchHeader}>
+                          <View style={styles.branchTextWrap}>
+                            <View style={styles.branchTitleRow}>
+                              <View style={[styles.rankBadge, { backgroundColor: palette.emeraldSoft }]}>
+                                <Text style={[styles.rankBadgeText, { color: palette.emeraldDark }]}>#{rank}</Text>
+                              </View>
+                              <Text style={[styles.branchName, { color: palette.textPrimary }]}>{row.shop.name}</Text>
+                            </View>
+                            <Text style={[styles.branchMeta, { color: palette.textMuted }]}>
+                              {row.shop.code} · {row.shop.username}
+                            </Text>
+                          </View>
+                          <View style={[styles.stateChip, { backgroundColor: `${statusColor}18` }]}>
+                            <View style={[styles.onlineDot, { backgroundColor: statusColor }]} />
+                            <Text style={[styles.stateChipText, { color: statusColor }]}>{row.status}</Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.branchMetricsRow}>
+                          <View style={styles.branchMetric}>
+                            <Text style={[styles.branchMetricLabel, { color: palette.textMuted }]}>Revenue</Text>
+                            <Text style={[styles.branchMetricValue, { color: palette.textPrimary }]}>{formatCompactCurrency(row.totalSales)}</Text>
+                          </View>
+                          <View style={styles.branchMetric}>
+                            <Text style={[styles.branchMetricLabel, { color: palette.textMuted }]}>Bills</Text>
+                            <Text style={[styles.branchMetricValue, { color: palette.textPrimary }]}>{row.billCount}</Text>
+                          </View>
+                          <View style={styles.branchMetric}>
+                            <Text style={[styles.branchMetricLabel, { color: palette.textMuted }]}>Last Active</Text>
+                            <Text style={[styles.branchMetricValue, { color: palette.textPrimary }]}>{formatRelativeTime(row.lastActivityAt)}</Text>
+                          </View>
+                        </View>
+
+                        <View style={[styles.branchFooter, { borderTopColor: palette.border }]}>
+                          <View style={styles.branchFooterText}>
+                            <Text style={[styles.branchFooterTitle, { color: palette.textPrimary }]}>Shop Access</Text>
+                            <Text style={[styles.branchFooterSubtitle, { color: palette.textMuted }]}>
+                              Enable or disable branch login without leaving this dashboard.
+                            </Text>
+                          </View>
+                          <PrimaryButton
+                            label={row.shop.is_active ? "Disable" : "Enable"}
+                            onPress={() => void handleToggleShop(row.shop.id, !row.shop.is_active)}
+                            variant={row.shop.is_active ? "secondary" : "primary"}
+                            palette={palette}
                           />
                         </View>
-                        <Text className="text-[10px] text-muted">{point.label}</Text>
                       </View>
                     );
                   })}
                 </View>
-              </AnalyticsCard>
-
-              <AnalyticsCard
-                title="Revenue insights"
-                subtitle="Useful business signals for quick decisions."
-                className={isTablet ? "basis-[48%]" : undefined}
-              >
-                <View className="gap-4">
-                  <View className="rounded-[22px] bg-surface px-4 py-4">
-                    <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Top shop</Text>
-                    <Text className="mt-1 text-lg font-semibold text-ink">
-                      {topPerformer ? topPerformer.shop.name : "No sales yet"}
-                    </Text>
-                    <Text className="mt-1 text-sm text-muted">
-                      {topPerformer ? formatCurrency(topPerformer.totalSales) : "Revenue ranking will update once sales arrive."}
-                    </Text>
-                  </View>
-                  <View className="flex-row flex-wrap gap-3">
-                    <View className="min-w-[140px] flex-1 rounded-[22px] bg-surface px-4 py-4">
-                      <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Average bill</Text>
-                      <Text className="mt-1 text-lg font-semibold text-ink">{formatCurrency(averageBillValue.toString())}</Text>
-                    </View>
-                    <View className="min-w-[140px] flex-1 rounded-[22px] bg-surface px-4 py-4">
-                      <Text className="text-xs font-semibold uppercase tracking-[1px] text-muted">Last sync</Text>
-                      <Text className="mt-1 text-lg font-semibold text-ink">
-                        {lastSyncAt ? formatShortTime(lastSyncAt) : "--"}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </AnalyticsCard>
-            </View>
-          </SectionCard>
-
-          <SectionCard
-            eyebrow="Activity & Monitoring"
-            title="Recent bills and audit timeline"
-            subtitle="Compact monitoring surfaces for transaction review and admin traceability."
-            collapsed={!expandedSections.activity}
-            onToggle={() => toggleSection("activity")}
-            rightSlot={<StatusPill label={`${filteredBills.length} bills`} tone="neutral" />}
-          >
-            <View className={cn("gap-4", isTablet && "flex-row items-start")}>
-              <View className="min-w-[280px] flex-1 gap-4">
-                <AnalyticsCard title="Daily bills feed" subtitle="Filter recent receipts and drill into individual transactions.">
-                  <View className="gap-4">
-                    <SearchField
-                      value={billQuery}
-                      onChangeText={setBillQuery}
-                      placeholder="Search bills by number, shop, or status"
-                    />
-                    {filteredBills.length === 0 ? (
-                      <EmptyState
-                        title="No matching bills"
-                        description="Clear the focused shop or search query to view more receipts."
-                        actionLabel="Clear Bill Filters"
-                        onAction={() => {
-                          setBillQuery("");
-                          focusShop(null);
-                        }}
-                      />
-                    ) : (
-                      filteredBills.slice(0, 12).map((bill) => {
-                        const expanded = expandedBillId === bill.bill_id;
-                        return (
-                          <Pressable key={bill.bill_id} onPress={() => toggleBillRow(bill.bill_id)}>
-                            <View className="border-l-2 border-accent pl-4">
-                              <View className="rounded-[22px] bg-surface px-4 py-4">
-                                <View className="flex-row flex-wrap items-center justify-between gap-3">
-                                  <View className="min-w-[140px] flex-1 gap-1">
-                                    <Text className="text-base font-semibold text-ink">{bill.bill_no}</Text>
-                                    <Text className="text-sm text-muted">{bill.shop_name}</Text>
-                                  </View>
-                                  <View className="items-end gap-1">
-                                    <Text className="text-lg font-bold text-ink">{formatCurrency(bill.total_amount)}</Text>
-                                    <StatusPill label={bill.status} tone="success" />
-                                  </View>
-                                </View>
-                                <Text className="mt-2 text-xs text-muted">{formatDateTime(bill.created_at)}</Text>
-                                {expanded ? (
-                                  <View className="mt-4 gap-3 border-t border-border pt-4">
-                                    <View className="flex-row flex-wrap gap-2">
-                                      <FilterChip label="Focus Shop" active={focusedShopId === bill.shop_id} onPress={() => focusShop(bill.shop_id)} icon="target-account" />
-                                      <FilterChip label="View Revenue Context" active={focusedShopId === bill.shop_id} onPress={() => focusShop(bill.shop_id)} icon="chart-line" />
-                                    </View>
-                                    <Text className="text-sm leading-6 text-muted">
-                                      Recorded at {formatShortTime(bill.created_at)} and currently marked as {bill.status.toLowerCase()}.
-                                    </Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                            </View>
-                          </Pressable>
-                        );
-                      })
-                    )}
-                  </View>
-                </AnalyticsCard>
-              </View>
-
-              <View className="min-w-[280px] flex-1 gap-4">
-                <AnalyticsCard title="Audit timeline" subtitle="Severity-aware monitoring for admin operations and exceptions.">
-                  <View className="gap-4">
-                    <SearchField
-                      value={auditQuery}
-                      onChangeText={setAuditQuery}
-                      placeholder="Search actions, events, or keywords"
-                    />
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View className="flex-row gap-2 pr-4">
-                        <FilterChip label="All" active={severityFilter === "all"} onPress={() => setSeverityFilter("all")} icon="tune-variant" />
-                        <FilterChip label="Info" active={severityFilter === "info"} onPress={() => setSeverityFilter("info")} icon="information-outline" />
-                        <FilterChip label="Warning" active={severityFilter === "warning"} onPress={() => setSeverityFilter("warning")} icon="alert-outline" />
-                        <FilterChip label="Error" active={severityFilter === "error"} onPress={() => setSeverityFilter("error")} icon="alert-circle-outline" />
-                        <FilterChip label="Critical" active={severityFilter === "critical"} onPress={() => setSeverityFilter("critical")} icon="alert-decagram-outline" />
-                      </View>
-                    </ScrollView>
-                    {filteredAuditLogs.length === 0 ? (
-                      <EmptyState
-                        title="No audit events found"
-                        description="Adjust the search query or severity filter to view more operational history."
-                        actionLabel="Reset Audit Filters"
-                        onAction={() => {
-                          setAuditQuery("");
-                          setSeverityFilter("all");
-                        }}
-                      />
-                    ) : (
-                      filteredAuditLogs.slice(0, 10).map((log) => {
-                        const severity = getSeverityMeta(log);
-                        return (
-                          <View key={log.id} className="flex-row gap-3">
-                            <View className="items-center">
-                              <View className={cn("rounded-full border p-2", severity.accentClassName)}>
-                                <MaterialCommunityIcons name={severity.icon} size={18} color={severity.tone === "danger" ? "#9F4335" : severity.tone === "warning" ? "#A36A20" : "#244734"} />
-                              </View>
-                              <View className="mt-2 h-full w-px flex-1 bg-border" />
-                            </View>
-                            <View className="flex-1 gap-2 rounded-[22px] bg-surface px-4 py-4">
-                              <View className="flex-row flex-wrap items-center justify-between gap-2">
-                                <Text className="flex-1 text-sm font-semibold uppercase tracking-[1px] text-ink">{log.action}</Text>
-                                <StatusPill label={severity.label} tone={severity.tone} />
-                              </View>
-                              <Text className="text-sm leading-6 text-muted">{log.details}</Text>
-                              <Text className="text-xs text-muted">{formatDateTime(log.created_at)}</Text>
-                            </View>
-                          </View>
-                        );
-                      })
-                    )}
-                  </View>
-                </AnalyticsCard>
-              </View>
+              )}
             </View>
           </SectionCard>
         </View>
-      </Screen>
+      </ScrollView>
 
-      <Modal visible={modalOpen} transparent animationType="slide" onRequestClose={() => setModalOpen(false)}>
-        <View className="flex-1 justify-end bg-black/30">
-          <View className="max-h-[90%] rounded-t-[32px] bg-card p-5">
-            <View className="mb-4 flex-row flex-wrap items-start justify-between gap-3">
-              <View className="flex-1">
-                <SectionHeading
-                  eyebrow="New Account"
-                  title="Create Shop"
-                  subtitle="Launch a new shop account without leaving the dashboard."
-                />
-              </View>
-              <Button label="Close" onPress={() => setModalOpen(false)} variant="secondary" size="sm" />
-            </View>
-            <View className="gap-4">
-              <Controller
-                control={form.control}
-                name="name"
-                render={({ field, fieldState }) => (
-                  <TextField
-                    label="Shop name"
-                    value={field.value}
-                    onChangeText={field.onChange}
-                    error={fieldState.error?.message}
-                  />
-                )}
-              />
-              <Controller
-                control={form.control}
-                name="code"
-                render={({ field, fieldState }) => (
-                  <TextField
-                    label="Shop code (optional)"
-                    autoCapitalize="characters"
-                    value={field.value}
-                    onChangeText={field.onChange}
-                    error={fieldState.error?.message}
-                  />
-                )}
-              />
-              <Button
-                label="Create Shop Account"
-                onPress={form.handleSubmit(handleCreateShop)}
-                loading={creating}
-              />
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </>
+      <BottomNav
+        items={NAV_ITEMS.map((item) => ({ ...item, icon: item.icon as never }))}
+        activeKey={activeNav}
+        onSelect={scrollToSection}
+        palette={palette}
+        bottomOffset={bottomNavOffset}
+      />
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open update price sheet"
+        onPress={() => void openPriceSheet()}
+        style={[
+          styles.fab,
+          adminShadow(palette.shadow, 0.14, 12, 18),
+          { backgroundColor: palette.emerald, bottom: fabOffset },
+        ]}
+      >
+        <MaterialCommunityIcons name="cash-edit" size={20} color="#FFFFFF" />
+        <Text style={styles.fabLabel}>Update Price</Text>
+      </Pressable>
+
+      <PriceUpdateSheet
+        visible={priceSheetOpen}
+        onClose={closePriceSheet}
+        palette={palette}
+        bottomInset={insets.bottom}
+        priceLoading={priceLoading}
+        priceBootstrap={priceBootstrap}
+        currentPriceItem={currentPriceItem}
+        selectedPriceItemId={selectedPriceItemId}
+        onSelectItem={handleSelectPriceItem}
+        draftPrice={draftPrice}
+        onChangeDraftPrice={handleChangeDraftPrice}
+        priceError={priceError}
+        itemPickerOpen={itemPickerOpen}
+        onToggleItemPicker={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setItemPickerOpen((current) => !current);
+        }}
+        effectiveDate={effectiveDate}
+        dateOptions={dateOptions}
+        datePickerOpen={datePickerOpen}
+        onToggleDatePicker={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setDatePickerOpen((current) => !current);
+        }}
+        onSelectDate={handleSelectDate}
+        savingPrice={savingPrice}
+        onSave={() => void handleSavePrice()}
+      />
+
+      <CreateShopSheet
+        visible={modalOpen}
+        onClose={() => setModalOpen(false)}
+        palette={palette}
+        bottomInset={insets.bottom}
+        creating={creating}
+        form={form}
+        onSubmit={form.handleSubmit(handleCreateShop)}
+      />
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
+  backgroundLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroGlow: {
+    position: "absolute",
+    top: -80,
+    right: -20,
+    width: 220,
+    height: 220,
+    borderRadius: 999,
+  },
+  goldGlow: {
+    position: "absolute",
+    bottom: 160,
+    left: -44,
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+  },
+  heroCard: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderRadius: 28,
+    padding: 20,
+  },
+  heroAccentBar: {
+    position: "absolute",
+    left: 20,
+    top: 18,
+    width: 58,
+    height: 4,
+    borderRadius: 999,
+  },
+  heroOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroOrbLarge: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    top: -26,
+    right: -32,
+  },
+  heroOrbSmall: {
+    position: "absolute",
+    width: 116,
+    height: 116,
+    borderRadius: 999,
+    bottom: -18,
+    left: -18,
+  },
+  heroTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 18,
+  },
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  heroBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+  },
+  heroActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroIconButton: {
+    borderWidth: 1,
+  },
+  heroTitle: {
+    color: "#FFFFFF",
+    fontSize: 27,
+    lineHeight: 34,
+    fontWeight: "800",
+  },
+  heroSubtitle: {
+    color: "rgba(255,255,255,0.86)",
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  heroFooter: {
+    marginTop: 20,
+  },
+  heroChipRow: {
+    gap: 10,
+  },
+  heroHighlightRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  heroHighlightCard: {
+    flex: 1,
+    minHeight: 72,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    justifyContent: "center",
+    gap: 4,
+  },
+  heroHighlightLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  heroHighlightValue: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  liveChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+  },
+  liveChipText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  focusChip: {
+    alignSelf: "flex-start",
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  focusChipLabel: {
+    color: "rgba(255,255,255,0.74)",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  focusChipValue: {
+    color: "#FFFFFF",
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  selectorStack: {
+    marginTop: 16,
+    gap: 10,
+  },
+  selectorCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 18,
+  },
+  selectorHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  selectorLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  selectorValue: {
+    marginTop: 10,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "800",
+  },
+  selectorHint: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  selectorDropdown: {
+    borderWidth: 1,
+    borderRadius: 22,
+    overflow: "hidden",
+  },
+  selectorOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  selectorOptionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  selectorOptionSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+  },
+  inlineBanner: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  inlineBannerText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  toolbarWrap: {
+    marginTop: 16,
+    paddingBottom: 12,
+  },
+  toolbarCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 16,
+    gap: 14,
+  },
+  toolbarHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  toolbarTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  segmentRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  referenceSelector: {
+    minHeight: 54,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  referenceSelectorText: {
+    flex: 1,
+    gap: 4,
+  },
+  referenceSelectorLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  referenceSelectorValue: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  referenceDropdown: {
+    borderWidth: 1,
+    borderRadius: 18,
+    overflow: "hidden",
+  },
+  referenceOption: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  referenceOptionText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  segmentButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  metricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  sectionBadge: {
+    justifyContent: "center",
+  },
+  sectionBadgeText: {
+    overflow: "hidden",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  sectionBody: {
+    marginTop: 14,
+    gap: 12,
+  },
+  chipRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingRight: 10,
+  },
+  cardStack: {
+    gap: 0,
+  },
+  itemCard: {
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  itemIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  itemContent: {
+    flex: 1,
+    gap: 8,
+  },
+  itemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  itemTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  itemTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  itemSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  itemAmount: {
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  stateChip: {
+    minHeight: 30,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  stateChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  reportGrid: {
+    marginTop: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  reportCard: {
+    width: "48.2%",
+    minWidth: 150,
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 15,
+    gap: 10,
+  },
+  reportLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  reportValue: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "800",
+  },
+  reportHint: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  progressTrack: {
+    width: "100%",
+    height: 10,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  reportMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  feedColumns: {
+    gap: 18,
+  },
+  feedColumn: {
+    gap: 12,
+  },
+  billGroup: {
+    gap: 10,
+  },
+  billGroupTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  feedCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 14,
+    gap: 9,
+  },
+  feedHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  feedTextWrap: {
+    flex: 1,
+  },
+  feedTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  feedSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+  },
+  feedAmount: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  feedMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  feedMeta: {
+    fontSize: 12,
+  },
+  auditCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+  },
+  auditIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  auditContent: {
+    flex: 1,
+    gap: 7,
+  },
+  auditHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  auditTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    textTransform: "capitalize",
+  },
+  auditDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  auditMeta: {
+    fontSize: 12,
+  },
+  branchCard: {
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 15,
+    gap: 14,
+  },
+  branchHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  branchTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  branchTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  rankBadge: {
+    minWidth: 36,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rankBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  branchName: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  branchMeta: {
+    fontSize: 12,
+  },
+  onlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+  },
+  branchMetricsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  branchMetric: {
+    minWidth: 90,
+    flex: 1,
+    gap: 4,
+  },
+  branchMetricLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  branchMetricValue: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  branchFooter: {
+    borderTopWidth: 1,
+    paddingTop: 14,
+    gap: 12,
+  },
+  branchFooterText: {
+    gap: 4,
+  },
+  branchFooterTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  branchFooterSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  fab: {
+    position: "absolute",
+    right: 18,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  fabLabel: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+  },
+});

@@ -2,6 +2,8 @@ import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "@/components/ui/button";
+import { useShopTranslation } from "@/hooks/use-shop-translation";
+import { cn } from "@/utils/cn";
 
 type CartActionBarProps = {
   total: string;
@@ -12,6 +14,7 @@ type CartActionBarProps = {
 
 export function CartActionBar({ total, disabled, label, onPress }: CartActionBarProps) {
   const insets = useSafeAreaInsets();
+  const { isTamil, t } = useShopTranslation();
 
   return (
     <View className="absolute bottom-0 left-0 right-0 px-4" style={{ paddingBottom: Math.max(insets.bottom, 12) + 12 }}>
@@ -19,8 +22,17 @@ export function CartActionBar({ total, disabled, label, onPress }: CartActionBar
         <View className="rounded-[32px] border border-border bg-card px-4 pb-4 pt-4 shadow-pos">
           <View className="mb-3 flex-row flex-wrap items-center justify-between gap-2">
             <View>
-              <Text className="text-[11px] font-semibold uppercase tracking-[1.8px] text-muted">Live total</Text>
-              <Text className="mt-1 text-xs text-muted">{disabled ? "Add products to unlock checkout" : "Ready for payment review"}</Text>
+              <Text
+                className={cn(
+                  "font-semibold text-muted",
+                  isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[1.8px]",
+                )}
+              >
+                {t("billing.cartLiveTotal")}
+              </Text>
+              <Text className={cn("mt-1 text-xs text-muted", isTamil && "leading-5")}>
+                {disabled ? t("billing.cartUnlockCheckout") : t("billing.cartReadyForPaymentReview")}
+              </Text>
             </View>
             <Text className="text-[30px] font-bold text-ink">{total}</Text>
           </View>

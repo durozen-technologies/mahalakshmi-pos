@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
-import { Button } from "@/components/ui/button";
+import { ShopHeaderActions, ShopHeaderTitle } from "@/components/shop-header";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useAuthHydration } from "@/hooks/use-auth-hydration";
 import { AppStackParamList } from "@/navigation/types";
@@ -9,11 +9,11 @@ import { AdminDashboardScreen } from "@/screens/admin/admin-dashboard-screen";
 import { LoginScreen } from "@/screens/auth/login-screen";
 import { BillingScreen } from "@/screens/shop/billing-screen";
 import { CheckoutScreen } from "@/screens/shop/checkout-screen";
+import { PrinterSetupScreen } from "@/screens/shop/printer-setup-screen";
 import { ReceiptScreen } from "@/screens/shop/receipt-screen";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { usePriceStore } from "@/store/price-store";
-import { useReceiptStore } from "@/store/receipt-store";
 
 const Stack = createNativeStackNavigator<AppStackParamList>();
 
@@ -28,13 +28,11 @@ function useSessionReset() {
   const clearSession = useAuthStore((state) => state.clearSession);
   const resetCart = useCartStore((state) => state.resetCart);
   const clearPrices = usePriceStore((state) => state.clear);
-  const clearLastBill = useReceiptStore((state) => state.clearLastBill);
 
   return () => {
     clearSession();
     resetCart();
     clearPrices();
-    clearLastBill();
   };
 }
 
@@ -48,7 +46,6 @@ export function AppNavigator() {
     if (!token || !user) {
       useCartStore.getState().resetCart();
       usePriceStore.getState().clear();
-      useReceiptStore.getState().clearLastBill();
     }
   }, [token, user]);
 
@@ -71,8 +68,7 @@ export function AppNavigator() {
           name="AdminDashboard"
           component={AdminDashboardScreen}
           options={{
-            title: "Admin Dashboard",
-            headerRight: () => <Button label="Logout" onPress={logout} variant="secondary" size="sm" />,
+            headerShown: false,
           }}
         />
       </Stack.Navigator>
@@ -85,12 +81,34 @@ export function AppNavigator() {
         name="Billing"
         component={BillingScreen}
         options={{
-          title: "Billing",
-          headerRight: () => <Button label="Logout" onPress={logout} variant="secondary" size="sm" />,
+          headerTitle: () => <ShopHeaderTitle titleKey="header.billing" />,
+          headerRight: () => <ShopHeaderActions onLogout={logout} />,
         }}
       />
-      <Stack.Screen name="Checkout" component={CheckoutScreen} options={{ title: "Checkout" }} />
-      <Stack.Screen name="Receipt" component={ReceiptScreen} options={{ title: "Receipt" }} />
+      <Stack.Screen
+        name="Checkout"
+        component={CheckoutScreen}
+        options={{
+          headerTitle: () => <ShopHeaderTitle titleKey="header.checkout" />,
+          headerRight: () => <ShopHeaderActions onLogout={logout} />,
+        }}
+      />
+      <Stack.Screen
+        name="Receipt"
+        component={ReceiptScreen}
+        options={{
+          headerTitle: () => <ShopHeaderTitle titleKey="header.receipt" />,
+          headerRight: () => <ShopHeaderActions onLogout={logout} />,
+        }}
+      />
+      <Stack.Screen
+        name="PrinterSetup"
+        component={PrinterSetupScreen}
+        options={{
+          headerTitle: () => <ShopHeaderTitle titleKey="header.printerSetup" />,
+          headerRight: () => <ShopHeaderActions onLogout={logout} />,
+        }}
+      />
     </Stack.Navigator>
   );
 }

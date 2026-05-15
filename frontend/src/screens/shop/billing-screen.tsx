@@ -10,9 +10,11 @@ import { Screen } from "@/components/ui/screen";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusPill } from "@/components/ui/status-pill";
 import { TextField } from "@/components/ui/text-field";
+import { useShopTranslation } from "@/hooks/use-shop-translation";
 import { useShopBootstrap } from "@/hooks/use-shop-bootstrap";
 import { BillingScreenProps } from "@/navigation/types";
 import { CartItem, getCartTotal, useCartStore } from "@/store/cart-store";
+import { cn } from "@/utils/cn";
 import { money, toQuantityString } from "@/utils/decimal";
 import { formatCurrency, formatUnit } from "@/utils/format";
 
@@ -26,8 +28,23 @@ const ITEM_IMAGES: Record<string, number> = {
   "Chicken Cleaning": require("../../asserts/chicken-cleaning.jpeg"),
 };
 
+const ITEM_DISPLAY_ORDER = [
+  "Chicken",
+  "Chicken without skin",
+  "Country Chicken",
+  "Duck",
+  "Live Country Chicken",
+  "Live Chicken",
+  "Chicken Cleaning",
+] as const;
+
+const ITEM_DISPLAY_ORDER_INDEX = new Map<string, number>(
+  ITEM_DISPLAY_ORDER.map((itemName, index) => [itemName, index]),
+);
+
 export function BillingScreen({ navigation }: BillingScreenProps) {
-  const { bootstrap, loading } = useShopBootstrap();
+  const { bootstrap, loading, error, refresh } = useShopBootstrap();
+  const { isTamil, t, translateItemName } = useShopTranslation();
   const cartItems = useCartStore((state) => state.items);
   const addItem = useCartStore((state) => state.addItem);
   const removeItem = useCartStore((state) => state.removeItem);
@@ -39,18 +56,29 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
 
   function handleAddToCart(item: NonNullable<typeof bootstrap>["items"][number]) {
     const rawQuantity = quantities[item.item_id]?.trim() ?? "";
+    const itemName = translateItemName(item.item_name);
+
     if (!item.current_price) {
-      Alert.alert("Price missing", `Today's price for ${item.item_name} is not available yet.`);
+      Alert.alert(
+        t("billing.alertPriceMissingTitle"),
+        t("billing.alertPriceMissingMessage", { itemName }),
+      );
       return;
     }
 
     if (!rawQuantity || money(rawQuantity).lessThanOrEqualTo(0)) {
-      Alert.alert("Invalid quantity", `Enter a valid quantity for ${item.item_name}.`);
+      Alert.alert(
+        t("billing.alertInvalidQuantityTitle"),
+        t("billing.alertInvalidQuantityMessage", { itemName }),
+      );
       return;
     }
 
     if (item.base_unit === "unit" && !money(rawQuantity).isInteger()) {
-      Alert.alert("Invalid quantity", `${item.item_name} accepts only whole unit values.`);
+      Alert.alert(
+        t("billing.alertInvalidQuantityTitle"),
+        t("billing.alertInvalidUnitQuantityMessage", { itemName }),
+      );
       return;
     }
 
@@ -68,10 +96,38 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
   }
 
   const activeBootstrap = bootstrap;
+  const orderedItems = activeBootstrap
+    ? [...activeBootstrap.items].sort((left, right) => {
+        const leftIndex = ITEM_DISPLAY_ORDER_INDEX.get(left.item_name) ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = ITEM_DISPLAY_ORDER_INDEX.get(right.item_name) ?? Number.MAX_SAFE_INTEGER;
+
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex;
+        }
+
+        return left.item_name.localeCompare(right.item_name);
+      })
+    : [];
   const previewTotal = formatCurrency(getCartTotal(cartItems));
 
   if (loading && !activeBootstrap) {
-    return <LoadingState fullscreen label="Loading today's prices..." />;
+    return <LoadingState fullscreen label={t("billing.loadingPrices")} />;
+  }
+
+  if (!loading && !activeBootstrap && error) {
+    return (
+      <Screen>
+        <EmptyState
+          title={t("billing.unableToLoadShopData")}
+          description={error}
+        />
+        <Button
+          label={t("action.tryAgain")}
+          onPress={() => void refresh()}
+          className="self-start min-w-[150px]"
+        />
+      </Screen>
+    );
   }
 
   if (activeBootstrap && !activeBootstrap.prices_set) {
@@ -79,17 +135,24 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
       <Screen>
         <Card className="gap-5 overflow-hidden bg-card p-0">
           <View className="gap-5 rounded-[30px] bg-accent px-5 py-5">
-            <Text className="text-[11px] font-semibold uppercase tracking-[2.2px] text-white/75">Counter Workspace</Text>
+            <Text
+              className={cn(
+                "font-semibold text-white/75",
+                isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[2.2px]",
+              )}
+            >
+              {t("common.counterWorkspace")}
+            </Text>
             <Text className="text-[30px] font-bold leading-[38px] text-white">{activeBootstrap.shop_name}</Text>
-            <Text className="text-sm leading-6 text-white/85">
-              Billing stays locked until an admin publishes today's prices for this shop.
+            <Text className={cn("text-sm text-white/85", isTamil ? "leading-7" : "leading-6")}>
+              {t("billing.lockedDescription")}
             </Text>
           </View>
         </Card>
 
         <EmptyState
-          title="Waiting for admin price setup"
-          description={`Today's prices for ${activeBootstrap.shop_name} have not been published yet. Ask an admin to update global daily prices from the admin dashboard.`}
+          title={t("billing.waitingAdminPriceSetup")}
+          description={t("billing.waitingAdminPriceSetupDescription", { shopName: activeBootstrap.shop_name })}
         />
       </Screen>
     );
@@ -99,13 +162,14 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
     <View className="flex-1 bg-cream">
       <Screen>
         <SectionHeading
-          eyebrow="Product Grid"
-          title="Add products to the bill"
-          subtitle="Each card shows the active daily rate, a fast quantity field, and a single-tap add action."
+          eyebrow={t("billing.productGrid")}
+          title={t("billing.addProductsTitle")}
+          subtitle={t("billing.addProductsSubtitle")}
         />
 
-        {activeBootstrap?.items.map((item) => {
+        {orderedItems.map((item) => {
           const itemImage = ITEM_IMAGES[item.item_name];
+          const itemName = translateItemName(item.item_name);
 
           return (
             <Card key={item.item_id} className="gap-4">
@@ -120,28 +184,33 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
                 <View className="flex-1 gap-3">
                   <View className="flex-row flex-wrap items-start justify-between gap-3">
                     <View className="flex-1 gap-1">
-                      <Text className="text-lg font-semibold text-ink">{item.item_name}</Text>
+                      <Text className="text-lg font-semibold text-ink">{itemName}</Text>
                       <Text className="text-sm leading-6 text-muted">
-                        {item.current_price ? formatCurrency(item.current_price) : "Price pending"} / {formatUnit(item.base_unit)}
+                        {item.current_price ? formatCurrency(item.current_price) : t("common.pricePending")} / {formatUnit(item.base_unit)}
                       </Text>
-                      <Text className="text-[11px] uppercase tracking-[1.2px] text-muted">
-                        {item.base_unit === "kg" ? "Sold by weight" : "Sold by unit"}
+                      <Text
+                        className={cn(
+                          "text-muted",
+                          isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[1.2px]",
+                        )}
+                      >
+                        {item.base_unit === "kg" ? t("common.soldByWeight") : t("common.soldByUnit")}
                       </Text>
                     </View>
-                    <StatusPill
-                      label={item.current_price ? `Ready - ${formatUnit(item.base_unit)}` : "Price missing"}
+                    {/* <StatusPill
+                      label={item.current_price ? t("billing.readyWithUnit", { unit: formatUnit(item.base_unit) }) : t("billing.priceMissing")}
                       tone={item.current_price ? "success" : "warning"}
-                    />
+                    /> */}
                   </View>
                   <TextField
-                    label={item.base_unit === "kg" ? "Quantity in kg" : "Quantity in units"}
+                    label={item.base_unit === "kg" ? t("common.quantityKg") : t("common.quantityUnits")}
                     keyboardType="decimal-pad"
-                    placeholder={item.base_unit === "kg" ? "Example 1.25" : "Example 2"}
+                    placeholder={item.base_unit === "kg" ? t("common.exampleKg") : t("common.exampleUnits")}
                     value={quantities[item.item_id] ?? ""}
                     onChangeText={(value) => handleQuantityChange(item.item_id, value)}
                   />
                   <Button
-                    label={item.current_price ? "Add To Cart" : "Awaiting Price"}
+                    label={item.current_price ? t("action.addToCart") : t("action.awaitingPrice")}
                     onPress={() => handleAddToCart(item)}
                     disabled={!item.current_price}
                     className="self-start min-w-[150px]"
@@ -153,21 +222,21 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
         })}
 
         <SectionHeading
-          eyebrow="Current Cart"
-          title="Review before checkout"
-          subtitle="Use this final pass to confirm quantities and remove anything before opening payment."
+          eyebrow={t("billing.currentCart")}
+          title={t("billing.reviewBeforeCheckout")}
+          subtitle={t("billing.reviewBeforeCheckoutSubtitle")}
         />
         {cartItems.length === 0 ? (
           <EmptyState
-            title="Cart is empty"
-            description="Add one or more products above to start the current customer bill."
+            title={t("billing.cartEmpty")}
+            description={t("billing.cartEmptyDescription")}
           />
         ) : (
           cartItems.map((item) => (
             <Card key={item.item_id} className="gap-4">
               <View className="flex-row flex-wrap items-start justify-between gap-3">
                 <View className="flex-1 gap-1">
-                  <Text className="text-base font-semibold text-ink">{item.item_name}</Text>
+                  <Text className="text-base font-semibold text-ink">{translateItemName(item.item_name)}</Text>
                   <Text className="text-sm leading-6 text-muted">
                     {item.quantity} {formatUnit(item.base_unit)} x {formatCurrency(item.price_per_unit)}
                   </Text>
@@ -180,9 +249,9 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
                 </View>
               </View>
               <View className="flex-row items-center justify-between rounded-[22px] bg-surface px-4 py-3">
-                <Text className="text-sm text-muted">Remove this line from the active bill</Text>
+                <Text className="text-sm text-muted">{t("billing.removeLine")}</Text>
                 <Button
-                  label="Remove"
+                  label={t("action.remove")}
                   onPress={() => removeItem(item.item_id)}
                   variant="secondary"
                   size="sm"
@@ -195,7 +264,7 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
 
       <CartActionBar
         total={previewTotal}
-        label={cartItems.length === 0 ? "Add Items First" : "Proceed To Checkout"}
+        label={cartItems.length === 0 ? t("action.addItemsFirst") : t("action.proceedToCheckout")}
         disabled={cartItems.length === 0}
         onPress={() => navigation.navigate("Checkout")}
       />

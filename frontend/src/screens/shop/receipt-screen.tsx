@@ -1,38 +1,26 @@
-import { useState } from "react";
-import * as Print from "expo-print";
-import { CommonActions } from "@react-navigation/native";
-import { Alert, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Alert, Linking, Text, View } from "react-native";
+import { WebView } from "react-native-webview";
 
-import { buildReceiptHtml, buildReceiptText } from "@/api/receipts";
+import { CommonActions } from "@react-navigation/native";
+import { buildReceiptHtml } from "@/api/receipts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Screen } from "@/components/ui/screen";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusPill } from "@/components/ui/status-pill";
+import { useShopTranslation } from "@/hooks/use-shop-translation";
 import { ReceiptScreenProps } from "@/navigation/types";
 import { useReceiptStore } from "@/store/receipt-store";
 import { formatCurrency, formatDateTime, formatUnit } from "@/utils/format";
 
 export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
+  const { t, translateItemName } = useShopTranslation();
   const lastBill = useReceiptStore((state) => state.lastBill);
   const clearLastBill = useReceiptStore((state) => state.clearLastBill);
   const bill = route.params?.bill ?? lastBill;
   const [printing, setPrinting] = useState(false);
-
-  if (!bill) {
-    return (
-      <Screen>
-        <Card className="gap-4">
-          <SectionHeading
-            eyebrow="Receipt Missing"
-            title="Receipt data is unavailable"
-            subtitle="This can happen on web after a page reload. Start a new bill to generate the receipt again."
-          />
-          <Button label="Back To Billing" onPress={handleNextBill} />
-        </Card>
-      </Screen>
-    );
-  }
+  const [receiptPreviewHeight, setReceiptPreviewHeight] = useState(320);
 
   function handleNextBill() {
     clearLastBill();
@@ -44,23 +32,66 @@ export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
     );
   }
 
+  const receiptHtml = useMemo(() => (bill ? buildReceiptHtml(bill) : ""), [bill]);
+  const receiptPreviewScript = useMemo(
+    () => `
+      (function() {
+        function postHeight() {
+          var receipt = document.querySelector('.receipt-container');
+          var receiptHeight = receipt ? receipt.getBoundingClientRect().height : 0;
+          var bodyHeight = document.body ? document.body.getBoundingClientRect().height : 0;
+          var height = Math.ceil(Math.max(receiptHeight, bodyHeight));
+          window.ReactNativeWebView.postMessage(String(height));
+        }
+
+        document.documentElement.style.margin = '0';
+        document.documentElement.style.padding = '0';
+        document.documentElement.style.overflow = 'hidden';
+
+        if (document.body) {
+          document.body.style.margin = '0';
+          document.body.style.overflow = 'hidden';
+        }
+
+        window.addEventListener('load', postHeight);
+        window.addEventListener('resize', postHeight);
+        setTimeout(postHeight, 60);
+        setTimeout(postHeight, 180);
+      })();
+      true;
+    `,
+    [],
+  );
+
   async function handlePrintReceipt() {
+    if (!bill) {
+      return;
+    }
+
     try {
       setPrinting(true);
-      await Print.printAsync({
-        html: buildReceiptHtml(bill),
-      });
-    } catch (error) {
-      Alert.alert(
-        "Unable to open printer",
-        "Make sure the mini printer is connected through Android printing or its iPrint app, then try again.",
-      );
+      await Linking.openURL(`printerapp://print?html=${encodeURIComponent(receiptHtml)}`);
+    } catch {
+      Alert.alert(t("checkout.unableToOpenPrinterTitle"), t("checkout.unableToOpenPrinterMessage"));
     } finally {
       setPrinting(false);
     }
   }
 
-  const receiptPreview = buildReceiptText(bill);
+  if (!bill) {
+    return (
+      <Screen>
+        <Card className="gap-4">
+          <SectionHeading
+            eyebrow={t("receipt.missingEyebrow")}
+            title={t("receipt.missingTitle")}
+            subtitle={t("receipt.missingSubtitle")}
+          />
+          <Button label={t("action.backToBilling")} onPress={handleNextBill} />
+        </Card>
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
@@ -68,11 +99,11 @@ export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
         <View className="rounded-[30px] bg-accent px-5 py-5">
           <View className="flex-row flex-wrap items-start justify-between gap-3">
             <View className="flex-1 gap-2">
-              <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-white/75">Receipt Complete</Text>
-              <Text className="text-[30px] font-bold text-white">Receipt Ready</Text>
-              <Text className="text-sm leading-6 text-white/85">
-                The backend confirmed this transaction and marked the payment as settled.
+              <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-white/75">
+                {t("receipt.completeEyebrow")}
               </Text>
+              <Text className="text-[30px] font-bold text-white">{t("receipt.completeTitle")}</Text>
+              <Text className="text-sm leading-6 text-white/85">{t("receipt.completeSubtitle")}</Text>
             </View>
             <StatusPill label={bill.payment.is_settled ? "PAID" : bill.status} tone="success" />
           </View>
@@ -80,26 +111,31 @@ export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
 
         <View className="flex-row flex-wrap gap-3 px-5">
           <View className="min-w-[150px] flex-1 rounded-[24px] bg-surface px-4 py-4">
-            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Shop</Text>
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">{t("receipt.shop")}</Text>
             <Text className="mt-1 text-base font-semibold text-ink">{bill.shop_name}</Text>
             <Text className="mt-1 text-xs text-muted">{bill.bill_no}</Text>
           </View>
           <View className="min-w-[150px] flex-1 rounded-[24px] bg-surface px-4 py-4">
-            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">Total collected</Text>
+            <Text className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted">
+              {t("receipt.totalCollected")}
+            </Text>
             <Text className="mt-1 text-2xl font-bold text-ink">{formatCurrency(bill.total_amount)}</Text>
             <Text className="mt-1 text-xs text-muted">{formatDateTime(bill.created_at)}</Text>
           </View>
         </View>
 
         <View className="flex-row flex-wrap items-start justify-between gap-3 px-5">
-          <Text className="text-lg font-semibold text-ink">Purchased items</Text>
-          <Text className="text-sm text-muted">{bill.items.length} line items</Text>
+          <Text className="text-lg font-semibold text-ink">{t("receipt.purchasedItems")}</Text>
+          <Text className="text-sm text-muted">{t("receipt.lineItems", { count: bill.items.length })}</Text>
         </View>
 
         {bill.items.map((item) => (
-          <View key={item.item_id} className="mx-5 flex-row flex-wrap items-start justify-between gap-3 rounded-[22px] bg-surface px-4 py-4">
+          <View
+            key={item.item_id}
+            className="mx-5 flex-row flex-wrap items-start justify-between gap-3 rounded-[22px] bg-surface px-4 py-4"
+          >
             <View className="flex-1 gap-1">
-              <Text className="text-sm font-semibold text-ink">{item.item_name}</Text>
+              <Text className="text-sm font-semibold text-ink">{translateItemName(item.item_name)}</Text>
               <Text className="text-xs leading-5 text-muted">
                 {item.quantity} {formatUnit(item.unit)} x {formatCurrency(item.price_per_unit)}
               </Text>
@@ -110,21 +146,18 @@ export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
 
         <View className="gap-3 px-5 pb-5">
           <View className="gap-2 rounded-[24px] bg-surface p-4">
+            <Text className="text-sm font-semibold text-ink">{t("receipt.summaryTitle")}</Text>
             <View className="flex-row flex-wrap justify-between gap-2">
-              <Text className="text-sm text-muted">Total amount</Text>
+              <Text className="text-sm text-muted">{t("common.totalAmount")}</Text>
               <Text className="text-sm font-semibold text-ink">{formatCurrency(bill.total_amount)}</Text>
             </View>
             <View className="flex-row flex-wrap justify-between gap-2">
-              <Text className="text-sm text-muted">Cash amount</Text>
+              <Text className="text-sm text-muted">{t("checkout.cashAmount")}</Text>
               <Text className="text-sm font-semibold text-ink">{formatCurrency(bill.payment.cash_amount)}</Text>
             </View>
             <View className="flex-row flex-wrap justify-between gap-2">
-              <Text className="text-sm text-muted">UPI amount</Text>
+              <Text className="text-sm text-muted">{t("checkout.upiAmount")}</Text>
               <Text className="text-sm font-semibold text-ink">{formatCurrency(bill.payment.upi_amount)}</Text>
-            </View>
-            <View className="flex-row flex-wrap justify-between gap-2">
-              <Text className="text-sm text-muted">Receipt number</Text>
-              <Text className="text-sm font-semibold text-ink">{bill.receipt.receipt_number}</Text>
             </View>
           </View>
         </View>
@@ -132,20 +165,37 @@ export function ReceiptScreen({ navigation, route }: ReceiptScreenProps) {
 
       <Card className="gap-4">
         <SectionHeading
-          eyebrow="Printable Preview"
-          title="Receipt text"
-          subtitle="This is the compact plain-text version ready for printing or verification."
+          eyebrow={t("receipt.previewEyebrow")}
+          title={t("receipt.previewTitle")}
+          subtitle={t("receipt.previewSubtitle")}
         />
-        <View className="rounded-[24px] bg-surface p-4">
-          <Text selectable className="text-sm leading-6 text-ink">
-            {receiptPreview}
-          </Text>
+        <View className="rounded-[28px] bg-surface p-2">
+          <View className="w-full self-center overflow-hidden rounded-[20px] border border-black bg-white shadow-soft">
+            <WebView
+              originWhitelist={["*"]}
+              source={{ html: receiptHtml }}
+              injectedJavaScript={receiptPreviewScript}
+              onMessage={(event) => {
+                const nextHeight = Number(event.nativeEvent.data);
+                if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
+                  return;
+                }
+
+                setReceiptPreviewHeight(nextHeight);
+              }}
+              scrollEnabled={false}
+              nestedScrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              style={{ width: "100%", height: receiptPreviewHeight, backgroundColor: "transparent" }}
+            />
+          </View>
         </View>
       </Card>
 
       <View className="gap-3">
-        <Button label="Print Receipt" onPress={() => void handlePrintReceipt()} loading={printing} />
-        <Button label="Start Next Bill" onPress={handleNextBill} variant="secondary" />
+        <Button label={t("action.printReceipt")} onPress={() => void handlePrintReceipt()} loading={printing} />
+        <Button label={t("action.startNextBill")} onPress={handleNextBill} variant="secondary" />
       </View>
     </Screen>
   );

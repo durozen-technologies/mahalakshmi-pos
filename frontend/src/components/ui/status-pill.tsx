@@ -1,5 +1,6 @@
 import { Text, View } from "react-native";
 
+import { useShopTranslation } from "@/hooks/use-shop-translation";
 import { cn } from "@/utils/cn";
 
 type StatusPillProps = {
@@ -8,6 +9,7 @@ type StatusPillProps = {
 };
 
 export function StatusPill({ label, tone = "neutral" }: StatusPillProps) {
+  const { isTamil } = useShopTranslation();
   const toneStyles = {
     success: {
       container: "border-green-200 bg-successSoft",
@@ -34,7 +36,15 @@ export function StatusPill({ label, tone = "neutral" }: StatusPillProps) {
   return (
     <View className={cn("self-start flex-row items-center gap-2 rounded-full border px-3 py-1.5", toneStyles.container)}>
       <View className={cn("h-2 w-2 rounded-full", toneStyles.dot)} />
-      <Text className={cn("text-[11px] font-semibold uppercase tracking-[1.2px]", toneStyles.text)}>{label}</Text>
+      <Text
+        className={cn(
+          "font-semibold",
+          isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[1.2px]",
+          toneStyles.text,
+        )}
+      >
+        {label}
+      </Text>
     </View>
   );
 }

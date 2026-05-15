@@ -95,16 +95,27 @@ function withHttpProtocol(value: string) {
 
 function normalizeApiBaseUrl(value: string) {
   const runtimeHost = getDefaultApiHost();
+  const shouldReplaceHost = (host: string) =>
+    host === "0.0.0.0" ||
+    host === "::" ||
+    host === "127.0.0.1" ||
+    host === "localhost" ||
+    host === "::1";
 
   try {
     const parsedUrl = new URL(withHttpProtocol(value));
-    if (parsedUrl.hostname === "0.0.0.0" || parsedUrl.hostname === "::") {
+    if (shouldReplaceHost(parsedUrl.hostname)) {
       parsedUrl.hostname = runtimeHost;
     }
 
     return parsedUrl.toString().replace(/\/$/, "");
   } catch {
-    return withHttpProtocol(value).replace("0.0.0.0", runtimeHost).replace(/\/$/, "");
+    return withHttpProtocol(value)
+      .replace("0.0.0.0", runtimeHost)
+      .replace("::1", runtimeHost)
+      .replace("127.0.0.1", runtimeHost)
+      .replace("localhost", runtimeHost)
+      .replace(/\/$/, "");
   }
 }
 
@@ -117,3 +128,5 @@ export const API_BASE_URL =
     ? normalizeApiBaseUrl(envApiBaseUrl)
     : `http://${getDefaultApiHost()}:8000`;
 export const AUTH_STORAGE_KEY = "meat-billing-auth";
+export const PRINTER_STORAGE_KEY = "meat-billing-printer";
+export const SHOP_LANGUAGE_STORAGE_KEY = "meat-billing-shop-language";

@@ -1,6 +1,7 @@
 export type UserRole = "admin" | "shop_account";
 export type BaseUnit = "kg" | "unit";
 export type UnitType = "weight" | "count";
+export type AnalyticsPeriod = "date" | "month" | "year";
 
 export interface UserSession {
   id: number;
@@ -55,6 +56,7 @@ export interface DailyPriceEntry {
 
 export interface DailyPriceCreate {
   entries: DailyPriceEntry[];
+  price_date?: string | null;
 }
 
 export interface DailyPriceRead {
@@ -148,6 +150,15 @@ export interface PaymentSplitSummary {
   shop_name: string;
   cash_total: string;
   upi_total: string;
+}
+
+export interface ItemSalesSummary {
+  item_id: number;
+  item_name: string;
+  base_unit: BaseUnit;
+  quantity_sold: string;
+  total_amount: string;
+  bill_count: number;
 }
 
 export interface AdminBillSummary {

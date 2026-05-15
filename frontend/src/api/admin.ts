@@ -1,9 +1,11 @@
 import { apiClient } from "@/api/client";
 import {
   AdminBillSummary,
+  AnalyticsPeriod,
   AuditLogRead,
   DailyPriceCreate,
   DailyPriceRead,
+  ItemSalesSummary,
   PaymentSplitSummary,
   ShopBootstrapResponse,
   ShopCreate,
@@ -27,23 +29,36 @@ export async function updateShopStatus(shopId: number, payload: ShopStatusUpdate
   return data;
 }
 
-export async function fetchSalesSummary() {
-  const { data } = await apiClient.get<ShopSalesSummary[]>("/api/v1/admin/sales-summary");
+export async function fetchSalesSummary(period: AnalyticsPeriod, referenceDate?: string) {
+  const { data } = await apiClient.get<ShopSalesSummary[]>("/api/v1/admin/sales-summary", {
+    params: { period, reference_date: referenceDate },
+  });
   return data;
 }
 
-export async function fetchPaymentSummary() {
-  const { data } = await apiClient.get<PaymentSplitSummary[]>("/api/v1/admin/payment-summary");
+export async function fetchPaymentSummary(period: AnalyticsPeriod, referenceDate?: string) {
+  const { data } = await apiClient.get<PaymentSplitSummary[]>("/api/v1/admin/payment-summary", {
+    params: { period, reference_date: referenceDate },
+  });
   return data;
 }
 
-export async function fetchDailyBills() {
-  const { data } = await apiClient.get<AdminBillSummary[]>("/api/v1/admin/bills");
+export async function fetchDailyBills(period: AnalyticsPeriod, referenceDate?: string) {
+  const { data } = await apiClient.get<AdminBillSummary[]>("/api/v1/admin/bills", {
+    params: { period, reference_date: referenceDate },
+  });
   return data;
 }
 
 export async function fetchAuditLogs() {
   const { data } = await apiClient.get<AuditLogRead[]>("/api/v1/admin/audit-logs");
+  return data;
+}
+
+export async function fetchItemSales(period: AnalyticsPeriod, referenceDate?: string, shopId?: number | null) {
+  const { data } = await apiClient.get<ItemSalesSummary[]>("/api/v1/admin/item-sales", {
+    params: { period, reference_date: referenceDate, shop_id: shopId ?? undefined },
+  });
   return data;
 }
 
