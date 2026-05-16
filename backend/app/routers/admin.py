@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_roles
@@ -6,7 +8,9 @@ from app.core.database import get_db
 from app.models import Shop, User, UserRole
 from app.schemas.admin import (
     AdminBillSummary,
+    AnalyticsPeriod,
     AuditLogRead,
+    ItemSalesSummary,
     PaymentSplitSummary,
     ShopCreate,
     ShopRead,
@@ -18,6 +22,7 @@ from app.services.admin import (
     create_shop_account,
     get_audit_logs,
     get_daily_bills,
+    get_item_sales_summary,
     get_payment_split_summary,
     get_shop_sales_summary,
     list_shops,
@@ -53,18 +58,40 @@ async def update_shop_status(
 
 
 @router.get("/sales-summary", response_model=list[ShopSalesSummary])
-async def sales_summary(db: AsyncSession = Depends(get_db)) -> list[ShopSalesSummary]:
-    return await get_shop_sales_summary(db)
+async def sales_summary(
+    period: AnalyticsPeriod = Query("date"),
+    reference_date: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[ShopSalesSummary]:
+    return await get_shop_sales_summary(db, period, reference_date)
 
 
 @router.get("/payment-summary", response_model=list[PaymentSplitSummary])
-async def payment_summary(db: AsyncSession = Depends(get_db)) -> list[PaymentSplitSummary]:
-    return await get_payment_split_summary(db)
+async def payment_summary(
+    period: AnalyticsPeriod = Query("date"),
+    reference_date: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[PaymentSplitSummary]:
+    return await get_payment_split_summary(db, period, reference_date)
 
 
 @router.get("/bills", response_model=list[AdminBillSummary])
-async def bills(db: AsyncSession = Depends(get_db)) -> list[AdminBillSummary]:
-    return await get_daily_bills(db)
+async def bills(
+    period: AnalyticsPeriod = Query("date"),
+    reference_date: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[AdminBillSummary]:
+    return await get_daily_bills(db, period, reference_date)
+
+
+@router.get("/item-sales", response_model=list[ItemSalesSummary])
+async def item_sales(
+    period: AnalyticsPeriod = Query("date"),
+    reference_date: date | None = Query(default=None),
+    shop_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[ItemSalesSummary]:
+    return await get_item_sales_summary(db, period, reference_date, shop_id)
 
 
 @router.get("/audit-logs", response_model=list[AuditLogRead])

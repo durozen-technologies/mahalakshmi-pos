@@ -7,9 +7,10 @@ type ScreenProps = {
   refreshing?: boolean;
   onRefresh?: () => void;
   topSlot?: ReactNode;
+  scroll?: boolean;
 };
 
-export function Screen({ children, refreshing = false, onRefresh, topSlot }: ScreenProps) {
+export function Screen({ children, refreshing = false, onRefresh, topSlot, scroll = true }: ScreenProps) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -29,21 +30,27 @@ export function Screen({ children, refreshing = false, onRefresh, topSlot }: Scr
         />
       </View>
       {topSlot ? <View className="px-4 pb-2">{topSlot}</View> : null}
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 16,
-          paddingBottom: 112 + insets.bottom,
-          gap: 20,
-        }}
-        refreshControl={
-          onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#244734" /> : undefined
-        }
-      >
-        <View className="w-full max-w-[820px] self-center gap-5">{children}</View>
-      </ScrollView>
+      {scroll ? (
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: 16,
+            paddingBottom: 112 + insets.bottom,
+            gap: 20,
+          }}
+          refreshControl={
+            onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#244734" /> : undefined
+          }
+        >
+          <View className="w-full max-w-[820px] self-center gap-5">{children}</View>
+        </ScrollView>
+      ) : (
+        <View className="flex-1 px-4 pt-4">
+          <View className="w-full max-w-[820px] flex-1 self-center">{children}</View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

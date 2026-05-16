@@ -70,6 +70,8 @@ import {
 
 const createShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
+  username: z.string().min(3, "Login username is required").max(50, "Username is too long"),
+  password: z.string().min(8, "Password must be at least 8 characters").max(128, "Password is too long"),
   code: z.string().optional(),
 });
 
@@ -141,7 +143,7 @@ export function AdminDashboardScreen() {
 
   const form = useForm<CreateShopFormValues>({
     resolver: zodResolver(createShopSchema),
-    defaultValues: { name: "", code: "" },
+    defaultValues: { name: "", username: "", password: "", code: "" },
   });
 
   const {
@@ -463,7 +465,9 @@ export function AdminDashboardScreen() {
     setCreating(true);
     try {
       await createBranch({
-        name: values.name,
+        name: values.name.trim(),
+        username: values.username.trim(),
+        password: values.password,
         code: values.code?.trim() ? values.code.trim() : null,
       });
       form.reset();

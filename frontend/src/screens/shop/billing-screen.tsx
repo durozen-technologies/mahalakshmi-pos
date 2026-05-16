@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Alert, Image, Text, View } from "react-native";
+import React, { memo, useCallback, useMemo, useState } from "react";
+import {
+  Alert,
+  FlatList,
+  Image,
+  ListRenderItem,
+  Text,
+  View,
+} from "react-native";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,15 +17,23 @@ import { Screen } from "@/components/ui/screen";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusPill } from "@/components/ui/status-pill";
 import { TextField } from "@/components/ui/text-field";
-import { useShopTranslation } from "@/hooks/use-shop-translation";
+
 import { useShopBootstrap } from "@/hooks/use-shop-bootstrap";
+import { useShopTranslation } from "@/hooks/use-shop-translation";
+
 import { BillingScreenProps } from "@/navigation/types";
-import { CartItem, getCartTotal, useCartStore } from "@/store/cart-store";
-import { cn } from "@/utils/cn";
+
+import {
+  CartItem,
+  getCartTotal,
+  useCartStore,
+} from "@/store/cart-store";
+import { ItemPriceRead } from "@/types/api";
+
 import { money, toQuantityString } from "@/utils/decimal";
 import { formatCurrency, formatUnit } from "@/utils/format";
 
-const ITEM_IMAGES: Record<string, number> = {
+const ITEM_IMAGES: Record<string, any> = {
   Chicken: require("../../asserts/chicken-with-skin.jpeg"),
   "Chicken without skin": require("../../asserts/chicken-without-skin.jpeg"),
   Duck: require("../../asserts/duck.jpeg"),
@@ -39,193 +54,291 @@ const ITEM_DISPLAY_ORDER = [
 ] as const;
 
 const ITEM_DISPLAY_ORDER_INDEX = new Map<string, number>(
-  ITEM_DISPLAY_ORDER.map((itemName, index) => [itemName, index]),
+  ITEM_DISPLAY_ORDER.map((item, index) => [item, index]),
 );
 
-export function BillingScreen({ navigation }: BillingScreenProps) {
-  const { bootstrap, loading, error, refresh } = useShopBootstrap();
-  const { isTamil, t, translateItemName } = useShopTranslation();
-  const cartItems = useCartStore((state) => state.items);
-  const addItem = useCartStore((state) => state.addItem);
-  const removeItem = useCartStore((state) => state.removeItem);
-  const [quantities, setQuantities] = useState<Record<number, string>>({});
+type ProductCardProps = {
+  item: ItemPriceRead;
+  quantity: string;
+  itemName: string;
+  onChangeQuantity: (itemId: number, value: string) => void;
+  onAddToCart: (item: ItemPriceRead) => void;
+  t: any;
+};
 
-  function handleQuantityChange(itemId: number, value: string) {
-    setQuantities((state) => ({ ...state, [itemId]: value }));
-  }
+const ProductCard = memo(
+  ({
+    item,
+    quantity,
+    itemName,
+    onChangeQuantity,
+    onAddToCart,
+    t,
+  }: ProductCardProps) => {
+    const itemImage = ITEM_IMAGES[item.item_name];
 
-  function handleAddToCart(item: NonNullable<typeof bootstrap>["items"][number]) {
-    const rawQuantity = quantities[item.item_id]?.trim() ?? "";
-    const itemName = translateItemName(item.item_name);
-
-    if (!item.current_price) {
-      Alert.alert(
-        t("billing.alertPriceMissingTitle"),
-        t("billing.alertPriceMissingMessage", { itemName }),
-      );
-      return;
-    }
-
-    if (!rawQuantity || money(rawQuantity).lessThanOrEqualTo(0)) {
-      Alert.alert(
-        t("billing.alertInvalidQuantityTitle"),
-        t("billing.alertInvalidQuantityMessage", { itemName }),
-      );
-      return;
-    }
-
-    if (item.base_unit === "unit" && !money(rawQuantity).isInteger()) {
-      Alert.alert(
-        t("billing.alertInvalidQuantityTitle"),
-        t("billing.alertInvalidUnitQuantityMessage", { itemName }),
-      );
-      return;
-    }
-
-    const cartLine: CartItem = {
-      item_id: item.item_id,
-      item_name: item.item_name,
-      base_unit: item.base_unit,
-      unit_type: item.unit_type,
-      price_per_unit: item.current_price,
-      quantity: item.base_unit === "unit" ? toQuantityString(rawQuantity, true) : rawQuantity,
-    };
-
-    addItem(cartLine);
-    setQuantities((state) => ({ ...state, [item.item_id]: "" }));
-  }
-
-  const activeBootstrap = bootstrap;
-  const orderedItems = activeBootstrap
-    ? [...activeBootstrap.items].sort((left, right) => {
-        const leftIndex = ITEM_DISPLAY_ORDER_INDEX.get(left.item_name) ?? Number.MAX_SAFE_INTEGER;
-        const rightIndex = ITEM_DISPLAY_ORDER_INDEX.get(right.item_name) ?? Number.MAX_SAFE_INTEGER;
-
-        if (leftIndex !== rightIndex) {
-          return leftIndex - rightIndex;
-        }
-
-        return left.item_name.localeCompare(right.item_name);
-      })
-    : [];
-  const previewTotal = formatCurrency(getCartTotal(cartItems));
-
-  if (loading && !activeBootstrap) {
-    return <LoadingState fullscreen label={t("billing.loadingPrices")} />;
-  }
-
-  if (!loading && !activeBootstrap && error) {
     return (
-      <Screen>
-        <EmptyState
-          title={t("billing.unableToLoadShopData")}
-          description={error}
-        />
-        <Button
-          label={t("action.tryAgain")}
-          onPress={() => void refresh()}
-          className="self-start min-w-[150px]"
-        />
-      </Screen>
-    );
-  }
+      <Card className="mb-4 rounded-2xl border border-black/5 bg-white p-4 shadow-sm shadow-black/5">
+        <View className="flex-row gap-4">
+          {itemImage ? (
+            <Image
+              source={itemImage}
+              resizeMode="cover"
+              fadeDuration={150}
+              className="h-24 w-24 rounded-xl bg-[#F3F4F6]"
+            />
+          ) : (
+            <View className="h-24 w-24 rounded-xl bg-[#F3F4F6]" />
+          )}
 
-  if (activeBootstrap && !activeBootstrap.prices_set) {
-    return (
-      <Screen>
-        <Card className="gap-5 overflow-hidden bg-card p-0">
-          <View className="gap-5 rounded-[30px] bg-accent px-5 py-5">
-            <Text
-              className={cn(
-                "font-semibold text-white/75",
-                isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[2.2px]",
-              )}
-            >
-              {t("common.counterWorkspace")}
-            </Text>
-            <Text className="text-[30px] font-bold leading-[38px] text-white">{activeBootstrap.shop_name}</Text>
-            <Text className={cn("text-sm text-white/85", isTamil ? "leading-7" : "leading-6")}>
-              {t("billing.lockedDescription")}
-            </Text>
-          </View>
-        </Card>
+          <View className="flex-1 justify-between">
+            <View>
+              <View className="flex-row items-start justify-between gap-2">
+                <View className="flex-1">
+                  <Text className="text-lg font-semibold text-[#111827]">
+                    {itemName}
+                  </Text>
 
-        <EmptyState
-          title={t("billing.waitingAdminPriceSetup")}
-          description={t("billing.waitingAdminPriceSetupDescription", { shopName: activeBootstrap.shop_name })}
-        />
-      </Screen>
-    );
-  }
-
-  return (
-    <View className="flex-1 bg-cream">
-      <Screen>
-        <SectionHeading
-          eyebrow={t("billing.productGrid")}
-          title={t("billing.addProductsTitle")}
-          subtitle={t("billing.addProductsSubtitle")}
-        />
-
-        {orderedItems.map((item) => {
-          const itemImage = ITEM_IMAGES[item.item_name];
-          const itemName = translateItemName(item.item_name);
-
-          return (
-            <Card key={item.item_id} className="gap-4">
-              <View className="flex-row items-start gap-4">
-                {itemImage ? (
-                  <Image
-                    source={itemImage}
-                    resizeMode="cover"
-                    className="h-24 w-24 rounded-[24px] bg-surface"
-                  />
-                ) : null}
-                <View className="flex-1 gap-3">
-                  <View className="flex-row flex-wrap items-start justify-between gap-3">
-                    <View className="flex-1 gap-1">
-                      <Text className="text-lg font-semibold text-ink">{itemName}</Text>
-                      <Text className="text-sm leading-6 text-muted">
-                        {item.current_price ? formatCurrency(item.current_price) : t("common.pricePending")} / {formatUnit(item.base_unit)}
-                      </Text>
-                      <Text
-                        className={cn(
-                          "text-muted",
-                          isTamil ? "text-xs leading-5 tracking-[0px]" : "text-[11px] uppercase tracking-[1.2px]",
-                        )}
-                      >
-                        {item.base_unit === "kg" ? t("common.soldByWeight") : t("common.soldByUnit")}
-                      </Text>
-                    </View>
-                    {/* <StatusPill
-                      label={item.current_price ? t("billing.readyWithUnit", { unit: formatUnit(item.base_unit) }) : t("billing.priceMissing")}
-                      tone={item.current_price ? "success" : "warning"}
-                    /> */}
-                  </View>
-                  <TextField
-                    label={item.base_unit === "kg" ? t("common.quantityKg") : t("common.quantityUnits")}
-                    keyboardType="decimal-pad"
-                    placeholder={item.base_unit === "kg" ? t("common.exampleKg") : t("common.exampleUnits")}
-                    value={quantities[item.item_id] ?? ""}
-                    onChangeText={(value) => handleQuantityChange(item.item_id, value)}
-                  />
-                  <Button
-                    label={item.current_price ? t("action.addToCart") : t("action.awaitingPrice")}
-                    onPress={() => handleAddToCart(item)}
-                    disabled={!item.current_price}
-                    className="self-start min-w-[150px]"
-                  />
+                  <Text className="mt-1 text-sm text-[#6B7280]">
+                    {item.current_price
+                      ? formatCurrency(item.current_price)
+                      : t("common.pricePending")}{" "}
+                    / {formatUnit(item.base_unit)}
+                  </Text>
                 </View>
-              </View>
-            </Card>
-          );
-        })}
 
+                <StatusPill
+                  label={
+                    item.current_price
+                      ? t("billing.readyWithUnit", {
+                          unit: formatUnit(item.base_unit),
+                        })
+                      : t("billing.priceMissing")
+                  }
+                  tone={item.current_price ? "success" : "warning"}
+                />
+              </View>
+            </View>
+
+            <View className="mt-4 gap-3">
+              <TextField
+                label={
+                  item.base_unit === "kg"
+                    ? t("common.quantityKg")
+                    : t("common.quantityUnits")
+                }
+                keyboardType="decimal-pad"
+                placeholder={
+                  item.base_unit === "kg"
+                    ? t("common.exampleKg")
+                    : t("common.exampleUnits")
+                }
+                value={quantity}
+                onChangeText={(value) =>
+                  onChangeQuantity(item.item_id, value)
+                }
+              />
+
+              <Button
+                label={
+                  item.current_price
+                    ? t("action.addToCart")
+                    : t("action.awaitingPrice")
+                }
+                onPress={() => onAddToCart(item)}
+                disabled={!item.current_price}
+                className="h-11 rounded-xl bg-[#163020]"
+              />
+            </View>
+          </View>
+        </View>
+      </Card>
+    );
+  },
+);
+
+ProductCard.displayName = "ProductCard";
+
+type CartLineProps = {
+  item: CartItem;
+  itemName: string;
+  onRemove: (itemId: number) => void;
+  t: any;
+};
+
+const CartLine = memo(
+  ({ item, itemName, onRemove, t }: CartLineProps) => (
+    <Card className="mb-4 rounded-2xl border border-black/5 bg-white p-4 shadow-sm shadow-black/5">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1">
+          <Text className="text-base font-semibold text-[#111827]">
+            {itemName}
+          </Text>
+          <Text className="mt-1 text-sm text-[#6B7280]">
+            {item.quantity} {formatUnit(item.base_unit)} x {formatCurrency(item.price_per_unit)}
+          </Text>
+          <Text className="mt-3 text-xs text-[#6B7280]">
+            {t("billing.removeLine")}
+          </Text>
+        </View>
+
+        <View className="items-end gap-3">
+          <Text className="text-base font-bold text-[#111827]">
+            {formatCurrency(money(item.quantity).mul(money(item.price_per_unit)).toFixed(2))}
+          </Text>
+          <Button
+            label={t("action.remove")}
+            onPress={() => onRemove(item.item_id)}
+            variant="secondary"
+            size="sm"
+          />
+        </View>
+      </View>
+    </Card>
+  ),
+);
+
+CartLine.displayName = "CartLine";
+
+export function BillingScreen({
+  navigation,
+}: BillingScreenProps) {
+  const { bootstrap, loading, error, refresh } =
+    useShopBootstrap();
+
+  const { t, translateItemName } = useShopTranslation();
+
+  const cartItems = useCartStore((state) => state.items);
+
+  const addItem = useCartStore((state) => state.addItem);
+
+  const removeItem = useCartStore((state) => state.removeItem);
+
+  const [quantities, setQuantities] = useState<
+    Record<number, string>
+  >({});
+
+  const orderedItems = useMemo(() => {
+    if (!bootstrap) return [];
+
+    return [...bootstrap.items].sort((a, b) => {
+      const left =
+        ITEM_DISPLAY_ORDER_INDEX.get(a.item_name) ??
+        Number.MAX_SAFE_INTEGER;
+
+      const right =
+        ITEM_DISPLAY_ORDER_INDEX.get(b.item_name) ??
+        Number.MAX_SAFE_INTEGER;
+
+      return left - right;
+    });
+  }, [bootstrap]);
+
+  const handleQuantityChange = useCallback(
+    (itemId: number, value: string) => {
+      setQuantities((prev) => ({
+        ...prev,
+        [itemId]: value,
+      }));
+    },
+    [],
+  );
+
+  const handleAddToCart = useCallback(
+    (item: ItemPriceRead) => {
+      const rawQuantity =
+        quantities[item.item_id]?.trim() ?? "";
+
+      const itemName = translateItemName(item.item_name);
+
+      if (!item.current_price) {
+        Alert.alert(
+          t("billing.alertPriceMissingTitle"),
+          t("billing.alertPriceMissingMessage", {
+            itemName,
+          }),
+        );
+
+        return;
+      }
+
+      if (
+        !rawQuantity ||
+        money(rawQuantity).lessThanOrEqualTo(0)
+      ) {
+        Alert.alert(
+          t("billing.alertInvalidQuantityTitle"),
+          t("billing.alertInvalidQuantityMessage", {
+            itemName,
+          }),
+        );
+
+        return;
+      }
+
+      const cartLine: CartItem = {
+        item_id: item.item_id,
+        item_name: item.item_name,
+        base_unit: item.base_unit,
+        unit_type: item.unit_type,
+        price_per_unit: item.current_price,
+        quantity:
+          item.base_unit === "unit"
+            ? toQuantityString(rawQuantity, true)
+            : rawQuantity,
+      };
+
+      addItem(cartLine);
+
+      setQuantities((prev) => ({
+        ...prev,
+        [item.item_id]: "",
+      }));
+    },
+    [addItem, quantities, t, translateItemName],
+  );
+
+  const cartTotal = formatCurrency(
+    getCartTotal(cartItems),
+  );
+
+  const handleRemoveItem = useCallback(
+    (itemId: number) => {
+      removeItem(itemId);
+    },
+    [removeItem],
+  );
+
+  const renderProduct: ListRenderItem<ItemPriceRead> =
+    useCallback(
+      ({ item }) => (
+        <ProductCard
+          item={item}
+          quantity={quantities[item.item_id] ?? ""}
+          itemName={translateItemName(item.item_name)}
+          onChangeQuantity={handleQuantityChange}
+          onAddToCart={handleAddToCart}
+          t={t}
+        />
+      ),
+      [
+        quantities,
+        translateItemName,
+        handleQuantityChange,
+        handleAddToCart,
+        t,
+      ],
+    );
+
+  const renderCartFooter = useCallback(
+    () => (
+      <View className="pb-4">
         <SectionHeading
           eyebrow={t("billing.currentCart")}
           title={t("billing.reviewBeforeCheckout")}
           subtitle={t("billing.reviewBeforeCheckoutSubtitle")}
         />
+
         {cartItems.length === 0 ? (
           <EmptyState
             title={t("billing.cartEmpty")}
@@ -233,40 +346,122 @@ export function BillingScreen({ navigation }: BillingScreenProps) {
           />
         ) : (
           cartItems.map((item) => (
-            <Card key={item.item_id} className="gap-4">
-              <View className="flex-row flex-wrap items-start justify-between gap-3">
-                <View className="flex-1 gap-1">
-                  <Text className="text-base font-semibold text-ink">{translateItemName(item.item_name)}</Text>
-                  <Text className="text-sm leading-6 text-muted">
-                    {item.quantity} {formatUnit(item.base_unit)} x {formatCurrency(item.price_per_unit)}
-                  </Text>
-                </View>
-                <View className="items-end gap-2">
-                  <StatusPill label={formatUnit(item.base_unit)} tone="neutral" />
-                  <Text className="text-base font-bold text-ink">
-                    {formatCurrency(money(item.quantity).mul(money(item.price_per_unit)).toFixed(2))}
-                  </Text>
-                </View>
-              </View>
-              <View className="flex-row items-center justify-between rounded-[22px] bg-surface px-4 py-3">
-                <Text className="text-sm text-muted">{t("billing.removeLine")}</Text>
-                <Button
-                  label={t("action.remove")}
-                  onPress={() => removeItem(item.item_id)}
-                  variant="secondary"
-                  size="sm"
-                />
-              </View>
-            </Card>
+            <CartLine
+              key={item.item_id}
+              item={item}
+              itemName={translateItemName(item.item_name)}
+              onRemove={handleRemoveItem}
+              t={t}
+            />
           ))
         )}
+      </View>
+    ),
+    [cartItems, handleRemoveItem, t, translateItemName],
+  );
+
+  if (loading && !bootstrap) {
+    return (
+      <LoadingState
+        fullscreen
+        label={t("billing.loadingPrices")}
+      />
+    );
+  }
+
+  if (error && !bootstrap) {
+    return (
+      <Screen>
+        <EmptyState
+          title={t("billing.unableToLoadShopData")}
+          description={error}
+        />
+
+        <Button
+          label={t("action.tryAgain")}
+          onPress={() => void refresh()}
+          className="mt-4"
+        />
+      </Screen>
+    );
+  }
+
+  return (
+    <View className="flex-1 bg-[#F7F7F5]">
+      <Screen scroll={false}>
+        <View className="mb-5 rounded-3xl bg-[#163020] px-5 py-6">
+          <Text className="text-xs uppercase tracking-[2px] text-white/60">
+            {t("common.counterWorkspace")}
+          </Text>
+
+          <Text className="mt-2 text-2xl font-bold text-white">
+            {bootstrap?.shop_name}
+          </Text>
+
+          <View className="mt-5 flex-row gap-3">
+            <View className="flex-1 rounded-2xl bg-white/10 p-4">
+              <Text className="text-xs text-white/60">
+                {t("billing.currentCart")}
+              </Text>
+
+              <Text className="mt-1 text-xl font-bold text-white">
+                {cartItems.length}
+              </Text>
+            </View>
+
+            <View className="flex-1 rounded-2xl bg-white/10 p-4">
+              <Text className="text-xs text-white/60">
+                {t("billing.reviewBeforeCheckout")}
+              </Text>
+
+              <Text className="mt-1 text-xl font-bold text-white">
+                {cartTotal}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <FlatList
+          style={{ flex: 1 }}
+          data={orderedItems}
+          renderItem={renderProduct}
+          keyExtractor={(item) =>
+            item.item_id.toString()
+          }
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          initialNumToRender={6}
+          maxToRenderPerBatch={4}
+          windowSize={7}
+          contentContainerStyle={{
+            paddingBottom: 180,
+          }}
+          ListFooterComponent={renderCartFooter}
+          ListEmptyComponent={
+            <EmptyState
+              title={t("billing.unableToLoadShopData")}
+              description={t(
+                "billing.cartEmptyDescription",
+              )}
+            />
+          }
+        />
       </Screen>
 
       <CartActionBar
-        total={previewTotal}
-        label={cartItems.length === 0 ? t("action.addItemsFirst") : t("action.proceedToCheckout")}
+        total={cartTotal}
+        label={
+          cartItems.length === 0
+            ? t("action.addItemsFirst")
+            : t("action.proceedToCheckout")
+        }
         disabled={cartItems.length === 0}
-        onPress={() => navigation.navigate("Checkout")}
+        onPress={() =>
+          navigation.navigate("Checkout")
+        }
+        hideWhenKeyboardVisible
       />
     </View>
   );

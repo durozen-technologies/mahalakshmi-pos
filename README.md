@@ -4,6 +4,7 @@ Mobile-first meat billing system with:
 
 - a FastAPI backend for authentication, shop management, daily pricing, billing, receipts, and audit logs
 - an Expo React Native frontend for admin and shop operators
+- Android Bluetooth and USB ESC/POS receipt printing for shop counters
 
 The project is split into two app folders:
 
@@ -18,12 +19,13 @@ The project is split into two app folders:
 4. Each shop sets the full daily price sheet before billing starts.
 5. Counter staff add items to the cart and move to checkout.
 6. The backend accepts a bill only when cash plus UPI exactly matches the total.
-7. A settled receipt and audit log entry are created immediately after checkout.
+7. The receipt screen can print directly to a saved Bluetooth or USB thermal printer on Android, or fall back to system print on web and iOS.
+8. A settled receipt and audit log entry are created immediately after checkout.
 
 ## Tech Stack
 
 - Backend: FastAPI, SQLAlchemy async, PostgreSQL, JWT auth, `uv`
-- Frontend: Expo 54, React Native, TypeScript, React Navigation, Zustand, React Hook Form, NativeWind
+- Frontend: Expo 54, React Native, TypeScript, React Navigation, Zustand, React Hook Form, NativeWind, `@haroldtran/react-native-thermal-printer`
 
 ## Repository Layout
 
@@ -50,7 +52,8 @@ The project is split into two app folders:
 - PostgreSQL
 - Node.js `18+`
 - npm
-- Android emulator, iOS simulator, Expo Go, or web browser for the frontend
+- Android emulator, iOS simulator, or web browser for the frontend
+- Android development build for Bluetooth and USB receipt printing
 
 ## Quick Start
 
@@ -73,6 +76,14 @@ npm install
 npx expo start
 ```
 
+For the full POS printer workflow on Android, build a native development app once and then use the dev client:
+
+```bash
+cd frontend
+npx expo run:android
+npm run start:dev
+```
+
 If you need a custom backend host, set `EXPO_PUBLIC_API_BASE_URL` before starting Expo:
 
 ```bash
@@ -93,6 +104,48 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:8000 npx expo start --lan
 - iOS simulator and local web usually use `http://127.0.0.1:8000`.
 - On a phone, point the frontend to your computer's LAN IP or a public backend tunnel.
 - Expo tunnel mode shares the JavaScript bundle, not the backend API.
+
+## Direct POS Printing
+
+- Bluetooth and USB ESC/POS printing are wired into the frontend shop flow with the `@haroldtran/react-native-thermal-printer` package.
+- Expo Go cannot load this native printer module. Use an Android development build or release build for the printer workflow.
+- The app now includes a `Printer Setup` screen for loading Bluetooth and USB printers, connecting one, saving it, and test-printing a receipt.
+- Once a printer is saved on the device, completed receipts can print directly from the receipt screen.
+- Web and iOS keep the existing `expo-print` system-print fallback.
+
+## Testing
+
+### Backend Tests
+
+Run tests from the backend directory:
+
+```bash
+cd backend
+uv sync
+uv run --with pytest pytest ../test/ -v
+```
+
+Run specific test categories:
+
+```bash
+# Unit tests only
+uv run --with pytest pytest ../test/unit/ -v
+
+# Integration tests only
+uv run --with pytest pytest ../test/integration/ -v
+```
+
+Run with coverage:
+
+```bash
+uv run --with pytest --with pytest-cov pytest ../test/ --cov=app --cov-report=html
+```
+
+Notes:
+
+- The test directory lives at the repository root, so the path must be `../test/` when running from `backend/`.
+- `pytest` is not currently listed as a backend dependency, so `uv run --with pytest ...` avoids the missing module error.
+- Coverage flags require `pytest-cov`, so include `--with pytest-cov` when you want an HTML report.
 
 ## Helpful URLs
 

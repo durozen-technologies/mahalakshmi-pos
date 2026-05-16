@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from app.models import UserRole
 from app.schemas.common import ORMModel
@@ -16,11 +16,13 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
 
-    @model_validator(mode="after")
-    def validate_password_match(self) -> "RegisterRequest":
-        if self.password != self.confirm_password:
+    @field_validator("confirm_password")
+    @classmethod
+    def validate_password_match(cls, confirm_password: str, info: ValidationInfo) -> str:
+        password = info.data.get("password")
+        if password is not None and password != confirm_password:
             raise ValueError("Passwords do not match")
-        return self
+        return confirm_password
 
 
 class UserSession(ORMModel):

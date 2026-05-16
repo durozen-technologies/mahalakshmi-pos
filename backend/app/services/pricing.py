@@ -79,9 +79,9 @@ async def create_daily_prices(
     payload: DailyPriceCreate,
     actor: User,
 ) -> list[DailyPriceRead]:
-    today = date.today()
+    target_date = payload.price_date or date.today()
     existing_prices_result = await db.scalars(
-        select(DailyPrice).where(DailyPrice.shop_id == shop.id, DailyPrice.price_date == today)
+        select(DailyPrice).where(DailyPrice.shop_id == shop.id, DailyPrice.price_date == target_date)
     )
     existing_prices = existing_prices_result.all()
     existing_prices_by_item_id = {price.item_id: price for price in existing_prices}
@@ -113,7 +113,7 @@ async def create_daily_prices(
                 item_id=item.id,
                 price_per_unit=entry.price_per_unit,
                 unit=item.base_unit,
-                price_date=today,
+                price_date=target_date,
             )
             db.add(daily_price)
         else:
@@ -126,7 +126,7 @@ async def create_daily_prices(
         db,
         actor.id,
         "daily_price_setup",
-        f"Saved {len(saved_prices)} daily prices for shop {shop.code} on {today.isoformat()}",
+        f"Saved {len(saved_prices)} daily prices for shop {shop.code} on {target_date.isoformat()}",
     )
     await db.commit()
     for price in saved_prices:
@@ -185,7 +185,7 @@ async def create_global_daily_prices(
     actor: User,
 ) -> list[DailyPriceRead]:
     """Create daily prices for all shops at once (global pricing)."""
-    today = date.today()
+    target_date = payload.price_date or date.today()
     
     # Get all shops
     shops_result = await db.scalars(select(Shop).where(Shop.is_active.is_(True)))
@@ -214,7 +214,7 @@ async def create_global_daily_prices(
     # For each shop, create or update daily prices
     for shop in shops:
         existing_prices_result = await db.scalars(
-            select(DailyPrice).where(DailyPrice.shop_id == shop.id, DailyPrice.price_date == today)
+            select(DailyPrice).where(DailyPrice.shop_id == shop.id, DailyPrice.price_date == target_date)
         )
         existing_prices = existing_prices_result.all()
         existing_prices_by_item_id = {price.item_id: price for price in existing_prices}
@@ -234,7 +234,7 @@ async def create_global_daily_prices(
                     item_id=item.id,
                     price_per_unit=entry.price_per_unit,
                     unit=item.base_unit,
-                    price_date=today,
+                    price_date=target_date,
                 )
                 db.add(daily_price)
             else:
@@ -247,7 +247,7 @@ async def create_global_daily_prices(
         db,
         actor.id,
         "global_pricing",
-        f"Set global prices for {len(shops)} shops on {today.isoformat()}",
+        f"Set global prices for {len(shops)} shops on {target_date.isoformat()}",
     )
     await db.commit()
     for price in saved_prices:

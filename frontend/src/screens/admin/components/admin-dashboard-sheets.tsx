@@ -25,6 +25,8 @@ import { EmptyStateCard, PrimaryButton } from "./admin-dashboard-primitives";
 
 type CreateShopFormValues = {
   name: string;
+  username: string;
+  password: string;
   code?: string;
 };
 
@@ -382,7 +384,7 @@ export function CreateShopSheet({
               <View style={styles.headerTextWrap}>
                 <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>Create Shop</Text>
                 <Text style={[styles.sheetSubtitle, { color: palette.textMuted }]}>
-                  Add a new branch account with a clean two-field setup.
+                  Add a new branch account with shop details and login credentials.
                 </Text>
               </View>
               <Pressable
@@ -419,6 +421,69 @@ export function CreateShopSheet({
                           placeholderTextColor={palette.textMuted}
                           style={[styles.sheetInput, { color: palette.textPrimary }]}
                           accessibilityLabel="Enter shop name"
+                        />
+                      </View>
+                      {fieldState.error ? <Text style={[styles.inlineError, { color: palette.danger }]}>{fieldState.error.message}</Text> : null}
+                    </View>
+                  )}
+                />
+
+                <Controller
+                  control={form.control}
+                  name="username"
+                  render={({ field, fieldState }) => (
+                    <View style={styles.fieldGroup}>
+                      <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Login Username</Text>
+                      <View
+                        style={[
+                          styles.sheetField,
+                          {
+                            backgroundColor: palette.backgroundElevated,
+                            borderColor: fieldState.error ? palette.danger : palette.border,
+                          },
+                        ]}
+                      >
+                        <TextInput
+                          value={field.value}
+                          onChangeText={field.onChange}
+                          placeholder="Enter login username"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          placeholderTextColor={palette.textMuted}
+                          style={[styles.sheetInput, { color: palette.textPrimary }]}
+                          accessibilityLabel="Enter login username"
+                        />
+                      </View>
+                      {fieldState.error ? <Text style={[styles.inlineError, { color: palette.danger }]}>{fieldState.error.message}</Text> : null}
+                    </View>
+                  )}
+                />
+
+                <Controller
+                  control={form.control}
+                  name="password"
+                  render={({ field, fieldState }) => (
+                    <View style={styles.fieldGroup}>
+                      <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Login Password</Text>
+                      <View
+                        style={[
+                          styles.sheetField,
+                          {
+                            backgroundColor: palette.backgroundElevated,
+                            borderColor: fieldState.error ? palette.danger : palette.border,
+                          },
+                        ]}
+                      >
+                        <TextInput
+                          value={field.value}
+                          onChangeText={field.onChange}
+                          placeholder="Enter login password"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          secureTextEntry
+                          placeholderTextColor={palette.textMuted}
+                          style={[styles.sheetInput, { color: palette.textPrimary }]}
+                          accessibilityLabel="Enter login password"
                         />
                       </View>
                       {fieldState.error ? <Text style={[styles.inlineError, { color: palette.danger }]}>{fieldState.error.message}</Text> : null}

@@ -14,6 +14,7 @@ class DailyPriceEntry(BaseModel):
 
 class DailyPriceCreate(BaseModel):
     entries: list[DailyPriceEntry]
+    price_date: date | None = None
 
 
 class DailyPriceRead(ORMModel):

@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import MetaData, select
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -21,7 +22,32 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-engine = create_async_engine(settings.database_url, future=True)
+def _build_engine_config(database_url: str) -> tuple[URL | str, dict[str, str]]:
+    url = make_url(database_url)
+    connect_args: dict[str, str] = {}
+
+    if url.drivername in {"postgres", "postgresql"}:
+        url = url.set(drivername="postgresql+asyncpg")
+
+    sslmode = url.query.get("sslmode")
+    if sslmode:
+        connect_args["ssl"] = sslmode
+        url = url.set(query={key: value for key, value in url.query.items() if key != "sslmode"})
+
+    return url, connect_args
+
+
+engine_url, engine_connect_args = _build_engine_config(settings.database_url)
+engine = create_async_engine(
+    engine_url,
+    future=True,
+    connect_args=engine_connect_args,
+    pool_pre_ping=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_timeout=settings.db_pool_timeout,
+    pool_recycle=settings.db_pool_recycle,
+)
 SessionLocal = async_sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

@@ -1,18 +1,36 @@
 from contextlib import asynccontextmanager
+import logging
+import socket
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import get_settings
 from app.core.database import initialize_database
+from app.core.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from app.routers import api_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    await initialize_database()
+async def lifespan(app: FastAPI):
+    app.state.database_ready = False
+    app.state.database_error = None
+
+    try:
+        await initialize_database()
+        app.state.database_ready = True
+    except Exception as exc:
+        app.state.database_error = str(exc)
+        logger.exception("Database initialization failed during startup.")
+        if settings.production:
+            raise
     yield
 
 
@@ -20,14 +38,50 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None if settings.production else "/docs",
+    redoc_url=None if settings.production else "/redoc",
+    openapi_url=None if settings.production else f"{settings.api_v1_prefix}/openapi.json",
 )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def handle_database_error(_: Request, exc: SQLAlchemyError) -> JSONResponse:
+    logger.exception("Database request failed.", exc_info=exc)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Database is unavailable. Please verify the database host and try again.",
+        },
+    )
+
+
+@app.exception_handler(socket.gaierror)
+async def handle_database_dns_error(_: Request, exc: socket.gaierror) -> JSONResponse:
+    logger.exception("Database host resolution failed.", exc_info=exc)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Database host could not be resolved. Check DATABASE_URL host and network DNS access.",
+        },
+    )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if settings.enable_request_logging:
+    app.add_middleware(RequestLoggingMiddleware)
+if settings.enable_rate_limit:
+    app.add_middleware(
+        RateLimitMiddleware,
+        requests=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+        exempt_paths=settings.rate_limit_exempt_paths,
+    )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)

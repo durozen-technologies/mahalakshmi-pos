@@ -17,7 +17,6 @@ __pycache__/
 
 # Python backend
 backend/.env
-backend/.env.example
 backend/.git.backup/
 backend/.python-version
 backend/.venv/
@@ -25,9 +24,14 @@ backend/__pycache__/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.ruff_cache/
+backend/.pyre/
 backend/.coverage
+backend/.coverage.*
 backend/htmlcov/
 backend/*.sqlite3
+backend/*.log
+backend/*.pid
+backend/*.pid.lock
 backend/uv.lock
 
 # Node/Expo frontend

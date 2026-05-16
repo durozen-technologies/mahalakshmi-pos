@@ -11,15 +11,22 @@ from app.schemas.auth import LoginResponse, RegisterRequest, UserSession
 from app.services.audit import log_action
 
 
-def _build_user_session(user: User, *, requires_price_setup: bool = False, next_screen: str) -> UserSession:
+def _build_user_session(
+    user: User,
+    *,
+    shop_id: int | None = None,
+    shop_name: str | None = None,
+    requires_price_setup: bool = False,
+    next_screen: str,
+) -> UserSession:
     return UserSession(
         id=user.id,
         username=user.username,
         role=user.role,
         is_active=user.is_active,
         created_at=user.created_at,
-        shop_id=user.shop.id if user.shop else None,
-        shop_name=user.shop.name if user.shop else None,
+        shop_id=shop_id,
+        shop_name=shop_name,
         requires_price_setup=requires_price_setup,
         next_screen=next_screen,
     )
@@ -34,13 +41,14 @@ async def login_user(db: AsyncSession, username: str, password: str) -> LoginRes
     if user.role == UserRole.SHOP_ACCOUNT and (user.shop is None or not user.shop.is_active):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Shop account is disabled")
 
+    shop = user.shop
     requires_price_setup = False
     next_screen = "admin_dashboard"
 
-    if user.role == UserRole.SHOP_ACCOUNT and user.shop is not None:
+    if user.role == UserRole.SHOP_ACCOUNT and shop is not None:
         has_today_price = await db.scalar(
             select(DailyPrice.id).where(
-                DailyPrice.shop_id == user.shop.id,
+                DailyPrice.shop_id == shop.id,
                 DailyPrice.price_date == date.today(),
             )
         )
@@ -53,6 +61,8 @@ async def login_user(db: AsyncSession, username: str, password: str) -> LoginRes
 
     session = _build_user_session(
         user,
+        shop_id=shop.id if shop else None,
+        shop_name=shop.name if shop else None,
         requires_price_setup=requires_price_setup,
         next_screen=next_screen,
     )

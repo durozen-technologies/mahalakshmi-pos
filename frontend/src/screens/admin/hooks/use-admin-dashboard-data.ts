@@ -39,6 +39,8 @@ export type ShopDashboardRow = {
 
 type CreateBranchInput = {
   name: string;
+  username: string;
+  password: string;
   code?: string | null;
 };
 

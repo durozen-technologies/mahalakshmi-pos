@@ -122,6 +122,8 @@ export interface BillRead {
 
 export interface ShopCreate {
   name: string;
+  username: string;
+  password: string;
   code?: string | null;
 }
 

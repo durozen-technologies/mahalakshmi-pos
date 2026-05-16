@@ -1,4 +1,5 @@
-import { Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Keyboard, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "@/components/ui/button";
@@ -10,11 +11,41 @@ type CartActionBarProps = {
   disabled?: boolean;
   label: string;
   onPress: () => void;
+  hideWhenKeyboardVisible?: boolean;
 };
 
-export function CartActionBar({ total, disabled, label, onPress }: CartActionBarProps) {
+export function CartActionBar({
+  total,
+  disabled,
+  label,
+  onPress,
+  hideWhenKeyboardVisible = false,
+}: CartActionBarProps) {
   const insets = useSafeAreaInsets();
   const { isTamil, t } = useShopTranslation();
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    if (!hideWhenKeyboardVisible) {
+      return undefined;
+    }
+
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      setIsKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      setIsKeyboardVisible(false);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [hideWhenKeyboardVisible]);
+
+  if (hideWhenKeyboardVisible && isKeyboardVisible) {
+    return null;
+  }
 
   return (
     <View className="absolute bottom-0 left-0 right-0 px-4" style={{ paddingBottom: Math.max(insets.bottom, 12) + 12 }}>

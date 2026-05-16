@@ -1,13 +1,20 @@
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.models import BaseUnit
 from app.schemas.common import ORMModel
+
+
+AnalyticsPeriod = Literal["date", "month", "year"]
 
 
 class ShopCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=128)
     code: str | None = Field(default=None, min_length=2, max_length=20)
 
 
@@ -36,6 +43,15 @@ class PaymentSplitSummary(BaseModel):
     shop_name: str
     cash_total: Decimal
     upi_total: Decimal
+
+
+class ItemSalesSummary(BaseModel):
+    item_id: int
+    item_name: str
+    base_unit: BaseUnit
+    quantity_sold: Decimal
+    total_amount: Decimal
+    bill_count: int
 
 
 class AdminBillSummary(BaseModel):

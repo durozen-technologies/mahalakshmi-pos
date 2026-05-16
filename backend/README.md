@@ -57,6 +57,9 @@ Supported settings:
 DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/meat_billing
 SECRET_KEY=replace-this-in-production
 ACCESS_TOKEN_EXPIRE_MINUTES=720
+production=False
+CORS_ORIGINS=["*"]
+ALLOWED_HOSTS=["*"]
 ```
 
 Other backend defaults come from `app/core/config.py`:
@@ -64,7 +67,13 @@ Other backend defaults come from `app/core/config.py`:
 - `APP_NAME=Meat Billing System API`
 - `API_V1_PREFIX=/api/v1`
 - `SHOP_DEFAULT_PASSWORD=ml123`
-- `CORS_ORIGINS=["*"]`
+- `CORS_ALLOW_CREDENTIALS=False`
+- `DB_POOL_SIZE=5`
+- `DB_MAX_OVERFLOW=10`
+- `ENABLE_REQUEST_LOGGING=True`
+- `ENABLE_RATE_LIMIT=True`
+- `RATE_LIMIT_REQUESTS=120`
+- `RATE_LIMIT_WINDOW_SECONDS=60`
 
 ## Run Locally
 
@@ -81,6 +90,14 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Prefer `uv run uvicorn ...` instead of a global `uvicorn` binary so the app uses the project environment and installed packages.
+
+Run with Gunicorn:
+
+```bash
+uv run gunicorn -c gunicorn.conf.py main:app
+```
+
+This project uses `uvicorn-worker` as the Gunicorn worker class.
 
 ## Startup Behavior
 
@@ -152,6 +169,59 @@ When the server is running:
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
+
+Docs are automatically disabled when `production=True`.
+
+## Render Deployment
+
+Recommended environment variables on Render:
+
+```env
+DATABASE_URL=<render-postgres-or-external-postgres-url>
+SECRET_KEY=<at-least-32-random-characters>
+production=True
+CORS_ORIGINS=["https://your-frontend.example.com"]
+ALLOWED_HOSTS=["your-backend.onrender.com"]
+ACCESS_TOKEN_EXPIRE_MINUTES=720
+```
+
+Recommended start command:
+
+```bash
+gunicorn -c gunicorn.conf.py main:app
+```
+
+Health check path:
+
+```text
+/api/v1/health
+```
+
+Production behavior:
+
+- startup fails fast if the database is unavailable
+- API docs are disabled
+- wildcard CORS and wildcard hosts are rejected
+- database pool pre-ping and recycling are enabled for long-lived Render instances
+- Gunicorn manages worker processes using the `uvicorn-worker` package
+
+## Middleware
+
+The backend includes:
+
+- request logging middleware with `X-Request-ID` on responses
+- IP-based rate limiting middleware with `429` responses
+- rate limit headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+
+Default rate limit:
+
+- `120` requests per `60` seconds per client IP
+- exempt paths include `/api/v1/health`, `/docs`, `/redoc`, and OpenAPI routes
+
+Note:
+
+- the current rate limiter is in-memory per process
+- when running multiple Gunicorn workers, limits apply independently in each worker
 
 ## Frontend Connectivity
 

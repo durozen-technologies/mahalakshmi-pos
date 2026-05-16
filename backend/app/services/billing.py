@@ -18,15 +18,23 @@ def _round_money(value: Decimal) -> Decimal:
 
 
 async def _generate_bill_no(db: AsyncSession, shop: Shop) -> str:
-    today = date.today().strftime("%Y%m%d")
+    now = datetime.now(UTC)
+    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+    next_month = datetime(now.year + (1 if now.month == 12 else 0), 1 if now.month == 12 else now.month + 1, 1, tzinfo=UTC)
     bill_count = await db.scalar(
         select(func.count(Bill.id)).where(
-            Bill.shop_id == shop.id,
-            func.date(Bill.created_at) == date.today(),
+            Bill.created_at >= month_start,
+            Bill.created_at < next_month,
         )
     )
     sequence = int(bill_count or 0) + 1
-    return f"{shop.code}-{today}-{sequence:04d}"
+    if sequence > 999999:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Monthly bill sequence limit reached for SMB bill format",
+        )
+
+    return f"SMB-{now.year:04d}-{now.month:02d}-{sequence:06d}"
 
 
 async def create_bill(db: AsyncSession, shop: Shop, payload: BillCheckoutRequest, actor: User) -> BillRead:
