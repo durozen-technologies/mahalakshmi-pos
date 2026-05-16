@@ -45,13 +45,15 @@ export function LoginScreen() {
   const clearPrices = usePriceStore((state) => state.clear);
 
   async function handleLogin() {
-    const normalizedUsername = collapseWhitespace(username);
+    const normalizedUsername = collapseWhitespace(username).trim();
     const normalizedPassword = password.trim();
 
     if (!normalizedUsername || !normalizedPassword) {
       setErrorMessage("Username and password are required.");
       return;
     }
+
+    Keyboard.dismiss();
 
     setSubmitting(true);
     setErrorMessage("");
@@ -64,6 +66,7 @@ export function LoginScreen() {
 
       resetCart();
       clearPrices();
+
       setSession(response.access_token, response.user);
     } catch (error) {
       console.error(error);
@@ -82,22 +85,25 @@ export function LoginScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
             showsVerticalScrollIndicator={false}
+            bounces={false}
             contentContainerStyle={{ flexGrow: 1 }}
             className="bg-[#04130A]"
           >
             <View className="flex-1">
 
-              {/* TOP GRADIENT SECTION */}
+              {/* TOP SECTION */}
 
               <View className="relative overflow-hidden bg-[#052E16] px-6 pb-20 pt-16">
 
-                {/* Decorative Glow */}
+                {/* Decorative Background */}
 
                 <View className="absolute left-[-40px] top-[-30px] h-44 w-44 rounded-full bg-[#22C55E]/20" />
 
@@ -150,7 +156,8 @@ export function LoginScreen() {
                 </Text>
 
                 <Text className="mt-2 text-base leading-6 text-[#6B7280]">
-                  Sign in to manage billing, inventory, reports, pricing, and staff operations.
+                  Sign in to manage billing, inventory, reports, pricing, and
+                  staff operations.
                 </Text>
 
                 {/* USERNAME */}
@@ -175,13 +182,20 @@ export function LoginScreen() {
                     <TextInput
                       autoCapitalize="none"
                       autoCorrect={false}
+                      autoComplete="username"
+                      textContentType="username"
                       placeholder="Enter your username"
                       placeholderTextColor="#9CA3AF"
                       value={username}
                       onChangeText={(value) => {
-                        setUsername(collapseWhitespace(value));
-                        if (errorMessage) setErrorMessage("");
+                        setUsername(value);
+
+                        if (errorMessage) {
+                          setErrorMessage("");
+                        }
                       }}
+                      returnKeyType="next"
+                      blurOnSubmit={false}
                       className="ml-4 flex-1 py-5 text-base font-medium text-[#111827]"
                     />
                   </View>
@@ -209,12 +223,17 @@ export function LoginScreen() {
                     <TextInput
                       secureTextEntry={!showPassword}
                       autoCorrect={false}
+                      autoComplete="password"
+                      textContentType="password"
                       placeholder="Enter your password"
                       placeholderTextColor="#9CA3AF"
                       value={password}
                       onChangeText={(value) => {
                         setPassword(value);
-                        if (errorMessage) setErrorMessage("");
+
+                        if (errorMessage) {
+                          setErrorMessage("");
+                        }
                       }}
                       className="ml-4 flex-1 py-5 text-base font-medium text-[#111827]"
                       returnKeyType="done"

@@ -36,7 +36,7 @@ frontend/
 │   ├── types/
 │   └── utils/
 ├── App.tsx
-├── app.json
+├── app.config.js
 ├── global.css
 ├── package.json
 └── README.md
@@ -54,6 +54,20 @@ frontend/
 
 ```bash
 npm install
+```
+
+## Environment Setup
+
+Create a local env file before running the app or taking a build:
+
+```bash
+cp .env.example .env
+```
+
+Set the backend URL:
+
+```env
+EXPO_PUBLIC_API_BASE_URL=https://your-api.example.com
 ```
 
 ## Native Printer Build
@@ -99,7 +113,7 @@ Use Expo Go when you want to test the shared UI flow without direct Bluetooth or
 npx expo start --android
 ```
 
-Default backend target: `http://10.0.2.2:8000`
+Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
 
 ### Android Development Build For POS Printing
 
@@ -117,7 +131,7 @@ Use this path when you need Bluetooth or USB printer discovery and direct receip
 npx expo start --ios
 ```
 
-Default backend target: `http://127.0.0.1:8000`
+Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
 
 ### Local Web
 
@@ -125,7 +139,7 @@ Default backend target: `http://127.0.0.1:8000`
 npx expo start --web
 ```
 
-Default backend target: `http://127.0.0.1:8000`
+Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
 
 ### Physical Device On The Same Wi-Fi
 
@@ -148,14 +162,14 @@ EXPO_PUBLIC_API_BASE_URL=https://your-backend-tunnel.example.com npx expo start 
 The frontend resolves the API host from `src/constants/config.ts`.
 
 - If `EXPO_PUBLIC_API_BASE_URL` is set, that value is used.
-- If the env value contains `0.0.0.0`, the app rewrites it to a reachable runtime host.
-- Without an env override, Android uses `10.0.2.2`, iOS uses `127.0.0.1`, and web uses the current browser host when possible.
+- If `EXPO_PUBLIC_API_BASE_URL` is missing, API requests are blocked and the app shows a configuration error.
+- The value may come from the local `.env` file or from Expo/EAS app config at build time.
 - Expo tunnel hosts are intentionally not treated as backend hosts.
 
 Current local `.env` example:
 
 ```env
-EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+EXPO_PUBLIC_API_BASE_URL=https://mahalakshmi-pos.onrender.com
 ```
 
 ## App Flow
@@ -201,6 +215,99 @@ npm run lint
 npm run typecheck
 ```
 
+## EAS Build
+
+This project includes [eas.json](./eas.json) with these profiles:
+
+- `development`: dev client build for local development
+- `preview`: internal Android APK build for direct install and testing
+- `production`: Android AAB build for Play Store submission
+
+### One-time setup
+
+```bash
+cd "/home/sachinn-p/Codes/Billing System/frontend"
+npx eas-cli@latest login --browser
+npx eas-cli@latest build:configure
+```
+
+`build:configure` links the app to your Expo project and may add the EAS project id to your app config if it is missing.
+
+If your Expo account uses Google OAuth, use browser login and choose `Continue with Google`. The terminal password prompt will fail for Google-only sign-in:
+
+```bash
+npx eas-cli@latest login --browser
+npx eas-cli@latest whoami
+```
+
+### Set env values for cloud builds
+
+Local `.env` files are gitignored, so EAS cloud builds should use EAS environment variables instead of relying on the local file.
+
+Current API base URL for this project:
+
+```text
+https://mahalakshmi-pos.onrender.com
+```
+
+Preview build env:
+
+```bash
+npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment preview --visibility plaintext
+```
+
+Production build env:
+
+```bash
+npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment production --visibility plaintext
+```
+
+If you want your local `.env` to match an EAS environment later:
+
+```bash
+npx eas-cli@latest env:pull --environment development
+```
+
+### Build commands
+
+Installable Android APK:
+
+```bash
+npx eas-cli@latest build -p android --profile preview
+```
+
+Play Store Android AAB:
+
+```bash
+npx eas-cli@latest build -p android --profile production
+```
+
+After the preview build finishes, you can install it with:
+
+```bash
+npx eas-cli@latest build:run -p android --latest
+```
+
+### Full command sequence for this project
+
+Preview APK:
+
+```bash
+cd "/home/sachinn-p/Codes/Billing System/frontend"
+npx eas-cli@latest whoami
+npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment preview --visibility plaintext
+npm run eas:android:preview
+```
+
+Production AAB:
+
+```bash
+cd "/home/sachinn-p/Codes/Billing System/frontend"
+npx eas-cli@latest whoami
+npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment production --visibility plaintext
+npm run eas:android:production
+```
+
 ## Printer Workflow
 
 1. Open `Set Up Printer` from the billing screen or `Manage Printer` from the receipt screen.
@@ -215,6 +322,6 @@ npm run typecheck
 - The app uses a single navigator that switches between auth, admin, and shop flows based on the stored session.
 - If today's price sheet is missing, shop users are redirected to the daily price screen before billing.
 - Changing today's prices from the billing screen clears the current cart to keep prices consistent for the next bill.
-- Bluetooth permissions are declared in `app.json` and requested at runtime on Android.
+- Bluetooth permissions are declared in `app.config.js` and requested at runtime on Android.
 - Expo Go cannot use the printer feature because the printer library requires custom native code.
 - If printer support is unavailable, the receipt screen still exposes the existing system-print fallback.

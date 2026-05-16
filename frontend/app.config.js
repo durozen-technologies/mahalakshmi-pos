@@ -1,4 +1,3 @@
-const appJson = require("./app.json");
 const fs = require("fs");
 const path = require("path");
 
@@ -24,12 +23,43 @@ const expoPublicApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   readEnvFileValue("EXPO_PUBLIC_API_BASE_URL");
 
+const config = {
+  name: "Meat Billing POS",
+  slug: "meat-billing-pos",
+  version: "1.0.0",
+  orientation: "portrait",
+  scheme: "meatbillingpos",
+  userInterfaceStyle: "light",
+  ios: {
+    supportsTablet: true,
+    bundleIdentifier: "com.anonymous.meatbillingpos",
+  },
+  android: {
+    edgeToEdgeEnabled: true,
+    predictiveBackGestureEnabled: false,
+    permissions: [
+      "android.permission.BLUETOOTH",
+      "android.permission.BLUETOOTH_ADMIN",
+      "android.permission.BLUETOOTH_SCAN",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.ACCESS_FINE_LOCATION",
+    ],
+    package: "com.anonymous.meatbillingpos",
+  },
+  web: {},
+  plugins: ["expo-secure-store"],
+  extra: {
+    eas: {
+      projectId: "8bd0810a-72de-43b3-a836-8c0d78481136",
+    },
+  },
+};
+
 module.exports = () => ({
-  ...appJson,
   expo: {
-    ...appJson.expo,
+    ...config,
     extra: {
-      ...appJson.expo.extra,
+      ...config.extra,
       expoPublicApiBaseUrl,
     },
   },
