@@ -1,4 +1,5 @@
 import axios, { isAxiosError } from "axios";
+import { Platform } from "react-native";
 
 import { API_BASE_URL, EXPO_TUNNEL_DETECTED } from "@/constants/config";
 import { useAuthStore } from "@/store/auth-store";
@@ -11,8 +12,16 @@ export type ApiError = {
 };
 
 function getNetworkFailureMessage() {
+  if (!API_BASE_URL) {
+    return "API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL and restart Expo.";
+  }
+
   if (EXPO_TUNNEL_DETECTED) {
     return `Cannot reach API at ${API_BASE_URL}. Expo tunnel shares the app bundle only, not your backend on port 8000. Set EXPO_PUBLIC_API_BASE_URL to a public URL for the backend, or switch Expo to LAN and use your computer's Wi-Fi IP.`;
+  }
+
+  if (Platform.OS === "web") {
+    return `Cannot reach API at ${API_BASE_URL}. If the backend is up, this is usually a browser CORS block. Add your frontend origin to CORS_ORIGINS on the backend and redeploy.`;
   }
 
   return `Cannot reach API at ${API_BASE_URL}. Check that the backend is running and avoid localhost or 127.0.0.1 from Expo Go on Android. Use your computer's LAN IP or let the app rewrite it automatically.`;
@@ -57,7 +66,7 @@ export function toApiError(error: unknown): ApiError {
 }
 
 export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_BASE_URL || undefined,
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
@@ -65,6 +74,10 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
+  if (!API_BASE_URL) {
+    throw new Error("API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL and restart Expo.");
+  }
+
   const token = useAuthStore.getState().token;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

@@ -83,6 +83,10 @@ const PERIOD_OPTIONS: { key: AnalyticsPeriod; label: string }[] = [
   { key: "year", label: "Year" },
 ];
 
+function isNewArchitectureEnabled() {
+  return Boolean((globalThis as typeof globalThis & { nativeFabricUIManager?: unknown }).nativeFabricUIManager);
+}
+
 export function AdminDashboardScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -184,7 +188,11 @@ export function AdminDashboardScreen() {
   }, [clearPrices, clearSession, resetCart]);
 
   useEffect(() => {
-    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+    if (
+      Platform.OS === "android" &&
+      !isNewArchitectureEnabled() &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
       UIManager.setLayoutAnimationEnabledExperimental(true);
     }
   }, []);
