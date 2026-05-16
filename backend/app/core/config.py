@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import os
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -62,14 +63,19 @@ class Settings(BaseSettings):
         if not self.production:
             return self
 
+        render_external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+
         if not self.secret_key or self.secret_key == "replace-this-in-production" or len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be set to a strong value with at least 32 characters in production")
         if not self.database_url:
             raise ValueError("DATABASE_URL must be set in production")
-        if not self.cors_origins or self.cors_origins == ["*"]:
-            raise ValueError("CORS_ORIGINS must be explicitly set in production")
+        if self.cors_origins == ["*"]:
+            self.cors_origins = []
         if not self.allowed_hosts or self.allowed_hosts == ["*"]:
-            raise ValueError("ALLOWED_HOSTS must be explicitly set in production")
+            if render_external_hostname:
+                self.allowed_hosts = [render_external_hostname]
+            else:
+                raise ValueError("ALLOWED_HOSTS must be explicitly set in production")
         if self.rate_limit_requests < 1:
             raise ValueError("RATE_LIMIT_REQUESTS must be greater than 0")
         if self.rate_limit_window_seconds < 1:
