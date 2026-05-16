@@ -1,6 +1,6 @@
 import { BillRead } from "@/types/api";
 import { translateShopItemName } from "@/hooks/use-shop-translation";
-import { ShopLanguage, useShopLanguageStore } from "@/store/shop-language-store";
+import { ShopLanguage } from "@/store/shop-language-store";
 import { formatCurrency, formatDateTime, formatUnit } from "@/utils/format";
 
 function formatReceiptCurrency(value?: string | number | null) {
@@ -42,8 +42,10 @@ const RECEIPT_COPY = {
   },
 } as const;
 
-function getReceiptLanguage(language?: ShopLanguage) {
-  return language ?? useShopLanguageStore.getState().language;
+const RECEIPT_LANGUAGE: ShopLanguage = "ta";
+
+function getReceiptLanguage(_: ShopLanguage | undefined = undefined) {
+  return RECEIPT_LANGUAGE;
 }
 
 function getReceiptCopy(language?: ShopLanguage) {
@@ -105,7 +107,6 @@ function escapeHtml(value: string) {
 export function buildReceiptHtml(bill: BillRead) {
   const language = getReceiptLanguage();
   const copy = getReceiptCopy(language);
-  const englishCopy = RECEIPT_COPY.en;
   const itemRows = bill.items
     .map(
       (item) => `
@@ -119,7 +120,7 @@ export function buildReceiptHtml(bill: BillRead) {
     .join("");
 
   return `
-    <html lang="${language === "ta" ? "ta" : "en"}">
+    <html lang="ta">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
         <meta charset="utf-8" />
@@ -299,13 +300,13 @@ export function buildReceiptHtml(bill: BillRead) {
       <body>
         <div class="receipt-container">
           <div class="center">
-            <div class="strong header-main">${englishCopy.companyName}</div>
-            <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, "en"))}</div>
+            <div class="strong header-main">${copy.companyName}</div>
+            <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, language))}</div>
           </div>
 
           <div class="bill-meta">
-            <span><strong>${englishCopy.bill}:</strong> ${escapeHtml(bill.bill_no)}</span>
-            <span><strong>${englishCopy.date}:</strong> ${escapeHtml(formatDateTime(bill.created_at))}</span>
+            <span><strong>${copy.bill}:</strong> ${escapeHtml(bill.bill_no)}</span>
+            <span><strong>${copy.date}:</strong> ${escapeHtml(formatDateTime(bill.created_at))}</span>
           </div>
 
           <table>
@@ -316,9 +317,9 @@ export function buildReceiptHtml(bill: BillRead) {
             </colgroup>
             <thead>
               <tr class="items-header">
-                <th align="left">${englishCopy.item}</th>
-                <th align="right">${englishCopy.quantityUnit}</th>
-                <th align="right">${englishCopy.total}</th>
+                <th align="left">${copy.item}</th>
+                <th align="right">${copy.quantityUnit}</th>
+                <th align="right">${copy.total}</th>
               </tr>
             </thead>
             <tbody>
@@ -331,15 +332,15 @@ export function buildReceiptHtml(bill: BillRead) {
 
           <table class="totals-section">
             <tr class="total-row">
-              <td>${englishCopy.cash}</td>
+              <td>${copy.cash}</td>
               <td class="align-right">${formatReceiptCurrency(bill.payment.cash_amount)}</td>
             </tr>
             <tr class="total-row">
-              <td class="upi-bottom-divider">${englishCopy.upi}</td>
+              <td class="upi-bottom-divider">${copy.upi}</td>
               <td class="align-right upi-bottom-divider">${formatReceiptCurrency(bill.payment.upi_amount)}</td>
             </tr>
             <tr class="total-row grand-total">
-              <td class="strong">${englishCopy.total}</td>
+              <td class="strong">${copy.total}</td>
               <td class="align-right strong">Rs. ${formatReceiptCurrency(bill.total_amount)}</td>
             </tr>
           </table>
@@ -348,9 +349,9 @@ export function buildReceiptHtml(bill: BillRead) {
           <div class="total-divider"></div>
 
           <div class="center footer">
-            <div class="strong thank-you">${englishCopy.thankYou}</div>
-            <div class="footer-note">${englishCopy.poweredBy}</div>
-            <div class="strong thank-you">${englishCopy.provider}</div>
+            <div class="strong thank-you">${copy.thankYou}</div>
+            <div class="footer-note">${copy.poweredBy}</div>
+            <div class="strong thank-you">${copy.provider}</div>
           </div>
         </div>
       </body>

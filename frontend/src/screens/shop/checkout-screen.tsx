@@ -31,8 +31,8 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
 
   const form = useForm<CheckoutFormValues>({
     defaultValues: {
-      cashAmount: "0",
-      upiAmount: "0",
+      cashAmount: "",
+      upiAmount: "",
     },
   });
 

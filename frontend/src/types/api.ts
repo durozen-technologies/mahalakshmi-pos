@@ -127,6 +127,13 @@ export interface ShopCreate {
   code?: string | null;
 }
 
+export interface ShopUpdate {
+  name: string;
+  username: string;
+  code: string;
+  password?: string | null;
+}
+
 export interface ShopRead {
   id: number;
   name: string;

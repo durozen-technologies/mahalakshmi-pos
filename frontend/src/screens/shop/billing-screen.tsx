@@ -106,17 +106,6 @@ const ProductCard = memo(
                     / {formatUnit(item.base_unit)}
                   </Text>
                 </View>
-
-                <StatusPill
-                  label={
-                    item.current_price
-                      ? t("billing.readyWithUnit", {
-                          unit: formatUnit(item.base_unit),
-                        })
-                      : t("billing.priceMissing")
-                  }
-                  tone={item.current_price ? "success" : "warning"}
-                />
               </View>
             </View>
 
@@ -389,38 +378,7 @@ export function BillingScreen({
   return (
     <View className="flex-1 bg-[#F7F7F5]">
       <Screen scroll={false}>
-        <View className="mb-5 rounded-3xl bg-[#163020] px-5 py-6">
-          <Text className="text-xs uppercase tracking-[2px] text-white/60">
-            {t("common.counterWorkspace")}
-          </Text>
-
-          <Text className="mt-2 text-2xl font-bold text-white">
-            {bootstrap?.shop_name}
-          </Text>
-
-          <View className="mt-5 flex-row gap-3">
-            <View className="flex-1 rounded-2xl bg-white/10 p-4">
-              <Text className="text-xs text-white/60">
-                {t("billing.currentCart")}
-              </Text>
-
-              <Text className="mt-1 text-xl font-bold text-white">
-                {cartItems.length}
-              </Text>
-            </View>
-
-            <View className="flex-1 rounded-2xl bg-white/10 p-4">
-              <Text className="text-xs text-white/60">
-                {t("billing.reviewBeforeCheckout")}
-              </Text>
-
-              <Text className="mt-1 text-xl font-bold text-white">
-                {cartTotal}
-              </Text>
-            </View>
-          </View>
-        </View>
-
+        
         <FlatList
           style={{ flex: 1 }}
           data={orderedItems}

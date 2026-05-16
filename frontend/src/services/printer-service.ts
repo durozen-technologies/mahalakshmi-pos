@@ -2,7 +2,7 @@ import { NativeModules, PermissionsAndroid, Platform } from "react-native";
 import { type IBLEPrinter, type IUSBPrinter, type PrinterOptions as NativePrinterOptions } from "@haroldtran/react-native-thermal-printer";
 
 import { translateShopItemName } from "@/hooks/use-shop-translation";
-import { ShopLanguage, useShopLanguageStore } from "@/store/shop-language-store";
+import { ShopLanguage } from "@/store/shop-language-store";
 import { BillRead } from "@/types/api";
 import { PrinterDevice, PrinterSupportState, PrinterTransport } from "@/types/printer";
 import { formatCurrency, formatDateTime, formatUnit } from "@/utils/format";
@@ -60,7 +60,7 @@ const RECEIPT_COPY = {
 } as const;
 
 function getReceiptLanguage() {
-  return useShopLanguageStore.getState().language;
+  return "ta" as const;
 }
 
 function getReceiptCopy(language: ShopLanguage) {

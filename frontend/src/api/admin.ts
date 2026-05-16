@@ -12,6 +12,7 @@ import {
   ShopRead,
   ShopSalesSummary,
   ShopStatusUpdate,
+  ShopUpdate,
 } from "@/types/api";
 
 export async function createShop(payload: ShopCreate) {
@@ -24,9 +25,23 @@ export async function fetchShops() {
   return data;
 }
 
+export async function fetchShop(shopId: number) {
+  const { data } = await apiClient.get<ShopRead>(`/api/v1/admin/shops/${shopId}`);
+  return data;
+}
+
+export async function updateShop(shopId: number, payload: ShopUpdate) {
+  const { data } = await apiClient.patch<ShopRead>(`/api/v1/admin/shops/${shopId}`, payload);
+  return data;
+}
+
 export async function updateShopStatus(shopId: number, payload: ShopStatusUpdate) {
   const { data } = await apiClient.patch<ShopRead>(`/api/v1/admin/shops/${shopId}/status`, payload);
   return data;
+}
+
+export async function deleteShop(shopId: number) {
+  await apiClient.delete(`/api/v1/admin/shops/${shopId}`);
 }
 
 export async function fetchSalesSummary(period: AnalyticsPeriod, referenceDate?: string) {

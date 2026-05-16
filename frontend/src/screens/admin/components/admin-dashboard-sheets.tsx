@@ -23,11 +23,11 @@ import { adminShadow, type ThemePalette } from "../admin-dashboard-theme";
 import { triggerHaptic } from "../admin-dashboard-utils";
 import { EmptyStateCard, PrimaryButton } from "./admin-dashboard-primitives";
 
-type CreateShopFormValues = {
+type ShopEditorFormValues = {
   name: string;
   username: string;
   password: string;
-  code?: string;
+  code: string;
 };
 
 type PriceUpdateSheetProps = {
@@ -38,15 +38,18 @@ type PriceUpdateSheetProps = {
   priceLoading: boolean;
   priceBootstrap: ShopBootstrapResponse | null;
   currentPriceItem:
-    | (ShopBootstrapResponse["items"][number] & {
-        current_price?: string | null;
-      })
-    | null;
+  | (ShopBootstrapResponse["items"][number] & {
+    current_price?: string | null;
+  })
+  | null;
   selectedPriceItemId: number | null;
+  resolveItemPrice: (itemId: number, currentPrice?: string | null) => string;
   onSelectItem: (itemId: number, currentPrice?: string | null) => void;
   draftPrice: string;
   onChangeDraftPrice: (value: string) => void;
   priceError: string | null;
+  priceHelperText: string | null;
+  saveDisabled: boolean;
   itemPickerOpen: boolean;
   onToggleItemPicker: () => void;
   effectiveDate: string;
@@ -58,14 +61,20 @@ type PriceUpdateSheetProps = {
   onSave: () => void;
 };
 
-type CreateShopSheetProps = {
+type ShopEditorSheetProps = {
   visible: boolean;
   onClose: () => void;
   palette: ThemePalette;
   bottomInset: number;
-  creating: boolean;
-  form: UseFormReturn<CreateShopFormValues>;
+  mode: "create" | "edit";
+  loading: boolean;
+  deleting?: boolean;
+  statusLoading?: boolean;
+  isActive?: boolean;
+  form: UseFormReturn<ShopEditorFormValues>;
   onSubmit: () => void;
+  onDelete?: () => void;
+  onToggleActive?: () => void;
 };
 
 function useSwipeToClose(onClose: () => void) {
@@ -114,10 +123,13 @@ export function PriceUpdateSheet({
   priceBootstrap,
   currentPriceItem,
   selectedPriceItemId,
+  resolveItemPrice,
   onSelectItem,
   draftPrice,
   onChangeDraftPrice,
   priceError,
+  priceHelperText,
+  saveDisabled,
   itemPickerOpen,
   onToggleItemPicker,
   effectiveDate,
@@ -132,9 +144,8 @@ export function PriceUpdateSheet({
 
   const summaryText =
     currentPriceItem && draftPrice
-      ? `${currentPriceItem.item_name} will update from ${
-          currentPriceItem.current_price ? formatCurrency(currentPriceItem.current_price) : "not set"
-        } to Rs. ${draftPrice} on ${effectiveDate}.`
+      ? `${currentPriceItem.item_name} will update from ${currentPriceItem.current_price ? formatCurrency(currentPriceItem.current_price) : "not set"
+      } to Rs. ${draftPrice} on ${effectiveDate}.`
       : "Select an item and enter a valid price to preview the update summary.";
 
   return (
@@ -168,15 +179,15 @@ export function PriceUpdateSheet({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Save price update"
-                    accessibilityState={{ disabled: savingPrice }}
-                    disabled={savingPrice}
+                    accessibilityState={{ disabled: savingPrice || saveDisabled }}
+                    disabled={savingPrice || saveDisabled}
                     onPress={onSave}
                     style={[
                       styles.headerSaveButton,
                       {
                         backgroundColor: palette.emerald,
                         borderColor: palette.emerald,
-                        opacity: savingPrice ? 0.72 : 1,
+                        opacity: savingPrice || saveDisabled ? 0.56 : 1,
                       },
                     ]}
                   >
@@ -244,7 +255,9 @@ export function PriceUpdateSheet({
                           >
                             <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{item.item_name}</Text>
                             <Text style={[styles.optionSubtitle, { color: palette.textMuted }]}>
-                              {item.current_price ? formatCurrency(item.current_price) : "No current price"}
+                              {resolveItemPrice(item.item_id, item.current_price)
+                                ? `Draft or current: ${formatCurrency(resolveItemPrice(item.item_id, item.current_price))}`
+                                : "No current price"}
                             </Text>
                           </Pressable>
                         ))}
@@ -281,6 +294,7 @@ export function PriceUpdateSheet({
                         accessibilityLabel="Enter updated price"
                       />
                     </View>
+                    {priceHelperText ? <Text style={[styles.helperText, { color: palette.textSecondary }]}>{priceHelperText}</Text> : null}
                     {priceError ? <Text style={[styles.inlineError, { color: palette.danger }]}>{priceError}</Text> : null}
                   </View>
 
@@ -333,6 +347,7 @@ export function PriceUpdateSheet({
                     label="Save Price Update"
                     onPress={onSave}
                     loading={savingPrice}
+                    disabled={saveDisabled}
                     icon="content-save-outline"
                     palette={palette}
                   />
@@ -354,15 +369,23 @@ export function PriceUpdateSheet({
   );
 }
 
-export function CreateShopSheet({
+export function ShopEditorSheet({
   visible,
   onClose,
   palette,
   bottomInset,
-  creating,
+  mode,
+  loading,
+  deleting = false,
+  statusLoading = false,
+  isActive = true,
   form,
   onSubmit,
-}: CreateShopSheetProps) {
+  onDelete,
+  onToggleActive,
+}: ShopEditorSheetProps) {
+  const isEdit = mode === "edit";
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[styles.modalBackdrop, { backgroundColor: palette.overlay }]}>
@@ -382,14 +405,16 @@ export function CreateShopSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View style={styles.headerTextWrap}>
-                <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>Create Shop</Text>
+                <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>{isEdit ? "Manage Shop" : "Create Shop"}</Text>
                 <Text style={[styles.sheetSubtitle, { color: palette.textMuted }]}>
-                  Add a new branch account with shop details and login credentials.
+                  {isEdit
+                    ? "Update branch details, change the login password, or remove a branch that has no history yet."
+                    : "Add a new branch account with shop details and login credentials."}
                 </Text>
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close create shop sheet"
+                accessibilityLabel={isEdit ? "Close manage shop sheet" : "Close create shop sheet"}
                 onPress={onClose}
                 style={[styles.iconButton, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
               >
@@ -464,7 +489,9 @@ export function CreateShopSheet({
                   name="password"
                   render={({ field, fieldState }) => (
                     <View style={styles.fieldGroup}>
-                      <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Login Password</Text>
+                      <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>
+                        {isEdit ? "Reset Password" : "Login Password"}
+                      </Text>
                       <View
                         style={[
                           styles.sheetField,
@@ -477,7 +504,7 @@ export function CreateShopSheet({
                         <TextInput
                           value={field.value}
                           onChangeText={field.onChange}
-                          placeholder="Enter login password"
+                          placeholder={isEdit ? "Leave blank to keep the current password" : "Enter login password"}
                           autoCapitalize="none"
                           autoCorrect={false}
                           secureTextEntry
@@ -509,7 +536,7 @@ export function CreateShopSheet({
                         <TextInput
                           value={field.value}
                           onChangeText={field.onChange}
-                          placeholder="Optional code"
+                          placeholder="Enter shop code"
                           autoCapitalize="characters"
                           placeholderTextColor={palette.textMuted}
                           style={[styles.sheetInput, { color: palette.textPrimary }]}
@@ -523,14 +550,60 @@ export function CreateShopSheet({
               </View>
             </ScrollView>
 
-            <PrimaryButton
-              label="Create Shop Account"
-              onPress={onSubmit}
-              loading={creating}
-              icon="store-plus-outline"
-              fullWidth
-              palette={palette}
-            />
+            {isEdit ? (
+              <View style={styles.editActionsColumn}>
+                <PrimaryButton
+                  label="Save Changes"
+                  onPress={onSubmit}
+                  loading={loading}
+                  disabled={deleting || statusLoading}
+                  icon="content-save-outline"
+                  fullWidth
+                  palette={palette}
+                />
+
+                <View style={styles.actionsRow}>
+                  {onToggleActive ? (
+                    <View style={styles.sheetActionButton}>
+                      <PrimaryButton
+                        label={isActive ? "Pause Access" : "Activate Shop"}
+                        onPress={onToggleActive}
+                        loading={statusLoading}
+                        disabled={loading || deleting}
+                        variant={isActive ? "warning" : "primary"}
+                        icon={isActive ? "pause-circle-outline" : "check-circle-outline"}
+                        fullWidth
+                        palette={palette}
+                      />
+                    </View>
+                  ) : null}
+                  {onDelete ? (
+                    <View style={styles.sheetActionButton}>
+                      <PrimaryButton
+                        label="Delete Shop"
+                        onPress={onDelete}
+                        loading={deleting}
+                        disabled={loading || statusLoading}
+                        variant="danger"
+                        fullWidth
+                        palette={palette}
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ) : (
+              <View style={styles.actionsRow}>
+                <PrimaryButton
+                  label="Create Shop Account"
+                  onPress={onSubmit}
+                  loading={loading}
+                  icon="store-plus-outline"
+                  fullWidth
+                  palette={palette}
+                />
+              </View>
+            )}
           </View>
         </KeyboardAvoidingView>
       </View>
@@ -692,6 +765,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  helperText: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
   summaryCard: {
     borderWidth: 1,
     borderRadius: 20,
@@ -711,4 +788,12 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingTop: 8,
   },
+  editActionsColumn: {
+    gap: 12,
+    paddingTop: 8,
+  },
+  sheetActionButton: {
+    flex: 1,
+  },
 });
+

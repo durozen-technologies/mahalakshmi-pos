@@ -2,14 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   createShop,
+  deleteShop,
   fetchAuditLogs,
   fetchDailyBills,
   fetchGlobalPriceBootstrap,
   fetchItemSales,
   fetchPaymentSummary,
+  fetchShop,
   fetchSalesSummary,
   fetchShops,
   saveGlobalDailyPrices,
+  updateShop,
   updateShopStatus,
 } from "@/api/admin";
 import { toApiError } from "@/api/client";
@@ -23,6 +26,7 @@ import type {
   ShopBootstrapResponse,
   ShopRead,
   ShopSalesSummary,
+  ShopUpdate,
 } from "@/types/api";
 
 import { getShopStatus, type ShopOperationalState } from "../admin-dashboard-utils";
@@ -43,6 +47,8 @@ type CreateBranchInput = {
   password: string;
   code?: string | null;
 };
+
+type UpdateBranchInput = ShopUpdate;
 
 type UseAdminDashboardDataOptions = {
   analyticsPeriod: AnalyticsPeriod;
@@ -210,6 +216,32 @@ export function useAdminDashboardData({
     }
   }, [loadDashboard]);
 
+  const updateBranch = useCallback(async (shop: ShopRead, values: UpdateBranchInput) => {
+    try {
+      await updateShop(shop.id, values);
+      await loadDashboard(true);
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    }
+  }, [loadDashboard]);
+
+  const loadBranch = useCallback(async (shopId: number) => {
+    try {
+      return await fetchShop(shopId);
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    }
+  }, []);
+
+  const deleteBranch = useCallback(async (shop: ShopRead) => {
+    try {
+      await deleteShop(shop.id);
+      await loadDashboard(true);
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    }
+  }, [loadDashboard]);
+
   const saveGlobalPriceBook = useCallback(async (payload: DailyPriceCreate) => {
     try {
       await saveGlobalDailyPrices(payload);
@@ -240,6 +272,9 @@ export function useAdminDashboardData({
     setPriceBootstrap,
     shopRows,
     shops,
+    loadBranch,
+    updateBranch,
+    deleteBranch,
     toggleBranchStatus,
     visibleShopRows,
   };

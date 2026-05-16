@@ -25,6 +25,9 @@ type MetricCardProps = {
   accentSoft: string;
   palette: ThemePalette;
   sparklineValues?: number[];
+  sparklineLabel?: string;
+  noteIcon?: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  fullWidth?: boolean;
 };
 
 type SectionCardProps = {
@@ -49,7 +52,8 @@ type PrimaryButtonProps = {
   label: string;
   onPress: () => void;
   loading?: boolean;
-  variant?: "primary" | "secondary";
+  disabled?: boolean;
+  variant?: "primary" | "secondary" | "danger" | "accent" | "warning";
   fullWidth?: boolean;
   palette: ThemePalette;
   icon?: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -116,7 +120,11 @@ function CountUpText({
     return () => cancelAnimationFrame(frameId);
   }, [value]);
 
-  return <Text style={style}>{formatter(displayValue)}</Text>;
+  return (
+    <Text adjustsFontSizeToFit minimumFontScale={0.74} numberOfLines={1} style={style}>
+      {formatter(displayValue)}
+    </Text>
+  );
 }
 
 function Sparkline({
@@ -153,32 +161,45 @@ export const MetricCard = memo(function MetricCard({
   accentSoft,
   palette,
   sparklineValues = [4, 6, 5, 8, 7, 9],
+  sparklineLabel = "Scope spread",
+  noteIcon = "information-outline",
+  fullWidth = false,
 }: MetricCardProps) {
   return (
-    <Pressable
-      accessibilityRole="button"
+    <View
+      accessible
       accessibilityLabel={`${label} ${formatter(value)}`}
-      onPress={() => triggerHaptic()}
-      style={({ pressed }) => [
+      style={[
         styles.metricCard,
+        fullWidth && styles.metricCardFullWidth,
         adminShadow(palette.shadow, 0.06, 8, 16),
         {
           backgroundColor: palette.card,
           borderColor: palette.border,
-          transform: [{ scale: pressed ? 0.99 : 1 }],
         },
       ]}
     >
+      <View style={[styles.metricAccentBar, { backgroundColor: accent }]} />
       <View style={styles.metricHeader}>
-        <View style={[styles.metricIconWrap, { backgroundColor: accentSoft }]}>
+        <View style={styles.metricHeaderText}>
+          <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>{label}</Text>
+          <CountUpText value={value} formatter={formatter} style={[styles.metricValue, { color: palette.textPrimary }]} />
+        </View>
+        <View style={[styles.metricIconWrap, { backgroundColor: accentSoft, borderColor: palette.border }]}>
           <MaterialCommunityIcons name={icon} size={18} color={accent} />
         </View>
+      </View>
+      <View style={styles.metricTrendRow}>
+        <Text style={[styles.metricTrendLabel, { color: palette.textMuted }]}>{sparklineLabel}</Text>
         <Sparkline values={sparklineValues} accent={accent} />
       </View>
-      <Text style={[styles.metricLabel, { color: palette.textMuted }]}>{label}</Text>
-      <CountUpText value={value} formatter={formatter} style={[styles.metricValue, { color: palette.textPrimary }]} />
-      <Text style={[styles.metricNote, { color: palette.textSecondary }]}>{note}</Text>
-    </Pressable>
+      <View style={[styles.metricNoteWrap, { backgroundColor: accentSoft }]}>
+        <MaterialCommunityIcons name={noteIcon} size={14} color={accent} style={styles.metricNoteIcon} />
+        <Text numberOfLines={2} style={[styles.metricNote, { color: palette.textPrimary }]}>
+          {note}
+        </Text>
+      </View>
+    </View>
   );
 });
 
@@ -300,6 +321,7 @@ export const PrimaryButton = memo(function PrimaryButton({
   label,
   onPress,
   loading = false,
+  disabled = false,
   variant = "primary",
   fullWidth = false,
   palette,
@@ -307,34 +329,71 @@ export const PrimaryButton = memo(function PrimaryButton({
   accessibilityLabel,
 }: PrimaryButtonProps) {
   const isPrimary = variant === "primary";
+  const isDanger = variant === "danger";
+  const isAccent = variant === "accent";
+  const isWarning = variant === "warning";
+  const isDisabled = loading || disabled;
+  const isSolid = isPrimary || isDanger || isAccent || isWarning;
+
+  const buttonBackground = isPrimary
+    ? palette.emerald
+    : isDanger
+      ? palette.danger
+      : isAccent
+        ? palette.upi
+        : isWarning
+          ? palette.cash
+          : palette.card;
+  const buttonBorder = isPrimary
+    ? palette.emerald
+    : isDanger
+      ? palette.danger
+      : isAccent
+        ? palette.upi
+        : isWarning
+          ? palette.cash
+          : palette.border;
+  const textColor = isPrimary
+    ? "#FFFFFF"
+    : isDanger
+      ? "#FFFFFF"
+      : isAccent
+        ? "#FFFFFF"
+        : isWarning
+          ? "#201505"
+          : palette.textPrimary;
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={{ disabled: isDisabled }}
       onPress={() => {
-        triggerHaptic(isPrimary ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
+        if (isDisabled) {
+          return;
+        }
+        triggerHaptic(isSolid ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
         onPress();
       }}
-      disabled={loading}
+      disabled={isDisabled}
       style={({ pressed }) => [
         styles.buttonBase,
-        adminShadow(palette.shadow, isPrimary ? 0.1 : 0.04, 8, 16),
+        adminShadow(palette.shadow, isSolid ? 0.1 : 0.04, 8, 16),
         {
           width: fullWidth ? "100%" : undefined,
-          backgroundColor: isPrimary ? palette.emerald : palette.surfaceMuted,
-          borderColor: isPrimary ? palette.emerald : palette.border,
-          opacity: loading ? 0.72 : 1,
-          transform: [{ scale: pressed ? 0.99 : 1 }],
+          backgroundColor: buttonBackground,
+          borderColor: buttonBorder,
+          opacity: isDisabled ? 0.56 : 1,
+          transform: [{ scale: pressed && !isDisabled ? 0.99 : 1 }, { translateY: pressed && !isDisabled ? 1 : 0 }],
         },
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={isPrimary ? "#FFFFFF" : palette.textPrimary} />
+        <ActivityIndicator color={textColor} />
       ) : (
         <View style={styles.buttonContent}>
-          {icon ? <MaterialCommunityIcons name={icon} size={16} color={isPrimary ? "#FFFFFF" : palette.textPrimary} /> : null}
-          <Text style={[styles.buttonLabel, { color: isPrimary ? "#FFFFFF" : palette.textPrimary }]}>{label}</Text>
+          {icon ? <MaterialCommunityIcons name={icon} size={17} color={textColor} /> : null}
+          <Text style={[styles.buttonLabel, { color: textColor }]}>{label}</Text>
         </View>
       )}
     </Pressable>
@@ -510,7 +569,12 @@ export const BottomNav = memo(function BottomNav({
           >
             {active ? <View style={[styles.activeNavIndicator, { backgroundColor: palette.emeraldSoft }]} /> : null}
             <MaterialCommunityIcons name={item.icon} size={20} color={active ? palette.emerald : palette.textMuted} />
-            <Text style={[styles.bottomNavLabel, { color: active ? palette.emerald : palette.textMuted }]}>{item.label}</Text>
+            <Text
+              numberOfLines={1}
+              style={[styles.bottomNavLabel, { color: active ? palette.emerald : palette.textMuted }]}
+            >
+              {item.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -520,55 +584,105 @@ export const BottomNav = memo(function BottomNav({
 
 const styles = StyleSheet.create({
   metricCard: {
-    width: "48.2%",
-    minWidth: 148,
-    borderRadius: 24,
+    flexBasis: "47.2%",
+    flexGrow: 1,
+    minWidth: 0,
+    minHeight: 148,
+    borderRadius: 18,
     borderWidth: 1,
-    padding: 15,
+    padding: 14,
     gap: 8,
+    justifyContent: "space-between",
+    overflow: "hidden",
+    position: "relative",
+  },
+  metricCardFullWidth: {
+    flexBasis: "100%",
+  },
+  metricAccentBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
   },
   metricHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+    gap: 8,
+  },
+  metricHeaderText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
   },
   metricIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 15,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
+  metricTrendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  metricTrendLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
   sparklineRow: {
-    height: 34,
+    height: 20,
+    flex: 1,
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 4,
+    justifyContent: "flex-end",
+    gap: 3,
   },
   sparklineBar: {
-    width: 4,
+    width: 3,
     borderRadius: 999,
-    opacity: 0.72,
+    opacity: 0.4,
   },
   metricLabel: {
     fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
+    fontWeight: "600",
     textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   metricValue: {
     fontSize: 22,
-    lineHeight: 27,
-    fontWeight: "800",
+    lineHeight: 28,
+    fontWeight: "700",
+  },
+  metricNoteWrap: {
+    minHeight: 44,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  metricNoteIcon: {
+    marginTop: 1,
   },
   metricNote: {
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 11,
+    lineHeight: 16,
+    minHeight: 32,
+    flex: 1,
   },
   sectionCard: {
-    marginTop: 16,
+    marginTop: 14,
     borderWidth: 1,
-    borderRadius: 26,
+    borderRadius: 20,
     padding: 16,
   },
   sectionHeader: {
@@ -578,59 +692,59 @@ const styles = StyleSheet.create({
   },
   sectionHeaderText: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   sectionHeaderActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
   },
   sectionTitle: {
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: "800",
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "700",
   },
   sectionSubtitle: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 17,
   },
   chevronWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
   searchField: {
-    minHeight: 46,
-    borderRadius: 18,
+    minHeight: 44,
+    borderRadius: 12,
     borderWidth: 1,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 14,
   },
   chipButton: {
     minHeight: 36,
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 7,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 5,
   },
   chipText: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   buttonBase: {
-    minHeight: 50,
-    borderRadius: 17,
+    minHeight: 46,
+    borderRadius: 14,
     paddingHorizontal: 16,
     alignItems: "center",
     justifyContent: "center",
@@ -640,29 +754,33 @@ const styles = StyleSheet.create({
   buttonContent: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "center",
+    gap: 7,
+    width: "100%",
   },
   buttonLabel: {
-    fontSize: 14,
-    fontWeight: "800",
+    fontSize: 13,
+    fontWeight: "600",
+    flexShrink: 1,
+    textAlign: "center",
   },
   emptyCard: {
-    borderRadius: 22,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 18,
     gap: 10,
     alignItems: "flex-start",
   },
   emptyIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   emptyTitle: {
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 14,
+    fontWeight: "600",
   },
   emptySubtitle: {
     fontSize: 13,
@@ -670,14 +788,14 @@ const styles = StyleSheet.create({
   },
   toastContainer: {
     position: "absolute",
-    top: 10,
+    top: 12,
     left: 16,
     right: 16,
     zIndex: 50,
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -685,17 +803,17 @@ const styles = StyleSheet.create({
   toastText: {
     flex: 1,
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   skeletonWrap: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    gap: 14,
+    gap: 12,
   },
   skeletonMetricGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    gap: 10,
   },
   skeletonBlock: {
     overflow: "hidden",
@@ -712,31 +830,34 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 16,
     right: 16,
-    borderRadius: 24,
+    borderRadius: 18,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   bottomNavItem: {
-    minWidth: 56,
+    minWidth: 0,
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
-    minHeight: 48,
+    gap: 2,
+    minHeight: 44,
+    paddingHorizontal: 4,
   },
   activeNavIndicator: {
     position: "absolute",
-    top: 0,
-    width: 46,
-    height: 38,
-    borderRadius: 16,
+    top: 3,
+    width: 40,
+    height: 30,
+    borderRadius: 10,
   },
   bottomNavLabel: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "600",
+    textAlign: "center",
+    letterSpacing: 0.2,
   },
 });
