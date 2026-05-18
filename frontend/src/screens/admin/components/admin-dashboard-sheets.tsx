@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Controller, type UseFormReturn } from "react-hook-form";
-import { useMemo, useRef } from "react";
+import { Controller } from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -15,9 +17,11 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
 
-import type { ShopBootstrapResponse } from "@/types/api";
-import { formatCurrency } from "@/utils/format";
+import { buildReceiptHtml } from "@/api/receipts";
+import type { BillRead, ShopBootstrapResponse, ShopRead } from "@/types/api";
+import { formatCurrency, formatDateTime } from "@/utils/format";
 
 import { adminShadow, type ThemePalette } from "../admin-dashboard-theme";
 import { triggerHaptic } from "../admin-dashboard-utils";
@@ -27,7 +31,6 @@ type ShopEditorFormValues = {
   name: string;
   username: string;
   password: string;
-  code: string;
 };
 
 type PriceUpdateSheetProps = {
@@ -59,6 +62,11 @@ type PriceUpdateSheetProps = {
   onSelectDate: (value: string) => void;
   savingPrice: boolean;
   onSave: () => void;
+  shops: ShopRead[];
+  selectedPriceShopId: number | null;
+  onSelectShop: (shopId: number) => void;
+  shopPickerOpen: boolean;
+  onToggleShopPicker: () => void;
 };
 
 type ShopEditorSheetProps = {
@@ -71,10 +79,19 @@ type ShopEditorSheetProps = {
   deleting?: boolean;
   statusLoading?: boolean;
   isActive?: boolean;
-  form: UseFormReturn<ShopEditorFormValues>;
+  control: any;
   onSubmit: () => void;
   onDelete?: () => void;
   onToggleActive?: () => void;
+};
+
+type BillPreviewSheetProps = {
+  visible: boolean;
+  onClose: () => void;
+  palette: ThemePalette;
+  bottomInset: number;
+  loading: boolean;
+  bill: BillRead | null;
 };
 
 function useSwipeToClose(onClose: () => void) {
@@ -139,6 +156,11 @@ export function PriceUpdateSheet({
   onSelectDate,
   savingPrice,
   onSave,
+  shops,
+  selectedPriceShopId,
+  onSelectShop,
+  shopPickerOpen,
+  onToggleShopPicker,
 }: PriceUpdateSheetProps) {
   const { panResponder, translateY } = useSwipeToClose(onClose);
 
@@ -171,11 +193,11 @@ export function PriceUpdateSheet({
               <View style={styles.headerTextWrap}>
                 <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>Update Price</Text>
                 <Text style={[styles.sheetSubtitle, { color: palette.textMuted }]}>
-                  One quick flow to update price, date, and save with confidence.
+                  Select a shop, then set prices for each item.
                 </Text>
               </View>
               <View style={styles.headerActions}>
-                {!priceLoading && priceBootstrap && currentPriceItem ? (
+                {!priceLoading && selectedPriceShopId && priceBootstrap && currentPriceItem ? (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Save price update"
@@ -215,49 +237,52 @@ export function PriceUpdateSheet({
             {priceLoading ? (
               <View style={styles.loadingWrap}>
                 <ActivityIndicator color={palette.emerald} />
-                <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Loading price controls...</Text>
+                <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Loading prices for shop...</Text>
               </View>
-            ) : priceBootstrap && currentPriceItem ? (
+            ) : (
               <>
                 <ScrollView
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.sheetContent}
                 >
+                  {/* ── Step 1: Shop Selector ── */}
                   <View style={styles.fieldGroup}>
-                    <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Item</Text>
+                    <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Shop</Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Choose item to update"
+                      accessibilityLabel="Choose shop to update prices for"
                       onPress={() => {
                         triggerHaptic();
-                        onToggleItemPicker();
+                        onToggleShopPicker();
                       }}
-                      style={[styles.sheetField, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+                      style={[styles.sheetField, { backgroundColor: palette.backgroundElevated, borderColor: selectedPriceShopId ? palette.emerald : palette.border }]}
                     >
-                      <Text style={[styles.sheetFieldValue, { color: palette.textPrimary }]}>{currentPriceItem.item_name}</Text>
+                      <Text style={[styles.sheetFieldValue, { color: selectedPriceShopId ? palette.textPrimary : palette.textMuted }]}>
+                        {selectedPriceShopId
+                          ? shops.find((s) => s.id === selectedPriceShopId)?.name ?? "Selected Shop"
+                          : "Select a shop to configure prices"}
+                      </Text>
                       <MaterialCommunityIcons
-                        name={itemPickerOpen ? "chevron-up" : "chevron-down"}
+                        name={shopPickerOpen ? "chevron-up" : "chevron-down"}
                         size={18}
-                        color={palette.textMuted}
+                        color={selectedPriceShopId ? palette.emerald : palette.textMuted}
                       />
                     </Pressable>
-                    {itemPickerOpen ? (
+                    {shopPickerOpen ? (
                       <View style={[styles.optionMenu, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}>
-                        {priceBootstrap.items.map((item) => (
+                        {shops.map((shop) => (
                           <Pressable
-                            key={item.item_id}
-                            onPress={() => onSelectItem(item.item_id, item.current_price)}
+                            key={shop.id}
+                            onPress={() => onSelectShop(shop.id)}
                             style={[
                               styles.optionItem,
-                              item.item_id === selectedPriceItemId && { backgroundColor: palette.emeraldSoft },
+                              shop.id === selectedPriceShopId && { backgroundColor: palette.emeraldSoft },
                             ]}
                           >
-                            <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{item.item_name}</Text>
+                            <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{shop.name}</Text>
                             <Text style={[styles.optionSubtitle, { color: palette.textMuted }]}>
-                              {resolveItemPrice(item.item_id, item.current_price)
-                                ? `Draft or current: ${formatCurrency(resolveItemPrice(item.item_id, item.current_price))}`
-                                : "No current price"}
+                              {shop.username} · {shop.is_active ? "Active" : "Paused"}
                             </Text>
                           </Pressable>
                         ))}
@@ -265,102 +290,149 @@ export function PriceUpdateSheet({
                     ) : null}
                   </View>
 
-                  <View style={[styles.previewCard, { backgroundColor: palette.emeraldSoft, borderColor: palette.border }]}>
-                    <Text style={[styles.previewLabel, { color: palette.emeraldDark }]}>Current Price</Text>
-                    <Text style={[styles.previewValue, { color: palette.emeraldDark }]}>
-                      {currentPriceItem.current_price ? formatCurrency(currentPriceItem.current_price) : "Not set"}
-                    </Text>
-                    <Text style={[styles.previewMeta, { color: palette.textSecondary }]}>
-                      Unit: {currentPriceItem.base_unit.toUpperCase()}
-                    </Text>
-                  </View>
-
-                  <View style={styles.fieldGroup}>
-                    <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>New Price</Text>
-                    <View
-                      style={[
-                        styles.sheetField,
-                        { backgroundColor: palette.backgroundElevated, borderColor: priceError ? palette.danger : palette.border },
-                      ]}
-                    >
-                      <Text style={[styles.currencyPrefix, { color: palette.textMuted }]}>Rs.</Text>
-                      <TextInput
-                        value={draftPrice}
-                        onChangeText={onChangeDraftPrice}
-                        keyboardType="decimal-pad"
-                        placeholder="Enter updated price"
-                        placeholderTextColor={palette.textMuted}
-                        style={[styles.sheetInput, { color: palette.textPrimary }]}
-                        accessibilityLabel="Enter updated price"
-                      />
+                  {/* ── Step 2: Item prices (only after shop selected) ── */}
+                  {!selectedPriceShopId ? (
+                    <View style={[styles.summaryCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                      <Text style={[styles.summaryTitle, { color: palette.textPrimary }]}>Select a shop first</Text>
+                      <Text style={[styles.summaryText, { color: palette.textSecondary }]}>
+                        Choose a branch above to load its current prices and set new ones.
+                      </Text>
                     </View>
-                    {priceHelperText ? <Text style={[styles.helperText, { color: palette.textSecondary }]}>{priceHelperText}</Text> : null}
-                    {priceError ? <Text style={[styles.inlineError, { color: palette.danger }]}>{priceError}</Text> : null}
-                  </View>
-
-                  <View style={styles.fieldGroup}>
-                    <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Effective Date</Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Select effective date"
-                      onPress={() => {
-                        triggerHaptic();
-                        onToggleDatePicker();
-                      }}
-                      style={[styles.sheetField, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
-                    >
-                      <Text style={[styles.sheetFieldValue, { color: palette.textPrimary }]}>{effectiveDate}</Text>
-                      <MaterialCommunityIcons
-                        name={datePickerOpen ? "chevron-up" : "chevron-down"}
-                        size={18}
-                        color={palette.textMuted}
-                      />
-                    </Pressable>
-                    {datePickerOpen ? (
-                      <View style={[styles.optionMenu, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}>
-                        {dateOptions.map((option) => (
-                          <Pressable
-                            key={option.value}
-                            onPress={() => onSelectDate(option.value)}
-                            style={[
-                              styles.optionItem,
-                              option.value === effectiveDate && { backgroundColor: palette.emeraldSoft },
-                            ]}
-                          >
-                            <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{option.label}</Text>
-                            <Text style={[styles.optionSubtitle, { color: palette.textMuted }]}>{option.value}</Text>
-                          </Pressable>
-                        ))}
+                  ) : priceBootstrap && currentPriceItem ? (
+                    <>
+                      <View style={styles.fieldGroup}>
+                        <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Item</Text>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Choose item to update"
+                          onPress={() => {
+                            triggerHaptic();
+                            onToggleItemPicker();
+                          }}
+                          style={[styles.sheetField, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+                        >
+                          <Text style={[styles.sheetFieldValue, { color: palette.textPrimary }]}>{currentPriceItem.item_name}</Text>
+                          <MaterialCommunityIcons
+                            name={itemPickerOpen ? "chevron-up" : "chevron-down"}
+                            size={18}
+                            color={palette.textMuted}
+                          />
+                        </Pressable>
+                        {itemPickerOpen ? (
+                          <View style={[styles.optionMenu, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}>
+                            {priceBootstrap.items.map((item) => (
+                              <Pressable
+                                key={item.item_id}
+                                onPress={() => onSelectItem(item.item_id, item.current_price)}
+                                style={[
+                                  styles.optionItem,
+                                  item.item_id === selectedPriceItemId && { backgroundColor: palette.emeraldSoft },
+                                ]}
+                              >
+                                <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{item.item_name}</Text>
+                                <Text style={[styles.optionSubtitle, { color: palette.textMuted }]}>
+                                  {resolveItemPrice(item.item_id, item.current_price)
+                                    ? `Draft or current: ${formatCurrency(resolveItemPrice(item.item_id, item.current_price))}`
+                                    : "No current price"}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : null}
                       </View>
-                    ) : null}
-                  </View>
 
-                  <View style={[styles.summaryCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
-                    <Text style={[styles.summaryTitle, { color: palette.textPrimary }]}>Save Summary</Text>
-                    <Text style={[styles.summaryText, { color: palette.textSecondary }]}>{summaryText}</Text>
-                  </View>
+                      <View style={[styles.previewCard, { backgroundColor: palette.emeraldSoft, borderColor: palette.border }]}>
+                        <Text style={[styles.previewLabel, { color: palette.emeraldDark }]}>Current Price</Text>
+                        <Text style={[styles.previewValue, { color: palette.emeraldDark }]}>
+                          {currentPriceItem.current_price ? formatCurrency(currentPriceItem.current_price) : "Not set"}
+                        </Text>
+                        <Text style={[styles.previewMeta, { color: palette.textSecondary }]}>
+                          Unit: {currentPriceItem.base_unit.toUpperCase()}
+                        </Text>
+                      </View>
+
+                      <View style={styles.fieldGroup}>
+                        <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>New Price</Text>
+                        <View
+                          style={[
+                            styles.sheetField,
+                            { backgroundColor: palette.backgroundElevated, borderColor: priceError ? palette.danger : palette.border },
+                          ]}
+                        >
+                          <Text style={[styles.currencyPrefix, { color: palette.textMuted }]}>Rs.</Text>
+                          <TextInput
+                            value={draftPrice}
+                            onChangeText={onChangeDraftPrice}
+                            keyboardType="decimal-pad"
+                            placeholder="Enter updated price"
+                            placeholderTextColor={palette.textMuted}
+                            style={[styles.sheetInput, { color: palette.textPrimary }]}
+                            accessibilityLabel="Enter updated price"
+                          />
+                        </View>
+                        {priceHelperText ? <Text style={[styles.helperText, { color: palette.textSecondary }]}>{priceHelperText}</Text> : null}
+                        {priceError ? <Text style={[styles.inlineError, { color: palette.danger }]}>{priceError}</Text> : null}
+                      </View>
+
+                      <View style={styles.fieldGroup}>
+                        <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Effective Date</Text>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Select effective date"
+                          onPress={() => {
+                            triggerHaptic();
+                            onToggleDatePicker();
+                          }}
+                          style={[styles.sheetField, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+                        >
+                          <Text style={[styles.sheetFieldValue, { color: palette.textPrimary }]}>{effectiveDate}</Text>
+                          <MaterialCommunityIcons
+                            name={datePickerOpen ? "chevron-up" : "chevron-down"}
+                            size={18}
+                            color={palette.textMuted}
+                          />
+                        </Pressable>
+                        {datePickerOpen ? (
+                          <View style={[styles.optionMenu, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}>
+                            {dateOptions.map((option) => (
+                              <Pressable
+                                key={option.value}
+                                onPress={() => onSelectDate(option.value)}
+                                style={[
+                                  styles.optionItem,
+                                  option.value === effectiveDate && { backgroundColor: palette.emeraldSoft },
+                                ]}
+                              >
+                                <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>{option.label}</Text>
+                                <Text style={[styles.optionSubtitle, { color: palette.textMuted }]}>{option.value}</Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <View style={[styles.summaryCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                        <Text style={[styles.summaryTitle, { color: palette.textPrimary }]}>Save Summary</Text>
+                        <Text style={[styles.summaryText, { color: palette.textSecondary }]}>{summaryText}</Text>
+                      </View>
+                    </>
+                  ) : null}
                 </ScrollView>
 
-                <View style={styles.actionsRow}>
-                  <PrimaryButton label="Cancel" onPress={onClose} variant="secondary" palette={palette} />
-                  <PrimaryButton
-                    label="Save Price Update"
-                    onPress={onSave}
-                    loading={savingPrice}
-                    disabled={saveDisabled}
-                    icon="content-save-outline"
-                    palette={palette}
-                  />
-                </View>
+                {selectedPriceShopId && priceBootstrap && currentPriceItem ? (
+                  <View style={styles.actionsRow}>
+                    <PrimaryButton label="Cancel" onPress={onClose} variant="secondary" palette={palette} />
+                    <PrimaryButton
+                      label="Save Price Update"
+                      onPress={onSave}
+                      loading={savingPrice}
+                      disabled={saveDisabled}
+                      icon="content-save-outline"
+                      palette={palette}
+                    />
+                  </View>
+                ) : null}
               </>
-            ) : (
-              <EmptyStateCard
-                title="Price controls not available"
-                subtitle="Load item pricing to prepare the next price update."
-                actionLabel="Close"
-                onAction={onClose}
-                palette={palette}
-              />
             )}
           </Animated.View>
         </KeyboardAvoidingView>
@@ -379,7 +451,7 @@ export function ShopEditorSheet({
   deleting = false,
   statusLoading = false,
   isActive = true,
-  form,
+  control,
   onSubmit,
   onDelete,
   onToggleActive,
@@ -425,7 +497,7 @@ export function ShopEditorSheet({
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <View style={styles.sheetContent}>
                 <Controller
-                  control={form.control}
+                  control={control}
                   name="name"
                   render={({ field, fieldState }) => (
                     <View style={styles.fieldGroup}>
@@ -453,8 +525,9 @@ export function ShopEditorSheet({
                   )}
                 />
 
+
                 <Controller
-                  control={form.control}
+                  control={control}
                   name="username"
                   render={({ field, fieldState }) => (
                     <View style={styles.fieldGroup}>
@@ -485,7 +558,7 @@ export function ShopEditorSheet({
                 />
 
                 <Controller
-                  control={form.control}
+                  control={control}
                   name="password"
                   render={({ field, fieldState }) => (
                     <View style={styles.fieldGroup}>
@@ -518,35 +591,6 @@ export function ShopEditorSheet({
                   )}
                 />
 
-                <Controller
-                  control={form.control}
-                  name="code"
-                  render={({ field, fieldState }) => (
-                    <View style={styles.fieldGroup}>
-                      <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Shop Code</Text>
-                      <View
-                        style={[
-                          styles.sheetField,
-                          {
-                            backgroundColor: palette.backgroundElevated,
-                            borderColor: fieldState.error ? palette.danger : palette.border,
-                          },
-                        ]}
-                      >
-                        <TextInput
-                          value={field.value}
-                          onChangeText={field.onChange}
-                          placeholder="Enter shop code"
-                          autoCapitalize="characters"
-                          placeholderTextColor={palette.textMuted}
-                          style={[styles.sheetInput, { color: palette.textPrimary }]}
-                          accessibilityLabel="Enter shop code"
-                        />
-                      </View>
-                      {fieldState.error ? <Text style={[styles.inlineError, { color: palette.danger }]}>{fieldState.error.message}</Text> : null}
-                    </View>
-                  )}
-                />
               </View>
             </ScrollView>
 
@@ -558,8 +602,12 @@ export function ShopEditorSheet({
                   loading={loading}
                   disabled={deleting || statusLoading}
                   icon="content-save-outline"
+                  variant="secondary"
                   fullWidth
                   palette={palette}
+                  backgroundColorOverride={palette.upiSoft}
+                  borderColorOverride={palette.upi}
+                  textColorOverride={palette.upi}
                 />
 
                 <View style={styles.actionsRow}>
@@ -570,10 +618,13 @@ export function ShopEditorSheet({
                         onPress={onToggleActive}
                         loading={statusLoading}
                         disabled={loading || deleting}
-                        variant={isActive ? "warning" : "primary"}
+                        variant="secondary"
                         icon={isActive ? "pause-circle-outline" : "check-circle-outline"}
                         fullWidth
                         palette={palette}
+                        backgroundColorOverride={isActive ? palette.cashSoft : palette.emeraldSoft}
+                        borderColorOverride={isActive ? palette.cash : palette.emerald}
+                        textColorOverride={isActive ? "#8A5A11" : palette.emeraldDark}
                       />
                     </View>
                   ) : null}
@@ -584,27 +635,239 @@ export function ShopEditorSheet({
                         onPress={onDelete}
                         loading={deleting}
                         disabled={loading || statusLoading}
-                        variant="danger"
+                        variant="secondary"
                         fullWidth
                         palette={palette}
+                        backgroundColorOverride={palette.dangerSoft}
+                        borderColorOverride={palette.danger}
+                        textColorOverride={palette.danger}
                       />
                     </View>
                   ) : null}
                 </View>
               </View>
             ) : (
-              <View style={styles.actionsRow}>
-                <PrimaryButton
-                  label="Create Shop Account"
-                  onPress={onSubmit}
-                  loading={loading}
-                  icon="store-plus-outline"
-                  fullWidth
-                  palette={palette}
-                />
+              <View
+                style={[
+                  styles.createActionsWrap,
+                  {
+                    backgroundColor: palette.backgroundElevated,
+                    borderColor: palette.border,
+                  },
+                ]}
+              >
+                <View style={styles.actionsRow}>
+                  <View style={styles.sheetActionButton}>
+                    <PrimaryButton
+                      label="Cancel"
+                      onPress={onClose}
+                      variant="secondary"
+                      icon="close"
+                      fullWidth
+                      palette={palette}
+                      backgroundColorOverride={palette.dangerSoft}
+                      borderColorOverride={palette.danger}
+                      textColorOverride={palette.danger}
+                    />
+                  </View>
+                  <View style={styles.sheetActionButton}>
+                    <PrimaryButton
+                      label="Create Account"
+                      onPress={onSubmit}
+                      loading={loading}
+                      icon="store-plus-outline"
+                      variant="secondary"
+                      fullWidth
+                      palette={palette}
+                      backgroundColorOverride={palette.emeraldSoft}
+                      borderColorOverride={palette.emerald}
+                      textColorOverride={palette.emeraldDark}
+                    />
+                  </View>
+                </View>
               </View>
             )}
           </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+export function BillPreviewSheet({
+  visible,
+  onClose,
+  palette,
+  bottomInset,
+  loading,
+  bill,
+}: BillPreviewSheetProps) {
+  const { panResponder, translateY } = useSwipeToClose(onClose);
+  const [receiptPreviewHeight, setReceiptPreviewHeight] = useState(320);
+  const [printing, setPrinting] = useState(false);
+  const receiptHtml = useMemo(() => (bill ? buildReceiptHtml(bill) : ""), [bill]);
+
+  useEffect(() => {
+    setReceiptPreviewHeight(320);
+  }, [bill?.id]);
+
+  async function handlePrint() {
+    if (!bill) return;
+    try {
+      setPrinting(true);
+      await Linking.openURL(`printerapp://print?html=${encodeURIComponent(receiptHtml)}`);
+    } catch {
+      Alert.alert("Unable to Open Printer", "Make sure the printer app is installed and try again.");
+    } finally {
+      setPrinting(false);
+    }
+  }
+
+  const receiptPreviewScript = useMemo(
+    () => `
+      (function() {
+        function postHeight() {
+          var receipt = document.querySelector('.receipt-container');
+          var receiptHeight = receipt ? receipt.getBoundingClientRect().height : 0;
+          var bodyHeight = document.body ? document.body.getBoundingClientRect().height : 0;
+          var docHeight = document.documentElement ? document.documentElement.getBoundingClientRect().height : 0;
+          var height = Math.ceil(Math.max(receiptHeight, bodyHeight, docHeight));
+          window.ReactNativeWebView.postMessage(String(height));
+        }
+
+        document.documentElement.style.margin = '0';
+        document.documentElement.style.padding = '0';
+        document.documentElement.style.overflow = 'hidden';
+
+        if (document.body) {
+          document.body.style.margin = '0';
+          document.body.style.overflow = 'hidden';
+        }
+
+        window.addEventListener('load', postHeight);
+        window.addEventListener('resize', postHeight);
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(postHeight);
+        }
+        setTimeout(postHeight, 60);
+        setTimeout(postHeight, 180);
+        setTimeout(postHeight, 420);
+        setTimeout(postHeight, 900);
+      })();
+      true;
+    `,
+    [],
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={[styles.modalBackdrop, { backgroundColor: palette.overlay }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Animated.View
+            {...panResponder.panHandlers}
+            style={[
+              styles.bottomSheet,
+              adminShadow(palette.shadow, 0.16, 18, 24),
+              {
+                backgroundColor: palette.card,
+                borderColor: palette.border,
+                paddingBottom: bottomInset + 16,
+                transform: [{ translateY }],
+              },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View style={styles.headerTextWrap}>
+                <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>Bill Preview</Text>
+                <Text style={[styles.sheetSubtitle, { color: palette.textMuted }]}>
+                  Review receipt details, purchased items, and payment totals.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close bill preview"
+                onPress={onClose}
+                style={[styles.iconButton, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+              >
+                <MaterialCommunityIcons name="close" size={18} color={palette.textPrimary} />
+              </Pressable>
+            </View>
+
+            {loading ? (
+              <View style={styles.loadingWrap}>
+                <ActivityIndicator color={palette.emerald} />
+                <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Loading bill preview...</Text>
+              </View>
+            ) : bill ? (
+              <>
+                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+                  <View style={[styles.previewSummaryCard, { backgroundColor: palette.emeraldSoft, borderColor: palette.border }]}>
+                    <Text style={[styles.previewSummaryLabel, { color: palette.emeraldDark }]}>{bill.bill_no}</Text>
+                    <Text style={[styles.previewSummaryAmount, { color: palette.emeraldDark }]}>{formatCurrency(bill.total_amount)}</Text>
+                    <Text style={[styles.previewSummaryMeta, { color: palette.textSecondary }]}>
+                      {bill.shop_name} · {formatDateTime(bill.created_at)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Printout Preview</Text>
+                    <View style={[styles.receiptPreviewWrap, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                      <View style={styles.receiptPreviewFrame}>
+                        <WebView
+                          originWhitelist={["*"]}
+                          source={{ html: receiptHtml }}
+                          injectedJavaScript={receiptPreviewScript}
+                          onMessage={(event) => {
+                            const nextHeight = Number(event.nativeEvent.data);
+                            if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
+                              return;
+                            }
+                            setReceiptPreviewHeight(nextHeight);
+                          }}
+                          scrollEnabled={false}
+                          nestedScrollEnabled={false}
+                          showsVerticalScrollIndicator={false}
+                          showsHorizontalScrollIndicator={false}
+                          style={{ width: "100%", height: receiptPreviewHeight, backgroundColor: "transparent" }}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                </ScrollView>
+
+                {/* Print button */}
+                <View style={styles.actionsRow}>
+                  <PrimaryButton
+                    label="Close"
+                    onPress={onClose}
+                    variant="secondary"
+                    palette={palette}
+                  />
+                  <PrimaryButton
+                    label={printing ? "Opening..." : "Print Receipt"}
+                    onPress={() => void handlePrint()}
+                    loading={printing}
+                    icon="printer-outline"
+                    palette={palette}
+                    backgroundColorOverride={palette.emerald}
+                    borderColorOverride={palette.emerald}
+                    textColorOverride="#FFFFFF"
+                  />
+                </View>
+              </>
+            ) : (
+              <EmptyStateCard
+                title="Bill preview unavailable"
+                subtitle="Open another bill to preview its details."
+                actionLabel="Close"
+                onAction={onClose}
+                palette={palette}
+                icon="receipt-text-remove-outline"
+              />
+            )}
+          </Animated.View>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -792,8 +1055,48 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingTop: 8,
   },
+  previewSummaryCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+    gap: 4,
+  },
+  previewSummaryLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  previewSummaryAmount: {
+    fontSize: 26,
+    fontWeight: "800",
+  },
+  previewSummaryMeta: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  receiptPreviewWrap: {
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 10,
+  },
+  receiptPreviewFrame: {
+    overflow: "hidden",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#000000",
+    backgroundColor: "#FFFFFF",
+  },
+  createActionsWrap: {
+    marginTop: 8,
+    marginHorizontal: -18,
+    marginBottom: -18,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderTopWidth: 1,
+  },
   sheetActionButton: {
     flex: 1,
   },
 });
-

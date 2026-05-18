@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DailyPrice, Item, Shop, User
 from app.schemas.pricing import DailyPriceCreate, DailyPriceRead, ItemPriceRead, ShopBootstrapResponse
-from app.services.audit import log_action
 
 
 async def _get_shop_price_map(db: AsyncSession, shop: Shop) -> dict[int, DailyPrice]:
@@ -122,12 +121,6 @@ async def create_daily_prices(
 
         saved_prices.append(daily_price)
 
-    log_action(
-        db,
-        actor.id,
-        "daily_price_setup",
-        f"Saved {len(saved_prices)} daily prices for shop {shop.code} on {target_date.isoformat()}",
-    )
     await db.commit()
     for price in saved_prices:
         await db.refresh(price)
@@ -243,12 +236,6 @@ async def create_global_daily_prices(
 
             saved_prices.append(daily_price)
     
-    log_action(
-        db,
-        actor.id,
-        "global_pricing",
-        f"Set global prices for {len(shops)} shops on {target_date.isoformat()}",
-    )
     await db.commit()
     for price in saved_prices:
         await db.refresh(price)

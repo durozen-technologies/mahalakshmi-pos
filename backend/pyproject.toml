@@ -15,3 +15,8 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "uvicorn-worker>=0.4.0",
 ]
+
+[dependency-groups]
+dev = [
+    "asyncpg>=0.31.0",
+]

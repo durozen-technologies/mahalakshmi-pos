@@ -53,11 +53,14 @@ type PrimaryButtonProps = {
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: "primary" | "secondary" | "danger" | "accent" | "warning";
+  variant?: "primary" | "secondary" | "danger" | "accent" | "warning" | "contrast";
   fullWidth?: boolean;
   palette: ThemePalette;
   icon?: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
   accessibilityLabel?: string;
+  backgroundColorOverride?: string;
+  borderColorOverride?: string;
+  textColorOverride?: string;
 };
 
 type EmptyStateCardProps = {
@@ -340,15 +343,19 @@ export const PrimaryButton = memo(function PrimaryButton({
   palette,
   icon,
   accessibilityLabel,
+  backgroundColorOverride,
+  borderColorOverride,
+  textColorOverride,
 }: PrimaryButtonProps) {
   const isPrimary = variant === "primary";
   const isDanger = variant === "danger";
   const isAccent = variant === "accent";
   const isWarning = variant === "warning";
+  const isContrast = variant === "contrast";
   const isDisabled = loading || disabled;
-  const isSolid = isPrimary || isDanger || isAccent || isWarning;
+  const isSolid = isPrimary || isDanger || isAccent || isWarning || isContrast;
 
-  const buttonBackground = isPrimary
+  const buttonBackground = backgroundColorOverride ?? (isPrimary
     ? palette.emerald
     : isDanger
       ? palette.danger
@@ -356,8 +363,10 @@ export const PrimaryButton = memo(function PrimaryButton({
         ? palette.upi
         : isWarning
           ? palette.cash
-          : palette.card;
-  const buttonBorder = isPrimary
+          : isContrast
+            ? palette.textPrimary
+            : palette.card);
+  const buttonBorder = borderColorOverride ?? (isPrimary
     ? palette.emerald
     : isDanger
       ? palette.danger
@@ -365,8 +374,10 @@ export const PrimaryButton = memo(function PrimaryButton({
         ? palette.upi
         : isWarning
           ? palette.cash
-          : palette.border;
-  const textColor = isPrimary
+          : isContrast
+            ? palette.textPrimary
+            : palette.border);
+  const textColor = textColorOverride ?? (isPrimary
     ? "#FFFFFF"
     : isDanger
       ? "#FFFFFF"
@@ -374,7 +385,9 @@ export const PrimaryButton = memo(function PrimaryButton({
         ? "#FFFFFF"
         : isWarning
           ? "#201505"
-          : palette.textPrimary;
+          : isContrast
+            ? palette.background
+            : palette.textPrimary);
 
   return (
     <Pressable

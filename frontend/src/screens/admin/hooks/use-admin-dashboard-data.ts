@@ -1,17 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createShop,
   deleteShop,
-  fetchAuditLogs,
+  fetchAdminBillDetail,
   fetchDailyBills,
+  fetchDashboardBootstrap,
   fetchGlobalPriceBootstrap,
-  fetchItemSales,
-  fetchPaymentSummary,
-  fetchShop,
-  fetchSalesSummary,
-  fetchShops,
+  fetchShopPriceBootstrap,
   saveGlobalDailyPrices,
+  saveShopDailyPrices,
   updateShop,
   updateShopStatus,
 } from "@/api/admin";
@@ -19,7 +17,7 @@ import { toApiError } from "@/api/client";
 import type {
   AdminBillSummary,
   AnalyticsPeriod,
-  AuditLogRead,
+  BillRead,
   DailyPriceCreate,
   ItemSalesSummary,
   PaymentSplitSummary,
@@ -30,6 +28,8 @@ import type {
 } from "@/types/api";
 
 import { getShopStatus, type ShopOperationalState } from "../admin-dashboard-utils";
+
+const BILL_PAGE_SIZE = 50;
 
 export type ShopDashboardRow = {
   shop: ShopRead;
@@ -45,7 +45,6 @@ type CreateBranchInput = {
   name: string;
   username: string;
   password: string;
-  code?: string | null;
 };
 
 type UpdateBranchInput = ShopUpdate;
@@ -67,40 +66,68 @@ export function useAdminDashboardData({
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceBootstrap, setPriceBootstrap] = useState<ShopBootstrapResponse | null>(null);
-  const [shops, setShops] = useState<ShopRead[]>([]);
-  const [salesSummary, setSalesSummary] = useState<ShopSalesSummary[]>([]);
-  const [paymentSummary, setPaymentSummary] = useState<PaymentSplitSummary[]>([]);
+  const [dashboardData, setDashboardData] = useState<{
+    shops: ShopRead[];
+    salesSummary: ShopSalesSummary[];
+    paymentSummary: PaymentSplitSummary[];
+    dailyBillStats: { shopId: number; billCount: number; lastBillAt: string | null }[];
+    largestBill: AdminBillSummary | null;
+    itemSales: ItemSalesSummary[];
+  }>({
+    shops: [],
+    salesSummary: [],
+    paymentSummary: [],
+    dailyBillStats: [],
+    largestBill: null,
+    itemSales: [],
+  });
+
   const [dailyBills, setDailyBills] = useState<AdminBillSummary[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLogRead[]>([]);
-  const [itemSales, setItemSales] = useState<ItemSalesSummary[]>([]);
+  const [dailyBillsTotalCount, setDailyBillsTotalCount] = useState(0);
+  const [dailyBillsCursor, setDailyBillsCursor] = useState<{ createdAt: string | null; id: number | null }>({
+    createdAt: null,
+    id: null,
+  });
+  const [dailyBillsHasMore, setDailyBillsHasMore] = useState(false);
+  const [dailyBillsLoadingMore, setDailyBillsLoadingMore] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setRefreshing(true);
-    } else if (shops.length === 0) {
+    } else if (!hasLoadedOnceRef.current) {
       setLoading(true);
     }
 
     try {
-      const [shopsData, salesData, paymentsData, billsData, logsData, itemSalesData] = await Promise.all([
-        fetchShops(),
-        fetchSalesSummary(analyticsPeriod, analyticsReferenceDate),
-        fetchPaymentSummary(analyticsPeriod, analyticsReferenceDate),
-        fetchDailyBills(analyticsPeriod, analyticsReferenceDate),
-        fetchAuditLogs(),
-        fetchItemSales(analyticsPeriod, analyticsReferenceDate, selectedShopId),
-      ]);
+      const data = await fetchDashboardBootstrap(analyticsPeriod, analyticsReferenceDate, selectedShopId, BILL_PAGE_SIZE);
 
-      setShops(shopsData);
-      setSalesSummary(salesData);
-      setPaymentSummary(paymentsData);
-      setDailyBills(billsData);
-      setAuditLogs(logsData);
-      setItemSales(itemSalesData);
+      setDashboardData({
+        shops: data.shops,
+        salesSummary: data.sales_summary,
+        paymentSummary: data.payment_summary,
+        dailyBillStats: data.bills.shop_stats.map((stat) => ({
+          shopId: stat.shop_id,
+          billCount: stat.bill_count,
+          lastBillAt: stat.last_bill_at ?? null,
+        })),
+        largestBill: data.bills.largest_bill ?? null,
+        itemSales: data.item_sales,
+      });
+
+      setDailyBills(data.bills.items);
+      setDailyBillsTotalCount(data.bills.total_count);
+      setDailyBillsHasMore(data.bills.has_more);
+      setDailyBillsCursor({
+        createdAt: data.bills.next_cursor_created_at ?? null,
+        id: data.bills.next_cursor_id ?? null,
+      });
+      setDailyBillsLoadingMore(false);
       setLastSyncAt(new Date().toISOString());
       setIsOfflineSnapshot(false);
       setDashboardError(null);
+      hasLoadedOnceRef.current = true;
     } catch (error) {
       setIsOfflineSnapshot(true);
       setDashboardError(toApiError(error).message);
@@ -108,11 +135,57 @@ export function useAdminDashboardData({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [analyticsPeriod, analyticsReferenceDate, selectedShopId, shops.length]);
+  }, [analyticsPeriod, analyticsReferenceDate, selectedShopId]);
 
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  const loadMoreBills = useCallback(async () => {
+    if (
+      dailyBillsLoadingMore ||
+      !dailyBillsHasMore ||
+      dailyBillsCursor.createdAt === null ||
+      dailyBillsCursor.id === null
+    ) {
+      return;
+    }
+
+    setDailyBillsLoadingMore(true);
+    try {
+      const nextPage = await fetchDailyBills(
+        analyticsPeriod,
+        analyticsReferenceDate,
+        selectedShopId,
+        BILL_PAGE_SIZE,
+        dailyBillsCursor.createdAt,
+        dailyBillsCursor.id,
+      );
+
+      setDailyBills((current) => {
+        const existingIds = new Set(current.map((bill) => bill.bill_id));
+        const nextItems = nextPage.items.filter((bill) => !existingIds.has(bill.bill_id));
+        return [...current, ...nextItems];
+      });
+      setDailyBillsHasMore(nextPage.has_more);
+      setDailyBillsCursor({
+        createdAt: nextPage.next_cursor_created_at ?? null,
+        id: nextPage.next_cursor_id ?? null,
+      });
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    } finally {
+      setDailyBillsLoadingMore(false);
+    }
+  }, [
+    analyticsPeriod,
+    analyticsReferenceDate,
+    dailyBillsCursor.createdAt,
+    dailyBillsCursor.id,
+    dailyBillsHasMore,
+    dailyBillsLoadingMore,
+    selectedShopId,
+  ]);
 
   const loadPriceBootstrap = useCallback(async (forceRefresh = false) => {
     if (priceBootstrap && !forceRefresh) {
@@ -131,50 +204,70 @@ export function useAdminDashboardData({
     }
   }, [priceBootstrap]);
 
-  const billCountByShopId = useMemo(() => {
-    const counts = new Map<number, number>();
-
-    for (const bill of dailyBills) {
-      counts.set(bill.shop_id, (counts.get(bill.shop_id) ?? 0) + 1);
+  const loadShopPriceBootstrap = useCallback(async (shopId: number) => {
+    setPriceBootstrap(null);
+    setPriceLoading(true);
+    try {
+      const bootstrap = await fetchShopPriceBootstrap(shopId);
+      setPriceBootstrap(bootstrap);
+      return bootstrap;
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    } finally {
+      setPriceLoading(false);
     }
+  }, []);
 
-    return counts;
-  }, [dailyBills]);
-
-  const latestBillByShopId = useMemo(() => {
-    const map = new Map<number, AdminBillSummary>();
-
-    for (const bill of dailyBills) {
-      const current = map.get(bill.shop_id);
-      if (!current || new Date(current.created_at).getTime() < new Date(bill.created_at).getTime()) {
-        map.set(bill.shop_id, bill);
-      }
+  const saveShopPriceBook = useCallback(async (shopId: number, payload: DailyPriceCreate) => {
+    try {
+      await saveShopDailyPrices(shopId, payload);
+      await loadDashboard(true);
+    } catch (error) {
+      throw new Error(toApiError(error).message);
     }
+  }, [loadDashboard]);
 
-    return map;
-  }, [dailyBills]);
+  const applyShopUpdate = useCallback((updatedShop: ShopRead) => {
+    setDashboardData((current) => ({
+      ...current,
+      shops: current.shops.map((shop) => (shop.id === updatedShop.id ? updatedShop : shop)),
+    }));
+    setLastSyncAt(new Date().toISOString());
+    setIsOfflineSnapshot(false);
+    setDashboardError(null);
+  }, []);
+
+  const billCountByShopId = useMemo(
+    () => new Map(dashboardData.dailyBillStats.map((stat) => [stat.shopId, stat.billCount])),
+    [dashboardData.dailyBillStats],
+  );
+
+  const latestBillAtByShopId = useMemo(
+    () => new Map(dashboardData.dailyBillStats.map((stat) => [stat.shopId, stat.lastBillAt])),
+    [dashboardData.dailyBillStats],
+  );
 
   const salesByShopId = useMemo(
-    () => new Map(salesSummary.map((item) => [item.shop_id, item.total_sales])),
-    [salesSummary],
+    () => new Map(dashboardData.salesSummary.map((item) => [item.shop_id, item.total_sales])),
+    [dashboardData.salesSummary],
   );
 
   const paymentsByShopId = useMemo(
     () =>
       new Map(
-        paymentSummary.map((item) => [
+        dashboardData.paymentSummary.map((item) => [
           item.shop_id,
           { cashTotal: item.cash_total, upiTotal: item.upi_total },
         ]),
       ),
-    [paymentSummary],
+    [dashboardData.paymentSummary],
   );
 
   const shopRows = useMemo<ShopDashboardRow[]>(() => {
-    return shops.map((shop) => {
-      const latestBill = latestBillByShopId.get(shop.id);
+    return dashboardData.shops.map((shop) => {
+      const latestBillAt = latestBillAtByShopId.get(shop.id);
       const payment = paymentsByShopId.get(shop.id);
-      const lastActivityAt = latestBill?.created_at ?? shop.created_at;
+      const lastActivityAt = latestBillAt ?? shop.created_at;
 
       return {
         shop,
@@ -186,11 +279,11 @@ export function useAdminDashboardData({
         status: getShopStatus(shop, lastActivityAt),
       };
     });
-  }, [billCountByShopId, latestBillByShopId, paymentsByShopId, salesByShopId, shops]);
+  }, [billCountByShopId, latestBillAtByShopId, paymentsByShopId, salesByShopId, dashboardData.shops]);
 
   const selectedShopName = useMemo(
-    () => (selectedShopId ? shops.find((shop) => shop.id === selectedShopId)?.name ?? "Selected Branch" : "All Branches"),
-    [selectedShopId, shops],
+    () => (selectedShopId ? dashboardData.shops.find((shop) => shop.id === selectedShopId)?.name ?? "Selected Branch" : "All Branches"),
+    [selectedShopId, dashboardData.shops],
   );
 
   const visibleShopRows = useMemo(
@@ -209,29 +302,22 @@ export function useAdminDashboardData({
 
   const toggleBranchStatus = useCallback(async (shop: ShopRead, isActive: boolean) => {
     try {
-      await updateShopStatus(shop.id, { is_active: isActive });
-      await loadDashboard(true);
+      const updatedShop = await updateShopStatus(shop.id, { is_active: isActive });
+      applyShopUpdate(updatedShop);
     } catch (error) {
       throw new Error(toApiError(error).message);
     }
-  }, [loadDashboard]);
+  }, [applyShopUpdate]);
 
   const updateBranch = useCallback(async (shop: ShopRead, values: UpdateBranchInput) => {
     try {
-      await updateShop(shop.id, values);
-      await loadDashboard(true);
+      const updatedShop = await updateShop(shop.id, values);
+      applyShopUpdate(updatedShop);
+      return updatedShop;
     } catch (error) {
       throw new Error(toApiError(error).message);
     }
-  }, [loadDashboard]);
-
-  const loadBranch = useCallback(async (shopId: number) => {
-    try {
-      return await fetchShop(shopId);
-    } catch (error) {
-      throw new Error(toApiError(error).message);
-    }
-  }, []);
+  }, [applyShopUpdate]);
 
   const deleteBranch = useCallback(async (shop: ShopRead) => {
     try {
@@ -251,28 +337,42 @@ export function useAdminDashboardData({
     }
   }, [loadDashboard, loadPriceBootstrap]);
 
+  const loadBillDetail = useCallback(async (billId: number): Promise<BillRead> => {
+    try {
+      return await fetchAdminBillDetail(billId);
+    } catch (error) {
+      throw new Error(toApiError(error).message);
+    }
+  }, []);
+
   return {
-    auditLogs,
     createBranch,
     dailyBills,
+    dailyBillsHasMore,
+    dailyBillsLoadingMore,
+    dailyBillsTotalCount,
     dashboardError,
     isOfflineSnapshot,
-    itemSales,
+    itemSales: dashboardData.itemSales,
+    largestBill: dashboardData.largestBill,
     lastSyncAt,
+    loadBillDetail,
     loadDashboard,
+    loadMoreBills,
     loadPriceBootstrap,
+    loadShopPriceBootstrap,
     loading,
-    paymentSummary,
+    paymentSummary: dashboardData.paymentSummary,
     priceBootstrap,
     priceLoading,
     refreshing,
-    salesSummary,
+    salesSummary: dashboardData.salesSummary,
     saveGlobalPriceBook,
+    saveShopPriceBook,
     selectedShopName,
     setPriceBootstrap,
     shopRows,
-    shops,
-    loadBranch,
+    shops: dashboardData.shops,
     updateBranch,
     deleteBranch,
     toggleBranchStatus,

@@ -1,7 +1,7 @@
 from enum import Enum
 from decimal import Decimal
 
-from sqlalchemy import Enum as SqlEnum, ForeignKey, Numeric, String
+from sqlalchemy import Enum as SqlEnum, ForeignKey, Index, Numeric, String, desc
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -16,10 +16,15 @@ class BillStatus(str, Enum):
 
 class Bill(Base, BaseModelMixin):
     __tablename__ = "bills"
+    __table_args__ = (
+        Index("ix_bills_created_at_id_desc", desc("created_at"), desc("id")),
+        Index("ix_bills_shop_id_created_at_id_desc", "shop_id", desc("created_at"), desc("id")),
+        Index("ix_bills_created_at_total_amount_desc", desc("created_at"), desc("total_amount")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     bill_no: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), nullable=False)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), index=True, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[BillStatus] = mapped_column(SqlEnum(BillStatus), nullable=False)
 
@@ -33,8 +38,8 @@ class BillItem(Base):
     __tablename__ = "bill_items"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), nullable=False)
-    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), index=True, nullable=False)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     unit: Mapped[BaseUnit] = mapped_column(SqlEnum(BaseUnit), nullable=False)
     price_per_unit: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
@@ -42,3 +47,10 @@ class BillItem(Base):
 
     bill = relationship("Bill", back_populates="items")
     item = relationship("Item", back_populates="bill_items")
+
+
+class MonthlyBillSequence(Base):
+    __tablename__ = "monthly_bill_sequences"
+
+    month_year: Mapped[str] = mapped_column(String(7), primary_key=True)
+    current_value: Mapped[int] = mapped_column(nullable=False, default=0)

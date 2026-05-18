@@ -105,13 +105,12 @@ function escapeHtml(value: string) {
 //         </tr>
 
 export function buildReceiptHtml(bill: BillRead) {
-  const language = getReceiptLanguage();
-  const copy = getReceiptCopy(language);
+  const copy = RECEIPT_COPY.en;
   const itemRows = bill.items
     .map(
       (item) => `
         <tr class="item-row">
-          <td class="item-name strong">${escapeHtml(translateShopItemName(language, item.item_name))}</td>
+          <td class="item-name strong">${escapeHtml(translateShopItemName("ta", item.item_name))}</td>
           <td class="align-right item-qty">${item.quantity} ${formatUnit(item.unit)}</td>
           <td class="align-right item-total strong">${formatReceiptCurrency(item.line_total)}</td>
         </tr>
@@ -147,7 +146,7 @@ export function buildReceiptHtml(bill: BillRead) {
             margin: 0;
             padding: 12px;
             font-size: 14px;
-            line-height: 1.1;
+            line-height: 1.3;
             background: #fff;
             font-weight: 600;
             text-rendering: optimizeLegibility;
@@ -167,62 +166,80 @@ export function buildReceiptHtml(bill: BillRead) {
           .center { text-align: center; }
           .align-right { text-align: right; }
           .strong { font-weight: 700; }
-          
+
           .header-main {
-            font-size: 26px;
+            font-size: 24px;
             letter-spacing: -0.4px;
-            line-height: 1;
+            line-height: 1.15;
             margin-bottom: 3px;
-            white-space: nowrap;
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
             color: #000000;
             font-weight: 800;
           }
           .header-sub {
-            font-size: 21px;
-            line-height: 1.02;
+            font-size: 19px;
+            line-height: 1.15;
             margin-bottom: 10px;
             border-bottom: 2.5px solid #000000;
             padding-bottom: 7px;
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
             color: #000000;
             font-weight: 800;
           }
           .bill-meta {
-            font-size: 16px;
-            line-height: 1.1;
+            font-size: 15px;
+            line-height: 1.4;
             margin-bottom: 10px;
             color: #000000;
             text-align: center;
           }
           .bill-meta span {
             display: block;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
           }
           .bill-meta span:last-child {
             margin-bottom: 0;
           }
 
-          table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-          .col-item-name { width: 58%; }
-          .col-item-qty { width: 18%; }
-          .col-item-total { width: 24%; }
+          /* ── Items table ── */
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+          }
+          col.col-item-name  { width: 55%; }
+          col.col-item-qty   { width: 20%; }
+          col.col-item-total { width: 25%; }
+
           .items-header { border-bottom: 2.5px solid #000000; border-top: 2.5px solid #000000; }
           .items-header th {
             padding: 7px 0;
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 800;
             text-transform: uppercase;
-            line-height: 1;
+            line-height: 1.2;
             color: #000000;
             white-space: nowrap;
+            overflow: hidden;
           }
-          
-          .item-row td { padding-top: 8px; padding-bottom: 10px; vertical-align: top; line-height: 1.05; }
+          .items-header th:nth-child(2),
+          .items-header th:nth-child(3) {
+            text-align: right;
+          }
+
+          .item-row td {
+            padding-top: 8px;
+            padding-bottom: 8px;
+            vertical-align: top;
+            line-height: 1.3;
+          }
           .item-name {
-            width: 58%;
-            max-width: 58%;
-            font-size: 19px;
-            padding-right: 8px;
-            line-height: 1.1;
+            font-size: 17px;
+            padding-right: 6px;
             color: #000000;
             font-weight: 800;
             white-space: normal;
@@ -230,48 +247,44 @@ export function buildReceiptHtml(bill: BillRead) {
             overflow-wrap: anywhere;
           }
           .item-qty {
-            width: 82px;
-            font-size: 16px;
-            white-space: nowrap;
+            font-size: 14px;
+            text-align: right;
+            white-space: normal;
+            word-break: break-word;
             color: #000000;
             font-weight: 700;
+            padding-right: 4px;
           }
           .item-total {
-            width: 92px;
-            font-size: 20px;
-            white-space: nowrap;
+            font-size: 17px;
+            text-align: right;
+            white-space: normal;
+            word-break: break-word;
             color: #000000;
             font-weight: 800;
-          }
-          .item-calc-row { 
-            font-size: 15px; 
-            font-weight: 700;
-            line-height: 1;
-            color: #000000; 
-            padding: 2px 0 8px; 
           }
 
           .payment-divider {
             border-top: 2.5px solid #000000;
             margin-top: 10px;
           }
-          
+
           .upi-bottom-divider {
             border-bottom: 1.5px solid #000000;
             padding-bottom: 4px;
             margin-bottom: 4px;
           }
 
-          .totals-section { margin-top: 4px; }
+          .totals-section { margin-top: 4px; width: 100%; }
           .total-row td {
             padding: 4px 0;
-            font-size: 19px;
+            font-size: 18px;
             font-weight: 700;
-            line-height: 1;
+            line-height: 1.3;
             color: #000000;
           }
           .grand-total td {
-            font-size: 30px;
+            font-size: 26px;
             font-weight: 800;
             padding-top: 8px;
             color: #000000;
@@ -283,25 +296,34 @@ export function buildReceiptHtml(bill: BillRead) {
             padding-top: 14px;
           }
           .thank-you {
-            font-size: 21px;
+            font-size: 19px;
             font-weight: 800;
-            line-height: 1.15;
+            line-height: 1.3;
             color: #000000;
           }
           .footer-note {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
             color: #000000;
             margin: 8px 0 6px;
           }
           .total-divider { border-top: 2.5px solid #000000; margin: 8px 0; }
+
+          @media (max-width: 360px) {
+            .header-main { font-size: 20px; }
+            .header-sub  { font-size: 17px; }
+            .bill-meta   { font-size: 13px; }
+            .item-name   { font-size: 15px; }
+            .item-qty    { font-size: 13px; }
+            .item-total  { font-size: 15px; }
+          }
         </style>
       </head>
       <body>
         <div class="receipt-container">
           <div class="center">
             <div class="strong header-main">${copy.companyName}</div>
-            <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, language))}</div>
+            <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, "en"))}</div>
           </div>
 
           <div class="bill-meta">

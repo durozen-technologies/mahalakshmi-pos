@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models import BaseUnit
+from app.models.enums import BaseUnit
 from app.schemas.common import ORMModel
 
 
@@ -28,7 +28,7 @@ class BillCheckoutRequest(BaseModel):
         return self
 
 
-class BillLineRead(BaseModel):
+class BillLineRead(ORMModel):
     item_id: int
     item_name: str
     quantity: Decimal
@@ -52,7 +52,7 @@ class ReceiptRead(ORMModel):
     printed_at: datetime
 
 
-class BillRead(BaseModel):
+class BillRead(ORMModel):
     id: int
     bill_no: str
     shop_id: int

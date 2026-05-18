@@ -156,7 +156,7 @@ export function LoginScreen() {
                 </Text>
 
                 <Text className="mt-2 text-base leading-6 text-[#6B7280]">
-                  Sign in to manage billing, inventory, reports, pricing, and
+                  Sign in to manage billing, inventory, pricing, and
                   staff operations.
                 </Text>
 

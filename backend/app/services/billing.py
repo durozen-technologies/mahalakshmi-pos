@@ -2,12 +2,12 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Bill, BillItem, BillStatus, DailyPrice, Item, Payment, Receipt, Shop, User
+from app.models import Bill, BillItem, BillStatus, DailyPrice, Item, Payment, Receipt, Shop, User, MonthlyBillSequence
 from app.schemas.billing import BillCheckoutRequest, BillLineRead, BillRead
-from app.services.audit import log_action
 from app.services.pricing import _get_shop_price_map
 
 TWOPLACES = Decimal("0.01")
@@ -19,15 +19,26 @@ def _round_money(value: Decimal) -> Decimal:
 
 async def _generate_bill_no(db: AsyncSession, shop: Shop) -> str:
     now = datetime.now(UTC)
-    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-    next_month = datetime(now.year + (1 if now.month == 12 else 0), 1 if now.month == 12 else now.month + 1, 1, tzinfo=UTC)
-    bill_count = await db.scalar(
-        select(func.count(Bill.id)).where(
-            Bill.created_at >= month_start,
-            Bill.created_at < next_month,
-        )
+    month_str = f"{now.year:04d}-{now.month:02d}"
+
+    stmt = (
+        update(MonthlyBillSequence)
+        .where(MonthlyBillSequence.month_year == month_str)
+        .values(current_value=MonthlyBillSequence.current_value + 1)
+        .returning(MonthlyBillSequence.current_value)
     )
-    sequence = int(bill_count or 0) + 1
+    result = await db.scalar(stmt)
+
+    if result is None:
+        try:
+            db.add(MonthlyBillSequence(month_year=month_str, current_value=1))
+            await db.flush()
+            result = 1
+        except IntegrityError:
+            await db.rollback()
+            result = await db.scalar(stmt)
+
+    sequence = int(result or 1)
     if sequence > 999999:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -146,12 +157,6 @@ async def create_bill(db: AsyncSession, shop: Shop, payload: BillCheckoutRequest
     )
     db.add_all([payment, receipt])
 
-    log_action(
-        db,
-        actor.id,
-        "create_bill",
-        f"Created bill {bill.bill_no} for shop {shop.code} amount {total_amount}",
-    )
     await db.commit()
     await db.refresh(bill)
     await db.refresh(payment)

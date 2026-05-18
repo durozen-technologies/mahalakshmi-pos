@@ -9,7 +9,6 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Item, Shop, User
 from app.routers.admin import (
-    audit_logs,
     bills,
     create_shop,
     get_shops,
@@ -32,7 +31,14 @@ from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry
 
 class BackendApiIntegrationTests(BackendTestCase):
     def test_health_endpoint(self) -> None:
-        self.assertEqual(health_check(), {"status": "ok"})
+        from fastapi import Request
+        from unittest.mock import Mock
+        mock_request = Mock(spec=Request)
+        mock_request.app.state.database_ready = True
+        mock_request.app.state.database_error = None
+        import json
+        response = health_check(mock_request)
+        self.assertEqual(json.loads(response.body), {"status": "ok", "database": "connected", "error": None})
 
     def test_auth_endpoints(self) -> None:
         async def scenario() -> None:
@@ -75,7 +81,7 @@ class BackendApiIntegrationTests(BackendTestCase):
                 )
                 admin_user = session.scalar(select(User).where(User.id == registered_admin.user.id))
 
-                created_shop = await create_shop(ShopCreate(name="Main Shop", code="ML1"), db, admin_user)
+                created_shop = await create_shop(ShopCreate(name="Main Shop", username="ml1", password="password"), db, admin_user)
                 self.assertEqual(created_shop.username, "ml1")
                 shop_id = created_shop.id
 
@@ -105,7 +111,7 @@ class BackendApiIntegrationTests(BackendTestCase):
                 admin_shop_prices = await shop_daily_prices(shop_id, price_payload, db, admin_user)
                 self.assertEqual(len(admin_shop_prices), len(items))
 
-                shop_login = await login(LoginRequest(username="ml1", password="ml123"), db)
+                shop_login = await login(LoginRequest(username="ml1", password="password"), db)
                 self.assertEqual(shop_login.user.next_screen, "billing")
 
                 shop_user = await db.scalar(
@@ -150,17 +156,15 @@ class BackendApiIntegrationTests(BackendTestCase):
                 self.assertEqual(created_bill.status, "paid")
                 self.assertTrue(created_bill.payment.is_settled)
 
-                sales_rows = await sales_summary(db)
-                self.assertEqual(sales_rows[0].shop_code, "ML1")
+                sales_rows = await sales_summary(period="date", reference_date=None, db=db)
+                self.assertEqual(sales_rows[0].shop_name, current_shop.name)
 
-                payment_rows = await payment_summary(db)
+                payment_rows = await payment_summary(period="date", reference_date=None, db=db)
                 self.assertEqual(payment_rows[0].cash_total, total_amount)
 
-                bill_rows = await bills(db)
-                self.assertEqual(len(bill_rows), 1)
+                bill_rows = await bills(period="date", reference_date=None, shop_id=None, limit=50, cursor_created_at=None, cursor_id=None, db=db)
+                self.assertEqual(len(bill_rows.items), 1)
 
-                audit_rows = await audit_logs(db)
-                self.assertGreaterEqual(len(audit_rows), 1)
 
                 disabled_shop = await update_shop_status(shop_id, ShopStatusUpdate(is_active=False), db, admin_user)
                 self.assertFalse(disabled_shop.is_active)

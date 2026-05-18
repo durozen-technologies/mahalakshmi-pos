@@ -9,5 +9,6 @@ class BaseModelMixin:
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
+        index=True,
         nullable=False,
     )

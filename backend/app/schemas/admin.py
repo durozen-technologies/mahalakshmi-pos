@@ -15,7 +15,12 @@ class ShopCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=128)
-    code: str | None = Field(default=None, min_length=2, max_length=20)
+
+
+class ShopUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    username: str = Field(min_length=3, max_length=50)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class ShopStatusUpdate(BaseModel):
@@ -25,7 +30,6 @@ class ShopStatusUpdate(BaseModel):
 class ShopRead(ORMModel):
     id: int
     name: str
-    code: str
     is_active: bool
     created_at: datetime
     username: str
@@ -34,7 +38,6 @@ class ShopRead(ORMModel):
 class ShopSalesSummary(BaseModel):
     shop_id: int
     shop_name: str
-    shop_code: str
     total_sales: Decimal
 
 
@@ -64,9 +67,27 @@ class AdminBillSummary(BaseModel):
     created_at: datetime
 
 
-class AuditLogRead(ORMModel):
-    id: int
-    user_id: int | None
-    action: str
-    details: str
-    created_at: datetime
+class AdminBillShopStat(BaseModel):
+    shop_id: int
+    bill_count: int
+    last_bill_at: datetime | None
+
+
+class AdminBillPage(BaseModel):
+    items: list[AdminBillSummary]
+    limit: int
+    has_more: bool
+    total_count: int
+    largest_bill: AdminBillSummary | None = None
+    shop_stats: list[AdminBillShopStat]
+    next_cursor_created_at: datetime | None = None
+    next_cursor_id: int | None = None
+
+
+
+class AdminDashboardBootstrap(BaseModel):
+    shops: list[ShopRead]
+    sales_summary: list[ShopSalesSummary]
+    payment_summary: list[PaymentSplitSummary]
+    bills: AdminBillPage
+    item_sales: list[ItemSalesSummary]

@@ -5,12 +5,15 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   LayoutAnimation,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
+  SectionList,
   ScrollView,
   StyleSheet,
   Text,
@@ -27,7 +30,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useAdminThemeStore } from "@/store/admin-theme-store";
 import { useCartStore } from "@/store/cart-store";
 import { usePriceStore } from "@/store/price-store";
-import type { AnalyticsPeriod, ShopRead } from "@/types/api";
+import type { AnalyticsPeriod, BillRead, ShopRead } from "@/types/api";
 import { isPositiveNumber, money, toMoneyString } from "@/utils/decimal";
 import { formatCurrency, formatDateTime } from "@/utils/format";
 
@@ -48,26 +51,24 @@ import {
   TopAppBar,
 } from "./components/admin-dashboard-primitives";
 import {
+  BillPreviewSheet,
   PriceUpdateSheet,
   ShopEditorSheet,
 } from "./components/admin-dashboard-sheets";
 import { useAdminDashboardData } from "./hooks/use-admin-dashboard-data";
 import {
-  AUDIT_FILTER_OPTIONS,
   buildDateOptions,
   buildMonthOptions,
   buildYearOptions,
   formatAnalyticsReference,
   formatCompactCurrency,
   formatRelativeTime,
-  getSeverityMeta,
   getUnitLabel,
   groupBillsByDate,
   NAV_ITEMS,
   triggerHaptic,
   type AdminNavTab,
   type AnalyticsSectionKey,
-  type AuditFilter,
   type SectionKey,
   type ToastTone,
 } from "./admin-dashboard-utils";
@@ -76,7 +77,6 @@ const createShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
   username: z.string().min(3, "Login username is required").max(50, "Username is too long"),
   password: z.string().min(8, "Password must be at least 8 characters").max(128, "Password is too long"),
-  code: z.string().trim().min(2, "Shop code is required").max(20, "Shop code is too long"),
 });
 
 const editShopSchema = z.object({
@@ -86,15 +86,10 @@ const editShopSchema = z.object({
     .string()
     .max(128, "Password is too long")
     .refine((value) => value.trim() === "" || value.trim().length >= 8, "Password must be at least 8 characters"),
-  code: z.string().trim().min(2, "Shop code is required").max(20, "Shop code is too long"),
 });
 
-type ShopFormValues = {
-  name: string;
-  username: string;
-  password: string;
-  code: string;
-};
+type CreateShopFormValues = z.infer<typeof createShopSchema>;
+type EditShopFormValues = z.infer<typeof editShopSchema>;
 
 const PERIOD_OPTIONS: { key: AnalyticsPeriod; label: string }[] = [
   { key: "date", label: "Date" },
@@ -134,11 +129,8 @@ export function AdminDashboardScreen() {
   const [activeNav, setActiveNav] = useState<AdminNavTab>("dashboard");
   const [itemSearch, setItemSearch] = useState("");
   const [billSearch, setBillSearch] = useState("");
-  const [auditSearch, setAuditSearch] = useState("");
-  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
   const [collapsedSections, setCollapsedSections] = useState<Record<AnalyticsSectionKey, boolean>>({
     inventory: false,
-    reports: false,
     billing: true,
     settings: true,
   });
@@ -152,53 +144,63 @@ export function AdminDashboardScreen() {
   const [priceSheetOpen, setPriceSheetOpen] = useState(false);
   const [savingPrice, setSavingPrice] = useState(false);
   const [selectedPriceItemId, setSelectedPriceItemId] = useState<number | null>(null);
+  const [priceSelectedShopId, setPriceSelectedShopId] = useState<number | null>(null);
+  const [priceShopPickerOpen, setPriceShopPickerOpen] = useState(false);
   const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
   const [effectiveDate, setEffectiveDate] = useState(dateOptions[0]?.value ?? new Date().toISOString().slice(0, 10));
   const [itemPickerOpen, setItemPickerOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
+  const [billPreviewOpen, setBillPreviewOpen] = useState(false);
+  const [billPreviewLoading, setBillPreviewLoading] = useState(false);
+  const [selectedBillPreview, setSelectedBillPreview] = useState<BillRead | null>(null);
+  const [printingAll, setPrintingAll] = useState(false);
   const [sectionOffsets, setSectionOffsets] = useState<Record<SectionKey, number>>({
     dashboard: 0,
     inventory: 0,
-    reports: 0,
     billing: 0,
     settings: 0,
   });
 
   const debouncedItemSearch = useDebouncedValue(itemSearch.trim().toLowerCase());
   const debouncedBillSearch = useDebouncedValue(billSearch.trim().toLowerCase());
-  const debouncedAuditSearch = useDebouncedValue(auditSearch.trim().toLowerCase());
   const toastAnimation = useRef(new Animated.Value(0)).current;
   const scrollRef = useRef<ScrollView>(null);
   const latestDashboardError = useRef<string | null>(null);
 
-  const createForm = useForm<ShopFormValues>({
+  const createForm = useForm<CreateShopFormValues>({
     resolver: zodResolver(createShopSchema),
-    defaultValues: { name: "", username: "", password: "", code: "" },
+    defaultValues: { name: "", username: "", password: "" },
   });
 
-  const manageForm = useForm<ShopFormValues>({
+  const manageForm = useForm<EditShopFormValues>({
     resolver: zodResolver(editShopSchema),
-    defaultValues: { name: "", username: "", password: "", code: "" },
+    defaultValues: { name: "", username: "", password: "" },
   });
 
   const {
-    auditLogs,
     createBranch,
     dailyBills,
+    dailyBillsHasMore,
+    dailyBillsLoadingMore,
+    dailyBillsTotalCount,
     dashboardError,
     isOfflineSnapshot,
     itemSales,
+    largestBill,
     lastSyncAt,
+    loadBillDetail,
     loadDashboard,
-    loadBranch,
+    loadMoreBills,
     loadPriceBootstrap,
+    loadShopPriceBootstrap,
     loading,
     priceBootstrap,
     priceLoading,
     refreshing,
     saveGlobalPriceBook,
+    saveShopPriceBook,
     selectedShopName,
     setPriceBootstrap,
     shops,
@@ -303,7 +305,7 @@ export function AdminDashboardScreen() {
     return priceBootstrap.items.filter((item) => !isPositiveNumber(resolvePriceDraft(item.item_id, item.current_price)));
   }, [priceBootstrap, resolvePriceDraft]);
 
-  const saveDisabled = !isPositiveNumber(draftPrice.trim()) || unresolvedPriceItems.length > 0;
+  const saveDisabled = !priceSelectedShopId || !isPositiveNumber(draftPrice.trim()) || unresolvedPriceItems.length > 0;
 
   const priceHelperText = useMemo(() => {
     if (!priceBootstrap) {
@@ -342,22 +344,6 @@ export function AdminDashboardScreen() {
     });
   }, [dailyBills, debouncedBillSearch, selectedShopId]);
 
-  const filteredAuditLogs = useMemo(() => {
-    const scopedLogs =
-      selectedShopId && selectedShopName !== "All Branches"
-        ? auditLogs.filter((log) => `${log.action} ${log.details}`.toLowerCase().includes(selectedShopName.toLowerCase()))
-        : auditLogs;
-
-    return scopedLogs.filter((log) => {
-      const severity = getSeverityMeta(log, palette).label;
-      const matchesFilter = auditFilter === "all" || severity === auditFilter;
-      const matchesQuery =
-        !debouncedAuditSearch ||
-        `${log.action} ${log.details}`.toLowerCase().includes(debouncedAuditSearch);
-
-      return matchesFilter && matchesQuery;
-    });
-  }, [auditFilter, auditLogs, debouncedAuditSearch, palette, selectedShopId, selectedShopName]);
 
   const totalRevenue = useMemo(
     () => visibleShopRows.reduce((sum, row) => sum.plus(money(row.totalSales)), money(0)),
@@ -377,21 +363,13 @@ export function AdminDashboardScreen() {
     () => [...visibleShopRows].sort((left, right) => money(right.totalSales).minus(left.totalSales).toNumber())[0],
     [visibleShopRows],
   );
-  const largestBill = useMemo(
-    () => [...visibleBills].sort((left, right) => money(right.total_amount).minus(left.total_amount).toNumber())[0],
-    [visibleBills],
+  const visibleBillCount = useMemo(
+    () => (debouncedBillSearch ? visibleBills.length : dailyBillsTotalCount),
+    [dailyBillsTotalCount, debouncedBillSearch, visibleBills.length],
   );
   const activeBranchCount = useMemo(
     () => visibleShopRows.filter((row) => row.shop.is_active).length,
     [visibleShopRows],
-  );
-  const severeLogsCount = useMemo(
-    () =>
-      filteredAuditLogs.filter((log) => {
-        const severity = getSeverityMeta(log, palette).label;
-        return severity === "error" || severity === "critical";
-      }).length,
-    [filteredAuditLogs, palette],
   );
   const itemRevenueAverage = useMemo(
     () =>
@@ -409,6 +387,10 @@ export function AdminDashboardScreen() {
     return rankMap;
   }, [visibleShopRows]);
   const groupedBills = useMemo(() => groupBillsByDate(visibleBills), [visibleBills]);
+  const billingSections = useMemo(
+    () => groupedBills.map((group) => ({ title: group.label, data: group.entries })),
+    [groupedBills],
+  );
   const analyticsReferenceOptions = useMemo(() => {
     if (analyticsPeriod === "date") {
       return dateOptions;
@@ -503,7 +485,7 @@ export function AdminDashboardScreen() {
       {
         key: "bills",
         label: "Number of Bills",
-        value: visibleBills.length,
+        value: visibleBillCount,
         formatter: (value: number) => `${Math.round(value)} Bills`,
         note: largestBill ? `Largest ${formatCurrency(largestBill.total_amount)}` : `No bills in ${analyticsReferenceLabel}`,
         noteIcon: (largestBill ? "arrow-top-right" : "receipt-text-remove-outline") as React.ComponentProps<
@@ -561,7 +543,7 @@ export function AdminDashboardScreen() {
       totalCash,
       totalRevenue,
       totalUpi,
-      visibleBills.length,
+      visibleBillCount,
     ],
   );
 
@@ -631,6 +613,7 @@ export function AdminDashboardScreen() {
   function toggleReferencePicker() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     triggerHaptic();
+    setShopSelectorOpen(false);
     setReferencePickerOpen((current) => !current);
   }
 
@@ -643,6 +626,7 @@ export function AdminDashboardScreen() {
   function toggleShopSelector() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     triggerHaptic();
+    setReferencePickerOpen(false);
     setShopSelectorOpen((current) => !current);
   }
 
@@ -654,7 +638,7 @@ export function AdminDashboardScreen() {
   }
 
   function openCreateShopSheet() {
-    createForm.reset({ name: "", username: "", password: "", code: "" });
+    createForm.reset({ name: "", username: "", password: "" });
     setCreateShopOpen(true);
   }
 
@@ -665,38 +649,22 @@ export function AdminDashboardScreen() {
       name: shop.name,
       username: shop.username,
       password: "",
-      code: shop.code,
     });
-    void (async () => {
-      try {
-        const freshShop = await loadBranch(shop.id);
-        setSelectedManagedShop(freshShop);
-        manageForm.reset({
-          name: freshShop.name,
-          username: freshShop.username,
-          password: "",
-          code: freshShop.code,
-        });
-      } catch (error) {
-        showToast("error", error instanceof Error ? error.message : "Unable to load branch details.");
-      }
-    })();
   }
 
   function closeManageShopSheet() {
     setManageShopOpen(false);
     setSelectedManagedShop(null);
-    manageForm.reset({ name: "", username: "", password: "", code: "" });
+    manageForm.reset({ name: "", username: "", password: "" });
   }
 
-  async function handleCreateShop(values: ShopFormValues) {
+  async function handleCreateShop(values: CreateShopFormValues) {
     setCreating(true);
     try {
       await createBranch({
         name: values.name.trim(),
         username: values.username.trim(),
         password: values.password,
-        code: values.code.trim(),
       });
       createForm.reset();
       setCreateShopOpen(false);
@@ -708,7 +676,7 @@ export function AdminDashboardScreen() {
     }
   }
 
-  async function handleUpdateShop(values: ShopFormValues) {
+  async function handleUpdateShop(values: EditShopFormValues) {
     if (!selectedManagedShop) {
       return;
     }
@@ -718,7 +686,6 @@ export function AdminDashboardScreen() {
       await updateBranch(selectedManagedShop, {
         name: values.name.trim(),
         username: values.username.trim(),
-        code: values.code.trim(),
         password: values.password.trim() ? values.password.trim() : null,
       });
       closeManageShopSheet();
@@ -791,16 +758,23 @@ export function AdminDashboardScreen() {
     setPriceSheetOpen(true);
     setEffectiveDate(dateOptions[0]?.value ?? new Date().toISOString().slice(0, 10));
     setDraftPrices({});
+    setPriceError(null);
+    setPriceBootstrap(null);
 
-    try {
-      const bootstrap = await loadPriceBootstrap();
-      const firstItem = bootstrap?.items.find((item) => !isPositiveNumber(item.current_price ?? "")) ?? bootstrap?.items[0];
-      if (firstItem) {
-        setSelectedPriceItemId(firstItem.item_id);
+    // Pre-select the currently focused shop if one is active
+    if (selectedShopId !== null) {
+      setPriceSelectedShopId(selectedShopId);
+      try {
+        const bootstrap = await loadShopPriceBootstrap(selectedShopId);
+        const firstItem = bootstrap?.items.find((item) => !isPositiveNumber(item.current_price ?? "")) ?? bootstrap?.items[0];
+        if (firstItem) {
+          setSelectedPriceItemId(firstItem.item_id);
+        }
+      } catch (error) {
+        showToast("error", error instanceof Error ? error.message : "Unable to load price controls.");
       }
-      setPriceError(null);
-    } catch (error) {
-      showToast("error", error instanceof Error ? error.message : "Unable to load price controls.");
+    } else {
+      setPriceSelectedShopId(null);
     }
   }
 
@@ -808,8 +782,32 @@ export function AdminDashboardScreen() {
     setPriceSheetOpen(false);
     setItemPickerOpen(false);
     setDatePickerOpen(false);
+    setPriceShopPickerOpen(false);
+    setPriceSelectedShopId(null);
     setDraftPrices({});
     setPriceError(null);
+  }
+
+  async function openBillPreview(billId: number) {
+    setBillPreviewOpen(true);
+    setBillPreviewLoading(true);
+    setSelectedBillPreview(null);
+
+    try {
+      const bill = await loadBillDetail(billId);
+      setSelectedBillPreview(bill);
+    } catch (error) {
+      setBillPreviewOpen(false);
+      showToast("error", error instanceof Error ? error.message : "Unable to load bill preview.");
+    } finally {
+      setBillPreviewLoading(false);
+    }
+  }
+
+  function closeBillPreview() {
+    setBillPreviewOpen(false);
+    setBillPreviewLoading(false);
+    setSelectedBillPreview(null);
   }
 
   function handleSelectPriceItem(itemId: number, _currentPrice?: string | null) {
@@ -838,7 +836,7 @@ export function AdminDashboardScreen() {
   }
 
   async function handleSavePrice() {
-    if (!priceBootstrap || !selectedPriceItemId || !currentPriceItem) {
+    if (!priceBootstrap || !selectedPriceItemId || !currentPriceItem || !priceSelectedShopId) {
       return;
     }
 
@@ -880,13 +878,14 @@ export function AdminDashboardScreen() {
     });
     setDraftPrices({});
 
+    const shopName = shops.find((s) => s.id === priceSelectedShopId)?.name ?? "shop";
     try {
-      await saveGlobalPriceBook({
+      await saveShopPriceBook(priceSelectedShopId, {
         entries,
         price_date: effectiveDate,
       });
       closePriceSheet();
-      showToast("success", `Price saved for ${currentPriceItem.item_name} effective ${effectiveDate}.`);
+      showToast("success", `Prices saved for ${shopName} effective ${effectiveDate}.`);
     } catch (error) {
       setPriceBootstrap(previousBootstrap);
       setDraftPrices(Object.fromEntries(entries.map((entry) => [entry.item_id, entry.price_per_unit])));
@@ -897,8 +896,47 @@ export function AdminDashboardScreen() {
     }
   }
 
+  async function handleSelectPriceShop(shopId: number) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPriceSelectedShopId(shopId);
+    setPriceShopPickerOpen(false);
+    setDraftPrices({});
+    setSelectedPriceItemId(null);
+    setPriceError(null);
+    try {
+      const bootstrap = await loadShopPriceBootstrap(shopId);
+      const firstItem = bootstrap?.items.find((item) => !isPositiveNumber(item.current_price ?? "")) ?? bootstrap?.items[0];
+      if (firstItem) {
+        setSelectedPriceItemId(firstItem.item_id);
+      }
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Unable to load prices for this shop.");
+    }
+  }
+
   function handleQuickRefresh() {
     void loadDashboard(true);
+  }
+
+  async function handlePrintAllBills() {
+    if (visibleBills.length === 0) return;
+    try {
+      setPrintingAll(true);
+      const { buildReceiptHtml } = await import("@/api/receipts");
+      const fullBills = await Promise.all(visibleBills.map((b) => loadBillDetail(b.bill_id)));
+      const combinedHtml = fullBills.map((bill) => buildReceiptHtml(bill)).join("");
+      await Linking.openURL(`printerapp://print?html=${encodeURIComponent(combinedHtml)}`);
+    } catch {
+      Alert.alert("Unable to Print", "Make sure the printer app is installed, or try printing bills individually.");
+    } finally {
+      setPrintingAll(false);
+    }
+  }
+
+  function handleLoadMoreBills() {
+    void loadMoreBills().catch((error) => {
+      showToast("error", error instanceof Error ? error.message : "Unable to load more bills.");
+    });
   }
 
   function handleToggleTheme() {
@@ -962,39 +1000,46 @@ export function AdminDashboardScreen() {
             { backgroundColor: palette.card, borderColor: palette.border, top: insets.top + 82 },
           ]}
         >
-          <Pressable onPress={() => handleSelectShop(null)} style={styles.selectorOption}>
-            <View style={styles.selectorOptionContent}>
-              <View style={[styles.selectorOptionIcon, { backgroundColor: palette.surfaceMuted }]}>
-                <MaterialCommunityIcons name="domain" size={16} color={palette.emerald} />
-              </View>
-              <View style={styles.selectorOptionText}>
-                <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>All Branches</Text>
-                <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>Network-wide analytics</Text>
-              </View>
-            </View>
-            {!selectedShopId ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
-          </Pressable>
-          {shops.map((shop) => (
-            <Pressable key={shop.id} onPress={() => handleSelectShop(shop.id)} style={styles.selectorOption}>
+          <ScrollView
+            style={styles.floatingDropdownScroll}
+            contentContainerStyle={styles.floatingDropdownContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Pressable onPress={() => handleSelectShop(null)} style={styles.selectorOption}>
               <View style={styles.selectorOptionContent}>
                 <View style={[styles.selectorOptionIcon, { backgroundColor: palette.surfaceMuted }]}>
-                  <MaterialCommunityIcons name="storefront-outline" size={16} color={palette.emerald} />
+                  <MaterialCommunityIcons name="domain" size={16} color={palette.emerald} />
                 </View>
                 <View style={styles.selectorOptionText}>
-                  <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>{shop.name}</Text>
-                  <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>
-                    {shop.code} · {shop.is_active ? "Active" : "Disabled"}
-                  </Text>
+                  <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>All Branches</Text>
+                  <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>Network-wide analytics</Text>
                 </View>
               </View>
-              <View style={[styles.selectorOptionStatusChip, { backgroundColor: shop.is_active ? palette.successSoft : palette.dangerSoft }]}>
-                <Text style={[styles.selectorOptionStatusText, { color: shop.is_active ? palette.success : palette.danger }]}>
-                  {shop.is_active ? "Active" : "Off"}
-                </Text>
-              </View>
-              {selectedShopId === shop.id ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
+              {!selectedShopId ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
             </Pressable>
-          ))}
+            {shops.map((shop) => (
+              <Pressable key={shop.id} onPress={() => handleSelectShop(shop.id)} style={styles.selectorOption}>
+                <View style={styles.selectorOptionContent}>
+                  <View style={[styles.selectorOptionIcon, { backgroundColor: palette.surfaceMuted }]}>
+                    <MaterialCommunityIcons name="storefront-outline" size={16} color={palette.emerald} />
+                  </View>
+                  <View style={styles.selectorOptionText}>
+                    <Text style={[styles.selectorOptionTitle, { color: palette.textPrimary }]}>{shop.name}</Text>
+                    <Text style={[styles.selectorOptionSubtitle, { color: palette.textMuted }]}>
+                      {shop.username} · {shop.is_active ? "Active" : "Disabled"}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.selectorOptionStatusChip, { backgroundColor: shop.is_active ? palette.successSoft : palette.dangerSoft }]}>
+                  <Text style={[styles.selectorOptionStatusText, { color: shop.is_active ? palette.success : palette.danger }]}>
+                    {shop.is_active ? "Active" : "Off"}
+                  </Text>
+                </View>
+                {selectedShopId === shop.id ? <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} /> : null}
+              </Pressable>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
 
@@ -1026,43 +1071,181 @@ export function AdminDashboardScreen() {
               );
             })}
           </View>
-          {analyticsReferenceOptions.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => handleSelectReferenceDate(option.value)}
-              style={[
-                styles.referenceOption,
-                option.value === analyticsReferenceDate && { backgroundColor: palette.emeraldSoft },
-              ]}
-            >
-              <Text style={[styles.referenceOptionText, { color: palette.textPrimary }]}>{option.label}</Text>
-              {option.value === analyticsReferenceDate ? (
-                <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} />
-              ) : null}
-            </Pressable>
-          ))}
+          <ScrollView
+            style={styles.floatingDropdownScroll}
+            contentContainerStyle={styles.floatingDropdownContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {analyticsReferenceOptions.map((option) => (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: option.value === analyticsReferenceDate }}
+                onPress={() => handleSelectReferenceDate(option.value)}
+                style={[
+                  styles.referenceOption,
+                  option.value === analyticsReferenceDate && { backgroundColor: palette.emeraldSoft },
+                ]}
+              >
+                <Text style={[styles.referenceOptionText, { color: palette.textPrimary }]}>{option.label}</Text>
+                {option.value === analyticsReferenceDate ? (
+                  <MaterialCommunityIcons name="check-circle" size={18} color={palette.emerald} />
+                ) : null}
+              </Pressable>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
 
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: bottomSpacer }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void loadDashboard(true)}
-            tintColor={palette.emerald}
-            colors={[palette.emerald]}
-          />
-        }
-      >
-        {dashboardError && shops.length > 0 ? (
-          <View style={[styles.inlineBanner, { backgroundColor: palette.goldSoft, borderColor: palette.gold, marginBottom: 12 }]}>
-            <MaterialCommunityIcons name="wifi-alert" size={18} color={palette.cash} />
-            <Text style={[styles.inlineBannerText, { color: palette.textPrimary }]}>{dashboardError}</Text>
-          </View>
-        ) : null}
+      {activeNav === "billing" ? (
+        <SectionList
+          sections={billingSections}
+          keyExtractor={(item) => `${item.bill_id}`}
+          renderSectionHeader={({ section }) => (
+            <Text style={[styles.billGroupTitle, { color: palette.textMuted }]}>{section.title}</Text>
+          )}
+          renderItem={({ item: bill }) => (
+            <Pressable
+              onPress={() => void openBillPreview(bill.bill_id)}
+              style={({ pressed }) => [
+                styles.billCard,
+                adminShadow(palette.shadow, 0.06, 3, 10),
+                {
+                  backgroundColor: palette.card,
+                  borderColor: palette.border,
+                  opacity: pressed ? 0.82 : 1,
+                  transform: [{ scale: pressed ? 0.985 : 1 }],
+                },
+              ]}
+            >
+              {/* Left accent strip */}
+              <View style={[styles.billCardAccent, { backgroundColor: palette.emerald }]} />
+
+              {/* Card body */}
+              <View style={styles.billCardBody}>
+                <View style={styles.billCardTopRow}>
+                  <Text style={[styles.billCardNo, { color: palette.textPrimary }]} numberOfLines={1}>
+                    {bill.bill_no}
+                  </Text>
+                  <Text style={[styles.billCardAmount, { color: palette.emerald }]}>
+                    {formatCurrency(bill.total_amount)}
+                  </Text>
+                </View>
+                <View style={styles.billCardBottomRow}>
+                  <MaterialCommunityIcons name="clock-outline" size={12} color={palette.textMuted} />
+                  <Text style={[styles.billCardDate, { color: palette.textMuted }]}>
+                    {formatDateTime(bill.created_at)}
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                  <MaterialCommunityIcons name="chevron-right" size={16} color={palette.textMuted} />
+                </View>
+              </View>
+            </Pressable>
+          )}
+          ListHeaderComponent={(
+            <View style={styles.billingListHeader}>
+              {dashboardError && shops.length > 0 ? (
+                <View style={[styles.inlineBanner, { backgroundColor: palette.goldSoft, borderColor: palette.gold, marginBottom: 12 }]}>
+                  <MaterialCommunityIcons name="wifi-alert" size={18} color={palette.cash} />
+                  <Text style={[styles.inlineBannerText, { color: palette.textPrimary }]}>{dashboardError}</Text>
+                </View>
+              ) : null}
+              <View style={styles.tabSectionHeader}>
+                <Text style={[styles.tabSectionTitle, { color: palette.textPrimary }]}>Billing Feed</Text>
+                <View style={styles.sectionBadge}>
+                  <Text style={[styles.sectionBadgeText, { color: palette.emeraldDark, backgroundColor: palette.emeraldSoft }]}>
+                    {visibleBillCount} bills
+                  </Text>
+                </View>
+              </View>
+              <SearchField value={billSearch} onChangeText={setBillSearch} placeholder="Search bills" palette={palette} />
+              {visibleBills.length > 0 ? (
+                <Pressable
+                  onPress={() => void handlePrintAllBills()}
+                  style={[
+                    styles.printAllBtn,
+                    adminShadow(palette.shadow, 0.04, 4, 8),
+                    { backgroundColor: printingAll ? palette.surfaceMuted : palette.emeraldSoft, borderColor: palette.emerald },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="printer-outline" size={16} color={palette.emerald} />
+                  <Text style={[styles.printAllBtnText, { color: palette.emeraldDark }]}>
+                    {printingAll ? "Opening printer..." : `Print All (${visibleBills.length})`}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {visibleBills.length > 0 ? (
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Tap a bill to preview · Print icon to print individually.</Text>
+              ) : null}
+              {dailyBillsHasMore ? (
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>
+                  Showing the latest {dailyBills.length} bills in this range. Scroll to load older entries.
+                </Text>
+              ) : null}
+            </View>
+          )}
+          ListEmptyComponent={
+            <EmptyStateCard
+              title="No bills found"
+              subtitle="Try another search or branch focus."
+              actionLabel="Clear"
+              onAction={() => setBillSearch("")}
+              icon="receipt-text-remove-outline"
+              palette={palette}
+            />
+          }
+          ListFooterComponent={
+            dailyBillsLoadingMore ? (
+              <View style={styles.billingListFooter}>
+                <ActivityIndicator color={palette.emerald} />
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Loading older bills...</Text>
+              </View>
+            ) : dailyBillsHasMore ? (
+              <View style={styles.billingListFooter}>
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Scroll to load older bills.</Text>
+              </View>
+            ) : dailyBills.length > 0 ? (
+              <View style={styles.billingListFooter}>
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Reached the end of this billing feed.</Text>
+              </View>
+            ) : null
+          }
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: bottomSpacer }}
+          keyboardShouldPersistTaps="handled"
+          onEndReached={handleLoadMoreBills}
+          onEndReachedThreshold={0.35}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void loadDashboard(true)}
+              tintColor={palette.emerald}
+              colors={[palette.emerald]}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+          stickySectionHeadersEnabled={false}
+        />
+      ) : (
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: bottomSpacer }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void loadDashboard(true)}
+              tintColor={palette.emerald}
+              colors={[palette.emerald]}
+            />
+          }
+        >
+          {dashboardError && shops.length > 0 ? (
+            <View style={[styles.inlineBanner, { backgroundColor: palette.goldSoft, borderColor: palette.gold, marginBottom: 12 }]}>
+              <MaterialCommunityIcons name="wifi-alert" size={18} color={palette.cash} />
+              <Text style={[styles.inlineBannerText, { color: palette.textPrimary }]}>{dashboardError}</Text>
+            </View>
+          ) : null}
 
         {/* â”€â”€ DASHBOARD TAB â”€â”€ */}
         {activeNav === "dashboard" ? (
@@ -1077,7 +1260,7 @@ export function AdminDashboardScreen() {
                 </View>
                 <View style={styles.sectionBadge}>
                   <Text style={[styles.sectionBadgeText, { color: palette.emeraldDark, backgroundColor: palette.emeraldSoft }]}>
-                    {visibleBills.length} bills
+                    {visibleBillCount} bills
                   </Text>
                 </View>
               </View>
@@ -1122,36 +1305,6 @@ export function AdminDashboardScreen() {
               </View>
             </View>
 
-            {/* Reports mini-cards */}
-            <View style={styles.reportGrid}>
-              <View style={[styles.reportCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Top Branch</Text>
-                <Text style={[styles.reportValue, { color: palette.textPrimary }]}>{topShop ? topShop.shop.name : "No sales yet"}</Text>
-                <Text style={[styles.reportHint, { color: palette.textSecondary }]}>
-                  {topShop ? formatCompactCurrency(topShop.totalSales) : "Ranking appears once billing starts."}
-                </Text>
-              </View>
-              <View style={[styles.reportCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Payment Mix</Text>
-                <View style={[styles.progressTrack, { backgroundColor: palette.surfaceMuted }]}>
-                  <View style={[styles.progressFill, { width: `${cashShare}%`, backgroundColor: palette.cash }]} />
-                </View>
-                <View style={styles.reportMetaRow}>
-                  <Text style={[styles.reportHint, { color: palette.textSecondary }]}>Cash {cashShare.toFixed(0)}%</Text>
-                  <Text style={[styles.reportHint, { color: palette.textSecondary }]}>UPI {Math.max(0, 100 - cashShare).toFixed(0)}%</Text>
-                </View>
-              </View>
-              <View style={[styles.reportCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Branch Status</Text>
-                <Text style={[styles.reportValue, { color: palette.textPrimary }]}>{activeBranchCount}/{visibleShopRows.length}</Text>
-                <Text style={[styles.reportHint, { color: palette.textSecondary }]}>Active branches</Text>
-              </View>
-              <View style={[styles.reportCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-                <Text style={[styles.reportLabel, { color: palette.textMuted }]}>Alerts</Text>
-                <Text style={[styles.reportValue, { color: severeLogsCount > 0 ? palette.danger : palette.textPrimary }]}>{severeLogsCount}</Text>
-                <Text style={[styles.reportHint, { color: palette.textSecondary }]}>Audit events needing review</Text>
-              </View>
-            </View>
           </View>
         ) : null}
 
@@ -1202,80 +1355,6 @@ export function AdminDashboardScreen() {
           </View>
         ) : null}
 
-        {/* â”€â”€ BILLING TAB â”€â”€ */}
-        {activeNav === "billing" ? (
-          <View style={{ gap: 12 }}>
-            <Text style={[styles.tabSectionTitle, { color: palette.textPrimary }]}>Billing Feed</Text>
-            <SearchField value={billSearch} onChangeText={setBillSearch} placeholder="Search bills" palette={palette} />
-            {groupedBills.length === 0 ? (
-              <EmptyStateCard title="No bills found" subtitle="Try another search or branch focus." actionLabel="Clear" onAction={() => setBillSearch("")} icon="receipt-text-remove-outline" palette={palette} />
-            ) : (
-              groupedBills.map((group) => (
-                <View key={group.label} style={styles.billGroup}>
-                  <Text style={[styles.billGroupTitle, { color: palette.textMuted }]}>{group.label}</Text>
-                  {group.entries.map((bill) => (
-                    <View key={bill.bill_id} style={[styles.feedCard, adminShadow(palette.shadow, 0.03, 6, 10), { backgroundColor: palette.card, borderColor: palette.border }]}>
-                      <View style={styles.feedHeader}>
-                        <View style={styles.feedTextWrap}>
-                          <Text style={[styles.feedTitle, { color: palette.textPrimary }]}>{bill.bill_no}</Text>
-                          <Text style={[styles.feedSubtitle, { color: palette.textMuted }]}>{bill.shop_name}</Text>
-                        </View>
-                        <Text style={[styles.feedAmount, { color: palette.emerald }]}>{formatCurrency(bill.total_amount)}</Text>
-                      </View>
-                      <View style={styles.feedMetaRow}>
-                        <Text style={[styles.feedMeta, { color: palette.textSecondary }]}>{formatDateTime(bill.created_at)}</Text>
-                        <View style={[styles.stateChip, { backgroundColor: palette.successSoft }]}>
-                          <Text style={[styles.stateChipText, { color: palette.success }]}>{bill.status}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              ))
-            )}
-          </View>
-        ) : null}
-
-        {/* â”€â”€ REPORTS (AUDIT) TAB â”€â”€ */}
-        {activeNav === "reports" ? (
-          <View style={{ gap: 12 }}>
-            <Text style={[styles.tabSectionTitle, { color: palette.textPrimary }]}>Audit Log</Text>
-            <SearchField value={auditSearch} onChangeText={setAuditSearch} placeholder="Search audit events" palette={palette} />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.chipRow}>
-                {AUDIT_FILTER_OPTIONS.map((chip) => (
-                  <ChipButton key={chip.key} label={chip.label} active={auditFilter === chip.key} onPress={() => setAuditFilter(chip.key)} palette={palette} />
-                ))}
-              </View>
-            </ScrollView>
-            {filteredAuditLogs.length === 0 ? (
-              <EmptyStateCard title="No audit events found" subtitle="Adjust filters to surface more activity." actionLabel="Reset" onAction={() => { setAuditSearch(""); setAuditFilter("all"); }} icon="clipboard-text-search-outline" palette={palette} />
-            ) : (
-              <View style={styles.cardStack}>
-                {filteredAuditLogs.map((log) => {
-                  const severity = getSeverityMeta(log, palette);
-                  return (
-                    <View key={log.id} style={[styles.auditCard, adminShadow(palette.shadow, 0.03, 6, 10), { backgroundColor: palette.card, borderColor: palette.border }]}>
-                      <View style={[styles.auditIconWrap, { backgroundColor: severity.chipBackground }]}>
-                        <MaterialCommunityIcons name={severity.icon as never} size={16} color={severity.chipText} />
-                      </View>
-                      <View style={styles.auditContent}>
-                        <View style={styles.auditHeader}>
-                          <Text style={[styles.auditTitle, { color: palette.textPrimary }]}>{log.action}</Text>
-                          <View style={[styles.stateChip, { backgroundColor: severity.chipBackground }]}>
-                            <Text style={[styles.stateChipText, { color: severity.chipText }]}>{severity.label}</Text>
-                          </View>
-                        </View>
-                        <Text style={[styles.auditDescription, { color: palette.textSecondary }]}>{log.details}</Text>
-                        <Text style={[styles.auditMeta, { color: palette.textMuted }]}>{formatDateTime(log.created_at)}</Text>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-          </View>
-        ) : null}
 
         {/* â”€â”€ SETTINGS (BRANCH CONTROL) TAB â”€â”€ */}
         {activeNav === "settings" ? (
@@ -1315,7 +1394,7 @@ export function AdminDashboardScreen() {
                               </View>
                               <Text style={[styles.branchName, { color: palette.textPrimary }]}>{row.shop.name}</Text>
                             </View>
-                            <Text style={[styles.branchStatusNote, { color: palette.textSecondary }]}>{row.shop.code} · {row.shop.username}</Text>
+                            <Text style={[styles.branchStatusNote, { color: palette.textSecondary }]}>{row.shop.username}</Text>
                           </View>
                         </View>
                         <View style={[styles.stateChip, { backgroundColor: `${statusColor}18` }]}>
@@ -1342,17 +1421,30 @@ export function AdminDashboardScreen() {
                       <View style={[styles.branchFooter, { borderTopColor: palette.border }]}>
                         <View style={styles.branchActionRow}>
                           <View style={styles.branchActionButton}>
-                            <PrimaryButton label="Manage" onPress={() => openManageShopSheet(row.shop)} variant="accent" icon="pencil-box-outline" fullWidth palette={palette} />
+                            <PrimaryButton
+                              label="Manage"
+                              onPress={() => openManageShopSheet(row.shop)}
+                              variant="secondary"
+                              icon="pencil-box-outline"
+                              fullWidth
+                              palette={palette}
+                              backgroundColorOverride={palette.upiSoft}
+                              borderColorOverride={palette.upi}
+                              textColorOverride={palette.upi}
+                            />
                           </View>
                           <View style={styles.branchActionButton}>
                             <PrimaryButton
                               label={row.shop.is_active ? "Pause" : "Activate"}
                               onPress={() => void handleToggleShop(row.shop.id, !row.shop.is_active)}
                               loading={statusUpdatingShopId === row.shop.id}
-                              variant={row.shop.is_active ? "warning" : "primary"}
+                              variant="secondary"
                               icon={row.shop.is_active ? "pause-circle-outline" : "check-circle-outline"}
                               fullWidth
                               palette={palette}
+                              backgroundColorOverride={row.shop.is_active ? palette.cashSoft : palette.emeraldSoft}
+                              borderColorOverride={row.shop.is_active ? palette.cash : palette.emerald}
+                              textColorOverride={row.shop.is_active ? "#8A5A11" : palette.emeraldDark}
                             />
                           </View>
                           <View style={styles.branchActionButton}>
@@ -1361,10 +1453,13 @@ export function AdminDashboardScreen() {
                               onPress={() => confirmDeleteShop(row.shop)}
                               loading={deletingShopId === row.shop.id}
                               disabled={statusUpdatingShopId === row.shop.id}
-                              variant="danger"
+                              variant="secondary"
                               icon="trash-can-outline"
                               fullWidth
                               palette={palette}
+                              backgroundColorOverride={palette.dangerSoft}
+                              borderColorOverride={palette.danger}
+                              textColorOverride={palette.danger}
                             />
                           </View>
                         </View>
@@ -1391,7 +1486,8 @@ export function AdminDashboardScreen() {
             </Pressable>
           </View>
         ) : null}
-      </ScrollView>
+        </ScrollView>
+      )}
 
 
       <BottomNav
@@ -1450,6 +1546,23 @@ export function AdminDashboardScreen() {
         onSelectDate={handleSelectDate}
         savingPrice={savingPrice}
         onSave={() => void handleSavePrice()}
+        shops={shops}
+        selectedPriceShopId={priceSelectedShopId}
+        onSelectShop={handleSelectPriceShop}
+        shopPickerOpen={priceShopPickerOpen}
+        onToggleShopPicker={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setPriceShopPickerOpen((current) => !current);
+        }}
+      />
+
+      <BillPreviewSheet
+        visible={billPreviewOpen}
+        onClose={closeBillPreview}
+        palette={palette}
+        bottomInset={insets.bottom}
+        loading={billPreviewLoading}
+        bill={selectedBillPreview}
       />
 
       <ShopEditorSheet
@@ -1459,7 +1572,7 @@ export function AdminDashboardScreen() {
         bottomInset={insets.bottom}
         mode="create"
         loading={creating}
-        form={createForm}
+        control={createForm.control}
         onSubmit={createForm.handleSubmit(handleCreateShop)}
       />
 
@@ -1473,7 +1586,7 @@ export function AdminDashboardScreen() {
         deleting={deletingShopId === selectedManagedShop?.id}
         statusLoading={statusUpdatingShopId === selectedManagedShop?.id}
         isActive={selectedManagedShop?.is_active}
-        form={manageForm}
+        control={manageForm.control}
         onSubmit={manageForm.handleSubmit(handleUpdateShop)}
         onDelete={handleDeleteShop}
         onToggleActive={() => {
@@ -1501,6 +1614,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     maxHeight: 360,
   },
+  floatingDropdownScroll: {
+    flexGrow: 0,
+  },
+  floatingDropdownContent: {
+    paddingBottom: 8,
+  },
   tabSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1513,6 +1632,10 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.5,
     flex: 1,
+  },
+  sectionHint: {
+    fontSize: 12,
+    lineHeight: 18,
   },
   logoutRow: {
     flexDirection: "row",
@@ -1991,6 +2114,30 @@ const styles = StyleSheet.create({
   cardStack: {
     gap: 10,
   },
+  billingListHeader: {
+    gap: 12,
+    marginBottom: 8,
+  },
+  billingListFooter: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 16,
+  },
+  printAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  printAllBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
   branchOverviewCard: {
     borderWidth: 1,
     borderRadius: 16,
@@ -2180,37 +2327,93 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   billGroupTitle: {
+    marginTop: 6,
+    marginBottom: 8,
     fontSize: 10,
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: 0.6,
   },
-  feedCard: {
+  billCard: {
+    flexDirection: "row",
     borderWidth: 1,
     borderRadius: 14,
-    padding: 12,
-    gap: 8,
+    marginBottom: 10,
+    overflow: "hidden",
+  },
+  billCardAccent: {
+    width: 4,
+    borderTopLeftRadius: 14,
+    borderBottomLeftRadius: 14,
+  },
+  billCardBody: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  billCardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  billCardNo: {
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: -0.2,
+    flex: 1,
+  },
+  billCardAmount: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  billCardBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  billCardDate: {
+    fontSize: 11,
+    fontWeight: "400",
+  },
+  feedCardWrap: {
+    marginBottom: 10,
+  },
+  feedCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
   },
   feedHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 12,
   },
   feedTextWrap: {
     flex: 1,
+    gap: 4,
   },
   feedTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  feedSubtitle: {
-    marginTop: 3,
-    fontSize: 11,
-  },
-  feedAmount: {
     fontSize: 14,
     fontWeight: "700",
+    letterSpacing: 0.1,
+  },
+  feedSubtitle: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  feedAmount: {
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "right",
+  },
+  feedDivider: {
+    height: 1,
+    marginHorizontal: -2,
   },
   feedMetaRow: {
     flexDirection: "row",
@@ -2218,7 +2421,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   feedMeta: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: "400",
   },
   auditCard: {
     borderWidth: 1,

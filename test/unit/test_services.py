@@ -40,19 +40,19 @@ class ServiceUnitTests(BackendTestCase):
 
         self.run_async(scenario())
 
-    def test_create_shop_account_generates_incremented_username(self) -> None:
+    def test_create_shop_account_returns_created_shop(self) -> None:
         actor = self.run_async(self.harness.create_admin_user())
-        self.run_async(self.harness.create_shop_user(username="ml7", shop_code="ML7", shop_name="Existing Shop"))
+        self.run_async(self.harness.create_shop_user(username="ml7", shop_name="Existing Shop"))
 
         async def scenario() -> None:
             with self.harness.session_factory() as session:
                 created = await create_shop_account(
                     AsyncSessionAdapter(session),
-                    ShopCreate(name="Fresh Shop", code=None),
+                    ShopCreate(name="Fresh Shop", username="ml8", password="password123"),
                     actor,
                 )
                 self.assertEqual(created.username, "ml8")
-                self.assertEqual(created.code, "ML8")
+                self.assertEqual(created.name, "Fresh Shop")
 
         self.run_async(scenario())
 

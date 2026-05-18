@@ -124,20 +124,17 @@ export interface ShopCreate {
   name: string;
   username: string;
   password: string;
-  code?: string | null;
 }
 
 export interface ShopUpdate {
   name: string;
   username: string;
-  code: string;
   password?: string | null;
 }
 
 export interface ShopRead {
   id: number;
   name: string;
-  code: string;
   is_active: boolean;
   created_at: string;
   username: string;
@@ -150,7 +147,6 @@ export interface ShopStatusUpdate {
 export interface ShopSalesSummary {
   shop_id: number;
   shop_name: string;
-  shop_code: string;
   total_sales: string;
 }
 
@@ -180,10 +176,38 @@ export interface AdminBillSummary {
   created_at: string;
 }
 
-export interface AuditLogRead {
-  id: number;
-  user_id?: number | null;
-  action: string;
-  details: string;
-  created_at: string;
+export interface AdminBillShopStat {
+  shop_id: number;
+  bill_count: number;
+  last_bill_at?: string | null;
+}
+
+export interface AdminBillPage {
+  items: AdminBillSummary[];
+  limit: number;
+  has_more: boolean;
+  total_count: number;
+  largest_bill?: AdminBillSummary | null;
+  shop_stats: AdminBillShopStat[];
+  next_cursor_created_at?: string | null;
+  next_cursor_id?: number | null;
+}
+
+
+export interface DashboardShopSummary {
+  shop_id: number;
+  shop_name: string;
+  total_sales: string | number;
+  cash_total: string | number;
+  upi_total: string | number;
+  bill_count: number;
+  last_bill_at: string | null;
+}
+
+export interface AdminDashboardBootstrap {
+  shops: ShopRead[];
+  sales_summary: ShopSalesSummary[];
+  payment_summary: PaymentSplitSummary[];
+  bills: AdminBillPage;
+  item_sales: ItemSalesSummary[];
 }

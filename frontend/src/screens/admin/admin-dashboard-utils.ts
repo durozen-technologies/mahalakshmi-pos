@@ -1,18 +1,18 @@
 import * as Haptics from "expo-haptics";
 
-import type { AnalyticsPeriod, AuditLogRead, BaseUnit, ShopRead } from "@/types/api";
+import type { AnalyticsPeriod, BaseUnit, ShopRead } from "@/types/api";
 import { money } from "@/utils/decimal";
 import { formatDate } from "@/utils/format";
 
 import type { ThemePalette } from "./admin-dashboard-theme";
 
-export type AdminNavTab = "dashboard" | "billing" | "inventory" | "reports" | "settings";
+export type AdminNavTab = "dashboard" | "billing" | "inventory" | "settings";
 export type SectionKey = AdminNavTab;
-export type AnalyticsSectionKey = "inventory" | "reports" | "billing" | "settings";
+export type AnalyticsSectionKey = "inventory" | "billing" | "settings";
 export type LogSeverity = "info" | "warning" | "error" | "critical";
 export type ShopOperationalState = "ACTIVE" | "IDLE" | "OFFLINE" | "DISABLED";
 export type ToastTone = "success" | "error";
-export type AuditFilter = "all" | LogSeverity;
+
 
 export type SeverityMeta = {
   tone: ToastTone | "warning" | "neutral";
@@ -25,18 +25,11 @@ export type SeverityMeta = {
 export const NAV_ITEMS: { key: AdminNavTab; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "view-dashboard-outline" },
   { key: "inventory", label: "Inventory", icon: "food-drumstick-outline" },
-  { key: "reports", label: "Reports", icon: "chart-box-outline" },
   { key: "billing", label: "Billing", icon: "receipt-text-outline" },
   { key: "settings", label: "Settings", icon: "cog-outline" },
 ];
 
-export const AUDIT_FILTER_OPTIONS: { key: AuditFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "info", label: "Info" },
-  { key: "warning", label: "Warning" },
-  { key: "error", label: "Error" },
-  { key: "critical", label: "Critical" },
-];
+
 
 export function triggerHaptic(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) {
   void Haptics.impactAsync(style).catch(() => undefined);
@@ -99,46 +92,26 @@ export function getShopStatus(shop: ShopRead, lastActivityAt?: string | null): S
   return "OFFLINE";
 }
 
-export function getSeverityMeta(log: AuditLogRead, palette: ThemePalette): SeverityMeta {
-  const text = `${log.action} ${log.details}`.toLowerCase();
 
-  if (text.includes("failed") || text.includes("error") || text.includes("denied")) {
-    return {
-      tone: "error",
-      label: "error",
-      icon: "alert-circle-outline",
-      chipBackground: palette.dangerSoft,
-      chipText: palette.danger,
-    };
+
+function toLocalDateValue(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDateValue(value: string) {
+  const [yearText, monthText, dayText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return new Date(value);
   }
 
-  if (text.includes("disabled") || text.includes("invalid") || text.includes("warning")) {
-    return {
-      tone: "warning",
-      label: "warning",
-      icon: "alert-outline",
-      chipBackground: palette.goldSoft,
-      chipText: palette.cash,
-    };
-  }
-
-  if (text.includes("deleted") || text.includes("critical")) {
-    return {
-      tone: "error",
-      label: "critical",
-      icon: "alert-decagram-outline",
-      chipBackground: palette.dangerSoft,
-      chipText: palette.danger,
-    };
-  }
-
-  return {
-    tone: "success",
-    label: "info",
-    icon: "information-outline",
-    chipBackground: palette.successSoft,
-    chipText: palette.success,
-  };
+  return new Date(year, month - 1, day);
 }
 
 export function buildDateOptions() {
@@ -146,10 +119,10 @@ export function buildDateOptions() {
   return Array.from({ length: 14 }, (_, index) => {
     const date = new Date(today);
     date.setDate(today.getDate() - index);
-    const iso = date.toISOString().slice(0, 10);
+    const value = toLocalDateValue(date);
 
     return {
-      value: iso,
+      value,
       label:
         index === 0
           ? "Today"
@@ -168,7 +141,7 @@ export function buildMonthOptions() {
   const today = new Date();
   return Array.from({ length: 12 }, (_, index) => {
     const date = new Date(today.getFullYear(), today.getMonth() - index, 1);
-    const value = date.toISOString().slice(0, 10);
+    const value = toLocalDateValue(date);
 
     return {
       value,
@@ -192,7 +165,7 @@ export function buildYearOptions() {
 }
 
 export function formatAnalyticsReference(period: AnalyticsPeriod, value: string) {
-  const date = new Date(value);
+  const date = parseLocalDateValue(value);
 
   if (period === "date") {
     return new Intl.DateTimeFormat("en-IN", {

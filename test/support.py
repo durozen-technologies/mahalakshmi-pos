@@ -134,7 +134,6 @@ class DatabaseHarness:
         username: str = "ml1",
         password: str = "ml123",
         shop_name: str = "Main Shop",
-        shop_code: str = "ML1",
         is_active: bool = True,
     ) -> tuple[User, Shop]:
         with self.session_factory() as session:
@@ -146,7 +145,6 @@ class DatabaseHarness:
             )
             shop = Shop(
                 name=shop_name,
-                code=shop_code,
                 owner=user,
                 is_active=is_active,
             )

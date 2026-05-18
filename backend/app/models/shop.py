@@ -10,7 +10,6 @@ class Shop(Base, BaseModelMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    code: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
     owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

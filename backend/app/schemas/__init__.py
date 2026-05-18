@@ -1,7 +1,6 @@
 from app.schemas.admin import (
     AdminBillSummary,
     AnalyticsPeriod,
-    AuditLogRead,
     ItemSalesSummary,
     PaymentSplitSummary,
     ShopCreate,
@@ -29,7 +28,6 @@ from app.schemas.pricing import (
 __all__ = [
     "AdminBillSummary",
     "AnalyticsPeriod",
-    "AuditLogRead",
     "BillCheckoutRequest",
     "BillItemInput",
     "BillRead",

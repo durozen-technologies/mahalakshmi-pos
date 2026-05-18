@@ -1,8 +1,8 @@
 import { apiClient } from "@/api/client";
 import {
-  AdminBillSummary,
+  AdminBillPage,
   AnalyticsPeriod,
-  AuditLogRead,
+  BillRead,
   DailyPriceCreate,
   DailyPriceRead,
   ItemSalesSummary,
@@ -13,6 +13,7 @@ import {
   ShopSalesSummary,
   ShopStatusUpdate,
   ShopUpdate,
+  AdminDashboardBootstrap,
 } from "@/types/api";
 
 export async function createShop(payload: ShopCreate) {
@@ -25,11 +26,6 @@ export async function fetchShops() {
   return data;
 }
 
-export async function fetchShop(shopId: number) {
-  const { data } = await apiClient.get<ShopRead>(`/api/v1/admin/shops/${shopId}`);
-  return data;
-}
-
 export async function updateShop(shopId: number, payload: ShopUpdate) {
   const { data } = await apiClient.patch<ShopRead>(`/api/v1/admin/shops/${shopId}`, payload);
   return data;
@@ -37,6 +33,11 @@ export async function updateShop(shopId: number, payload: ShopUpdate) {
 
 export async function updateShopStatus(shopId: number, payload: ShopStatusUpdate) {
   const { data } = await apiClient.patch<ShopRead>(`/api/v1/admin/shops/${shopId}/status`, payload);
+  return data;
+}
+
+export async function fetchAdminBillDetail(billId: number) {
+  const { data } = await apiClient.get<BillRead>(`/api/v1/admin/bills/${billId}`);
   return data;
 }
 
@@ -58,15 +59,24 @@ export async function fetchPaymentSummary(period: AnalyticsPeriod, referenceDate
   return data;
 }
 
-export async function fetchDailyBills(period: AnalyticsPeriod, referenceDate?: string) {
-  const { data } = await apiClient.get<AdminBillSummary[]>("/api/v1/admin/bills", {
-    params: { period, reference_date: referenceDate },
+export async function fetchDailyBills(
+  period: AnalyticsPeriod,
+  referenceDate?: string,
+  shopId?: number | null,
+  limit = 100,
+  cursorCreatedAt?: string | null,
+  cursorId?: number | null,
+) {
+  const { data } = await apiClient.get<AdminBillPage>("/api/v1/admin/bills", {
+    params: {
+      period,
+      reference_date: referenceDate,
+      shop_id: shopId ?? undefined,
+      limit,
+      cursor_created_at: cursorCreatedAt ?? undefined,
+      cursor_id: cursorId ?? undefined,
+    },
   });
-  return data;
-}
-
-export async function fetchAuditLogs() {
-  const { data } = await apiClient.get<AuditLogRead[]>("/api/v1/admin/audit-logs");
   return data;
 }
 
@@ -94,5 +104,22 @@ export async function fetchShopPriceBootstrap(shopId: number) {
 
 export async function saveShopDailyPrices(shopId: number, payload: DailyPriceCreate) {
   const { data } = await apiClient.post<DailyPriceRead[]>(`/api/v1/admin/shops/${shopId}/daily-prices`, payload);
+  return data;
+}
+
+export async function fetchDashboardBootstrap(
+  period: AnalyticsPeriod,
+  referenceDate?: string,
+  shopId?: number | null,
+  limit = 50,
+) {
+  const { data } = await apiClient.get<AdminDashboardBootstrap>("/api/v1/admin/dashboard/bootstrap", {
+    params: {
+      period,
+      reference_date: referenceDate,
+      shop_id: shopId ?? undefined,
+      bills_limit: limit,
+    },
+  });
   return data;
 }

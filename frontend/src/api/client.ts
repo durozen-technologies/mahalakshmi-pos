@@ -1,7 +1,7 @@
-import axios, { isAxiosError } from "axios";
+import axios, { type InternalAxiosRequestConfig, isAxiosError } from "axios";
 import { Platform } from "react-native";
 
-import { API_BASE_URL, EXPO_TUNNEL_DETECTED } from "@/constants/config";
+import { API_BASE_URL, API_BASE_URL_FALLBACKS, EXPO_TUNNEL_DETECTED } from "@/constants/config";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { usePriceStore } from "@/store/price-store";
@@ -9,6 +9,10 @@ import { usePriceStore } from "@/store/price-store";
 export type ApiError = {
   message: string;
   status?: number;
+};
+
+type RetryableAxiosConfig = InternalAxiosRequestConfig & {
+  _remainingBaseUrlFallbacks?: string[];
 };
 
 function getNetworkFailureMessage() {
@@ -25,6 +29,17 @@ function getNetworkFailureMessage() {
   }
 
   return `Cannot reach API at ${API_BASE_URL}. Check that the backend is running and avoid localhost or 127.0.0.1 from Expo Go on Android. Use your computer's LAN IP or let the app rewrite it automatically.`;
+}
+
+function getNextFallbackBaseUrl(config: RetryableAxiosConfig) {
+  const currentBaseUrl = config.baseURL || API_BASE_URL || "";
+  const remainingFallbacks =
+    config._remainingBaseUrlFallbacks ?? API_BASE_URL_FALLBACKS.filter((baseUrl) => baseUrl !== currentBaseUrl);
+  const [nextBaseUrl, ...rest] = remainingFallbacks;
+
+  config._remainingBaseUrlFallbacks = rest;
+
+  return nextBaseUrl;
 }
 
 function getErrorMessage(error: unknown) {
@@ -88,6 +103,16 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (isAxiosError(error) && !error.response && error.config) {
+      const retryConfig = error.config as RetryableAxiosConfig;
+      const nextBaseUrl = getNextFallbackBaseUrl(retryConfig);
+
+      if (nextBaseUrl) {
+        retryConfig.baseURL = nextBaseUrl;
+        return apiClient.request(retryConfig);
+      }
+    }
+
     if (isAxiosError(error) && error.response?.status === 401) {
       useAuthStore.getState().clearSession();
       useCartStore.getState().resetCart();

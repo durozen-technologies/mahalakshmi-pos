@@ -13,14 +13,25 @@ __pycache__/
 .agents/
 .codex
 .env
+.env.*
 .env.local
+!.env.example
+!.env.sample
 
 # Python backend
 backend/.env
+backend/.env.*
+!backend/.env.example
 backend/.git.backup/
 backend/.python-version
 backend/.venv/
 backend/__pycache__/
+.pytest_cache/
+.python-version
+.venv/
+.coverage
+.coverage.*
+htmlcov/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.ruff_cache/
@@ -32,10 +43,11 @@ backend/*.sqlite3
 backend/*.log
 backend/*.pid
 backend/*.pid.lock
-backend/uv.lock
 
 # Node/Expo frontend
 frontend/.env
+frontend/.env.*
+!frontend/.env.example
 frontend/.expo/
 frontend/.git.backup/
 frontend/node_modules/

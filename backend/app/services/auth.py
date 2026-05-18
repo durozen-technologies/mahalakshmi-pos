@@ -8,7 +8,6 @@ from sqlalchemy.orm import selectinload
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models import DailyPrice, User, UserRole
 from app.schemas.auth import LoginResponse, RegisterRequest, UserSession
-from app.services.audit import log_action
 
 
 def _build_user_session(
@@ -56,7 +55,6 @@ async def login_user(db: AsyncSession, username: str, password: str) -> LoginRes
         next_screen = "daily_price_setup" if requires_price_setup else "billing"
 
     token = create_access_token(user.id)
-    log_action(db, user.id, "login", f"User {user.username} logged in")
     await db.commit()
 
     session = _build_user_session(
@@ -93,7 +91,6 @@ async def register_admin(db: AsyncSession, payload: RegisterRequest) -> LoginRes
     db.add(user)
     await db.flush()
 
-    log_action(db, user.id, "register_admin", f"Registered admin account {user.username}")
     await db.commit()
     await db.refresh(user)
 
