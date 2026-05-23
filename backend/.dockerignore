@@ -4,6 +4,10 @@
 .git.backup/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyre/
+.agents/
+.codex/
 .venv/
 __pycache__/
 *.pyc

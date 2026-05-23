@@ -10,11 +10,13 @@ __pycache__/
 .idea/
 
 # Root-level local files
+.agents
 .agents/
 .codex
+.codex/
 .env
-.env.*
 .env.local
+.env.*
 !.env.example
 !.env.sample
 
@@ -22,7 +24,12 @@ __pycache__/
 backend/.env
 backend/.env.*
 !backend/.env.example
+backend/.env.local
 backend/.git.backup/
+backend/.agents
+backend/.agents/
+backend/.codex
+backend/.codex/
 backend/.python-version
 backend/.venv/
 backend/__pycache__/
@@ -36,10 +43,15 @@ backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.ruff_cache/
 backend/.pyre/
+backend/.hypothesis/
+backend/.nox/
+backend/.tox/
+backend/.cache/
 backend/.coverage
 backend/.coverage.*
 backend/htmlcov/
 backend/*.sqlite3
+backend/*.db
 backend/*.log
 backend/*.pid
 backend/*.pid.lock
@@ -48,12 +60,36 @@ backend/*.pid.lock
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+frontend/.env.local
 frontend/.expo/
+frontend/.expo-shared/
 frontend/.git.backup/
+frontend/.agents
+frontend/.agents/
+frontend/.codex
+frontend/.codex/
+frontend/.vscode/
 frontend/node_modules/
 frontend/android/
 frontend/ios/
 frontend/dist/
 frontend/.cache/
 frontend/.parcel-cache/
+frontend/.eslintcache
+frontend/*.tsbuildinfo
 frontend/web-build/
+
+# Service runtime data
+caddy/config/*
+!caddy/config/.gitkeep
+caddy/data/*
+!caddy/data/.gitkeep
+caddy/certs/
+postgres/data/*
+!postgres/data/.gitkeep
+rustfs/data/*
+!rustfs/data/.gitkeep
+duckdns/
+
+# Test caches outside backend
+test/__pycache__/

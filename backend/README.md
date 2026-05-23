@@ -4,19 +4,21 @@ FastAPI backend for the Billing System. It handles:
 
 - JWT login for admins and shop accounts
 - one-time first admin registration
-- shop account creation and enable/disable controls
-- daily per-shop item pricing
+- shop CRUD and shop enable/disable controls
+- active item CRUD with optional RustFS-backed item images
+- shop-level and global daily pricing
 - exact-payment checkout with cash and UPI split
-- receipt generation after successful settlement
-- audit log tracking for important actions
+- receipt creation after successful settlement
+- admin analytics, bill history, and dashboard bootstrap data
 
 ## Stack
 
 - FastAPI
 - SQLAlchemy async
 - PostgreSQL via `asyncpg`
-- `pwdlib` for password hashing
+- `pwdlib[argon2]` for password hashing
 - `python-jose` for JWT tokens
+- `fastapi-guard` for rate limiting and request security middleware
 - `uv` for dependency and runtime management
 
 ## Project Layout
@@ -26,6 +28,7 @@ backend/
 ├── app/
 │   ├── auth/
 │   ├── core/
+│   ├── db/
 │   ├── models/
 │   ├── routers/
 │   ├── schemas/
@@ -41,39 +44,61 @@ backend/
 
 - Python `3.11.9+`
 - `uv`
-- PostgreSQL database
+- PostgreSQL
 
 ## Environment
 
-Copy the sample file and update values if needed:
+Copy the sample file first:
 
 ```bash
 cp .env.example .env
 ```
 
-Supported settings:
+Core settings used by the current backend:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/meat_billing
 SECRET_KEY=replace-this-in-production
 ACCESS_TOKEN_EXPIRE_MINUTES=720
-production=False
+PRODUCTION=False
 CORS_ORIGINS=["*"]
 ALLOWED_HOSTS=["*"]
+CORS_ALLOW_CREDENTIALS=False
+TRUSTED_PROXIES=[]
+TRUSTED_PROXY_DEPTH=1
+TRUST_X_FORWARDED_PROTO=False
+ENABLE_REQUEST_LOGGING=True
+ENABLE_RATE_LIMIT=True
+RATE_LIMIT_REQUESTS=120
+RATE_LIMIT_WINDOW_SECONDS=60
+ENABLE_PENETRATION_DETECTION=True
+SECURITY_PASSIVE_MODE=False
+RUSTFS_ENDPOINT_URL=
+RUSTFS_ACCESS_KEY_ID=
+RUSTFS_SECRET_ACCESS_KEY=
+RUSTFS_REGION_NAME=us-east-1
+RUSTFS_BUCKET_NAME=pos-mlb-items
+RUSTFS_CONNECT_TIMEOUT_SECONDS=5
+RUSTFS_READ_TIMEOUT_SECONDS=15
+ITEM_IMAGE_MAX_BYTES=5242880
 ```
 
-Other backend defaults come from `app/core/config.py`:
+Important backend defaults from [`app/core/config.py`](app/core/config.py):
 
 - `APP_NAME=Meat Billing System API`
 - `API_V1_PREFIX=/api/v1`
 - `SHOP_DEFAULT_PASSWORD=ml123`
-- `CORS_ALLOW_CREDENTIALS=False`
 - `DB_POOL_SIZE=5`
 - `DB_MAX_OVERFLOW=10`
-- `ENABLE_REQUEST_LOGGING=True`
-- `ENABLE_RATE_LIMIT=True`
-- `RATE_LIMIT_REQUESTS=120`
-- `RATE_LIMIT_WINDOW_SECONDS=60`
+- `DB_POOL_TIMEOUT=30`
+- `DB_POOL_RECYCLE=1800`
+
+Production validation rules:
+
+- `SECRET_KEY` must be strong and at least 32 characters
+- wildcard `ALLOWED_HOSTS` is rejected
+- wildcard CORS is collapsed to an empty list
+- RustFS settings must be supplied together if enabled
 
 ## Run Locally
 
@@ -83,7 +108,7 @@ Install dependencies:
 uv sync
 ```
 
-Install dev tools, including `ruff`:
+Install dev tools:
 
 ```bash
 uv sync --group dev
@@ -94,15 +119,6 @@ Start the API:
 ```bash
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
-
-Prefer `uv run uvicorn ...` instead of a global `uvicorn` binary so the app uses the project environment and installed packages.
-
-On startup, the backend:
-
-- creates or updates the database schema
-- seeds the default catalog items
-- stores the default item images in the `items.image_data` column
-- mirrors those images to RustFS when `RUSTFS_*` settings are configured and reachable
 
 Run with Gunicorn:
 
@@ -120,273 +136,120 @@ uv run python -m gunicorn main:app \
   --capture-output
 ```
 
-This project uses `uvicorn-worker` as the Gunicorn worker class.
+This backend uses `uvicorn-worker` as the Gunicorn worker class.
+
+## Startup Behavior
+
+On startup the backend:
+
+- creates tables from the SQLAlchemy models
+- ensures DB indexes exist
+- drops the legacy `shops.code` column if still present
+- validates that key identifier columns use UUID-compatible schema
+- ensures `items.image_data`, `items.image_object_key`, and `items.image_content_type` exist
+- upserts the default item catalog
+- refreshes bundled default item images
+- mirrors default images to RustFS when RustFS is configured and reachable
+
+In production, startup fails fast if database initialization fails.
 
 ## Docker
 
-Build the backend image:
+The active stack uses [`compose.yaml`](../compose.yaml), not Nginx.
 
-```bash
-make backend-docker-build
-```
+Current services in the active compose file:
 
-Build the reverse-proxy image:
+- `backend`
+- `caddy`
 
-```bash
-make nginx-docker-build
-```
-
-Build both images together:
+Useful commands from the repo root:
 
 ```bash
 make docker-build
-```
-
-Validate the rendered Compose config:
-
-```bash
 make docker-config
-```
-
-Or start both services together:
-
-```bash
 make docker-up
-```
-
-Rebuild and recreate the services after Dockerfile, `compose.yaml`, or Nginx config changes:
-
-```bash
 make docker-rebuild
-```
-
-Also rebuild the backend image after changing:
-
-- files in `backend/assets/`
-- default item seed definitions in `backend/app/db/default_items.py`
-- database/image initialization logic in `backend/app/db/database.py`
-
-Stop the services:
-
-```bash
 make docker-down
+make docker-logs
+make docker-ps
 ```
 
-Access the backend through Nginx after the stack is healthy:
+The active proxy is Caddy and currently terminates HTTPS for:
 
-```bash
-http://127.0.0.1:8000
-```
+- `https://pos-mlb.duckdns.org`
 
-Backend URL reference:
+Backend connectivity reference:
 
-- From your host machine with `docker compose up` or `make docker-up`: `http://127.0.0.1:8000`
-- From another container on the same Compose network: `http://backend:8000`
-- Direct host access to the `backend` container is not available by default because Compose uses `expose: 8000`, not `ports:`
-- `http://0.0.0.0:8000` is only the server bind address for local runs, not a browser URL
+- direct local backend: `http://127.0.0.1:8000`
+- internal Docker upstream: `http://backend:8000`
+- through Caddy: `https://pos-mlb.duckdns.org`
 
-Useful routes through the proxy:
-
-- API health: `http://127.0.0.1:8000/api/v1/health`
-- OpenAPI schema: `http://127.0.0.1:8000/api/v1/openapi.json`
-- Swagger UI when `PRODUCTION=False`: `http://127.0.0.1:8000/docs`
-- ReDoc when `PRODUCTION=False`: `http://127.0.0.1:8000/redoc`
-
-Quick checks:
-
-```bash
-curl http://127.0.0.1:8000/api/v1/health
-curl http://127.0.0.1:8000/api/v1/openapi.json
-```
-
-This setup uses:
-
-- `backend/Dockerfile` for the FastAPI app
-- `nginx/Dockerfile` based on the official `nginx:stable-alpine3.23` image
-- `compose.yaml` to connect `backend` and `nginx`
-
-The proxy publishes `http://127.0.0.1:8000` and forwards requests to the backend
-service on port `8000` inside the Compose network. Inside Docker, Nginx listens
-on unprivileged port `8080`, and Compose maps host port `8000` to container
-port `8080`.
-
-If you run the backend without Docker using `uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000`,
-open `http://127.0.0.1:8000` from the same machine.
-
-If `curl http://127.0.0.1:8000/health` fails after changing Docker port mappings or proxy config,
-recreate the services so Docker reapplies the published ports:
-
-```bash
-make docker-rebuild
-```
-
-By default, Compose points the backend at host services through Docker's host
-gateway with:
+Current Compose defaults point the backend to host services:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:root@host.docker.internal:5432/meat_billing
 RUSTFS_ENDPOINT_URL=http://host.docker.internal:9000
 ```
 
-If the database or object storage runs outside Docker, point `DATABASE_URL`,
-`RUSTFS_*`, and `ALLOWED_HOSTS` at addresses reachable from the backend container.
-Inside Docker, `localhost` means the container itself, not your host machine.
-The Compose file adds `host.docker.internal:host-gateway` for the backend so
-Linux Docker can reach services running on the host.
+So inside the backend container:
 
-If RustFS is configured but unreachable at startup, default item images are still
-stored in Postgres and the backend logs a warning for the RustFS mirror failure.
-If both `image_data` and `image_object_key` remain empty after startup, rebuild
-the backend image and restart the service so the latest seed code and bundled
-assets are present in the container.
+- `localhost` means the container itself
+- `host.docker.internal` is the host machine
 
-If your host Postgres or RustFS process listens only on `127.0.0.1`, containers
-still may not be able to connect. In that case, bind the service to an address
-reachable from Docker and allow the Docker bridge network in the service's
-access controls.
-If you enable proxy-aware checks in the backend, also set `TRUSTED_PROXIES` and
-`TRUST_X_FORWARDED_PROTO` appropriately.
+If RustFS is enabled but unavailable, the backend keeps database copies of item images and logs the RustFS failure.
 
-Compose defaults:
+## Middleware And Security
 
-- backend restart policy: `unless-stopped`
-- nginx restart policy: `unless-stopped`
-- backend image runs as non-root user `app`
-- nginx image runs as non-root user `nginxapp`
-- backend image includes a Docker `HEALTHCHECK` for `/api/v1/health`
-- backend waits for its own `/api/v1/health` to pass
-- nginx waits for backend health before starting
-- nginx health is checked with `nginx -t` plus PID verification
-  so the container health reflects the Nginx process and config directly
-- backend proxy-aware defaults in Compose:
-  `ALLOWED_HOSTS=["localhost","127.0.0.1"]`,
-  `TRUSTED_PROXIES=[]`, and `TRUST_X_FORWARDED_PROTO=False`
-- backend Gunicorn worker default in Compose:
-  `WEB_CONCURRENCY=1`
+The app adds:
 
-This backend validates `TRUSTED_PROXIES` as IP addresses or CIDR ranges only.
-Docker service names like `nginx` are not valid values there.
+- CORS middleware
+- `fastapi-guard` security middleware
+- request ID middleware
+- gzip middleware
+- trusted host middleware
 
-Override those defaults with environment variables before `docker compose up`, for example:
+Behavior includes:
 
-```bash
-BACKEND_PRODUCTION=True \
-BACKEND_ALLOWED_HOSTS='["api.example.com"]' \
-BACKEND_TRUSTED_PROXIES='["172.16.0.0/12"]' \
-BACKEND_TRUST_X_FORWARDED_PROTO=True \
-BACKEND_DATABASE_URL='postgresql+asyncpg://postgres:root@host.docker.internal:5432/meat_billing' \
-BACKEND_RUSTFS_ENDPOINT_URL='http://host.docker.internal:9000' \
-docker compose up --build
-```
+- rate limiting with `429` responses
+- request security headers
+- optional penetration-detection logging
+- proxy-aware handling through `TRUSTED_PROXIES`, `TRUSTED_PROXY_DEPTH`, and `TRUST_X_FORWARDED_PROTO`
+- `X-Request-ID` response IDs
 
-View service logs:
+Docs behavior:
 
-```bash
-make docker-logs
-```
-
-View service status:
-
-```bash
-make docker-ps
-```
-
-## Linting And Formatting
-
-This backend is configured to use `ruff` through `uv`.
-
-Run checks:
-
-```bash
-uv run ruff check .
-```
-
-Auto-fix lint issues when possible:
-
-```bash
-uv run ruff check . --fix
-```
-
-Format Python files:
-
-```bash
-uv run ruff format .
-```
-
-Suggested workflow:
-
-```bash
-uv run ruff check . --fix
-uv run ruff format .
-```
-
-The `ruff` configuration lives in `backend/pyproject.toml`.
-
-## Finding Unused Code
-
-There is no perfect static command for dead-code detection, but these checks
-are useful for the backend:
-
-Check unused imports and local variables in the app package:
-
-```bash
-uv run ruff check app --select F401,F841
-```
-
-Search for a symbol across the backend to see whether it is referenced
-anywhere outside its own definition:
-
-```bash
-rg -n "symbol_name" backend -S
-```
-
-Suggested workflow:
-
-1. Run `uv run ruff check app --select F401,F841`.
-2. Search suspicious helpers with `rg -n "symbol_name" backend -S`.
-3. Remove only code that has no real call sites and is not part of startup,
-   FastAPI dependency injection, or framework registration.
-
-Example:
-
-```bash
-rg -n "get_effective_shop_prices|_get_shop_price_map" backend -S
-```
-
-## Startup Behavior
-
-On startup the app:
-
-- creates database tables from the SQLAlchemy models
-- seeds the default billing items if they do not exist yet
-- updates the seeded item definitions to match the current code
-
-Seeded items currently include:
-
-- Chicken
-- Chicken without skin
-- Duck
-- Country Chicken
-- Live Country Chicken
-- Live Chicken
-- Chicken Cleaning
+- Swagger UI and ReDoc are enabled when `PRODUCTION=False`
+- OpenAPI routes are disabled when `PRODUCTION=True`
 
 ## Authentication And Roles
 
-- `admin` users can create and manage shops, view summaries, review bills, and inspect audit logs.
-- `shop_account` users can fetch their shop bootstrap data, save today's price sheet, and create bills.
-- Only the first admin can be created through public registration.
-- Shop logins are generated as `ml1`, `ml2`, `ml3`, and so on.
-- New shop accounts use the configured default password, which currently defaults to `ml123`.
+- `POST /api/v1/auth/register` creates the first admin only
+- `POST /api/v1/auth/login` authenticates admins and shop accounts
+- `GET /api/v1/auth/me` returns the current session payload
+
+Role behavior:
+
+- `admin` users manage shops, items, prices, analytics, and bills
+- `shop_account` users manage their daily prices and checkout bills
+- disabled users cannot log in
+- disabled shops block their linked shop account
+
+Shop login behavior:
+
+- shop usernames are generated as `ml1`, `ml2`, `ml3`, and so on
+- default password comes from `SHOP_DEFAULT_PASSWORD`
+- shop sessions include `requires_price_setup` and `next_screen`
 
 ## Core Business Rules
 
-- A shop must save today's full price sheet before billing begins.
-- Prices are stored as a shop-specific daily snapshot.
-- Count-based items accept only whole-number quantities.
-- A bill is accepted only when `cash_amount + upi_amount` exactly equals the total.
-- Underpayment and overpayment are both rejected.
-- Receipt creation happens only after a successful settled payment.
+- a shop must have today's prices before billing can start
+- prices must be submitted for every active item
+- duplicate or unknown price entries are rejected
+- count-based items only accept integer unit quantities
+- total payment must exactly match the bill
+- underpayment returns a balance error
+- overpayment is rejected
+- receipts are created only for successful paid bills
 
 ## API Routes
 
@@ -394,21 +257,38 @@ Seeded items currently include:
 
 - `GET /api/v1/health`
 
+### Catalog
+
+- `GET /api/v1/catalog/items/{item_id}/image`
+
 ### Auth
 
-<!-- - `POST /api/v1/auth/register` -->
 - `POST /api/v1/auth/login`
+- `POST /api/v1/auth/register`
 - `GET /api/v1/auth/me`
 
 ### Admin
 
 - `POST /api/v1/admin/shops`
 - `GET /api/v1/admin/shops`
+- `GET /api/v1/admin/shops/{shop_id}`
+- `PATCH /api/v1/admin/shops/{shop_id}`
 - `PATCH /api/v1/admin/shops/{shop_id}/status`
+- `DELETE /api/v1/admin/shops/{shop_id}`
+- `POST /api/v1/admin/items`
+- `PATCH /api/v1/admin/items/{item_id}`
+- `PUT /api/v1/admin/items/{item_id}/image`
+- `DELETE /api/v1/admin/items/{item_id}`
 - `GET /api/v1/admin/sales-summary`
 - `GET /api/v1/admin/payment-summary`
+- `GET /api/v1/admin/item-sales`
 - `GET /api/v1/admin/bills`
-- `GET /api/v1/admin/audit-logs`
+- `GET /api/v1/admin/bills/{bill_id}`
+- `GET /api/v1/admin/shops/{shop_id}/prices/bootstrap`
+- `POST /api/v1/admin/shops/{shop_id}/daily-prices`
+- `GET /api/v1/admin/prices/bootstrap`
+- `POST /api/v1/admin/daily-prices`
+- `GET /api/v1/admin/dashboard/bootstrap`
 
 ### Shop
 
@@ -417,95 +297,67 @@ Seeded items currently include:
 - `POST /api/v1/shop/daily-prices`
 - `POST /api/v1/shop/bills`
 
-## API Docs
+## Useful URLs
 
-When the server is running:
+Local backend:
 
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- ReDoc: `http://127.0.0.1:8000/redoc`
+- `http://127.0.0.1:8000/api/v1/health`
+- `http://127.0.0.1:8000/api/v1/openapi.json`
+- `http://127.0.0.1:8000/docs`
+- `http://127.0.0.1:8000/redoc`
 
-Docs are automatically disabled when `production=True`.
+Through Caddy:
 
-## Render Deployment
+- `https://pos-mlb.duckdns.org/api/v1/health`
+- `https://pos-mlb.duckdns.org/docs`
 
-Recommended environment variables on Render:
+## Testing
 
-```env
-DATABASE_URL=<render-postgres-or-external-postgres-url>
-SECRET_KEY=<at-least-32-random-characters>
-production=True
-CORS_ORIGINS=["https://your-frontend.example.com"]
-ALLOWED_HOSTS=["your-backend.onrender.com"]
-ACCESS_TOKEN_EXPIRE_MINUTES=720
-```
-
-Recommended start command:
+Run all backend tests:
 
 ```bash
-python -m gunicorn main:app \
-  --bind 0.0.0.0:$PORT \
-  --worker-class uvicorn_worker.UvicornWorker \
-  --workers ${WEB_CONCURRENCY:-1} \
-  --timeout ${GUNICORN_TIMEOUT:-60} \
-  --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT:-30} \
-  --keep-alive ${GUNICORN_KEEPALIVE:-5} \
-  --access-logfile - \
-  --error-logfile - \
-  --log-level ${LOG_LEVEL:-info} \
-  --capture-output
+cd backend
+uv run --with pytest pytest ../test/ -v
 ```
 
-Health check path:
-
-```text
-/api/v1/health
-```
-
-Production behavior:
-
-- startup fails fast if the database is unavailable
-- API docs are disabled
-- wildcard CORS and wildcard hosts are rejected
-- database pool pre-ping and recycling are enabled for long-lived Render instances
-- Gunicorn manages worker processes using the `uvicorn-worker` package
-
-## Middleware
-
-The backend includes:
-
-- request logging middleware with `X-Request-ID` on responses
-- IP-based rate limiting middleware with `429` responses
-- rate limit headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
-
-Default rate limit:
-
-- `120` requests per `60` seconds per client IP
-- exempt paths include `/api/v1/health`, `/docs`, `/redoc`, and OpenAPI routes
-
-Note:
-
-- the current rate limiter is in-memory per process
-- when running multiple Gunicorn workers, limits apply independently in each worker
-
-## Frontend Connectivity
-
-The Expo frontend must call a reachable API host. Common cases:
-
-- Android emulator: `http://10.0.2.2:8000`
-- iOS simulator: `http://127.0.0.1:8000`
-- Local web: `http://127.0.0.1:8000`
-- Physical phone on Wi-Fi: `http://<your-lan-ip>:8000`
-
-Example:
+Run unit tests:
 
 ```bash
-EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:8000 npx expo start --lan
+cd backend
+uv run --with pytest pytest ../test/unit/ -v
 ```
 
-If you start Expo with `--tunnel`, expose the backend separately and point the frontend at that public backend URL.
+Run integration tests:
+
+```bash
+cd backend
+uv run --with pytest pytest ../test/integration/ -v
+```
+
+Run coverage:
+
+```bash
+cd backend
+uv run --with pytest --with pytest-cov pytest ../test/ --cov=app --cov-report=html
+```
+
+## Linting And Formatting
+
+```bash
+cd backend
+uv run ruff check .
+uv run ruff check . --fix
+uv run ruff format .
+```
+
+Useful unused-code check:
+
+```bash
+cd backend
+uv run ruff check app --select F401,F841
+```
 
 ## Current Gaps
 
-- No Alembic migrations yet
-- No automated backend test suite yet
-- No printer integration yet; the frontend currently shows a plain receipt preview
+- no Alembic migration workflow yet
+- rate limiting is still in-memory per process, so multiple workers apply limits independently

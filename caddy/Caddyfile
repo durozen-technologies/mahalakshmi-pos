@@ -1,15 +1,13 @@
 {
-	https_port {$CADDY_HTTPS_PORT:443}
-
-	servers {
-		listener_wrappers {
-			http_redirect
-			tls
-		}
-	}
+	email {$CADDY_ACME_EMAIL}
 }
 
-{$CADDY_SITE_ADDRESSES} {
+pos-mlb.duckdns.org {
+	tls {
+		dns duckdns {$DUCKDNS_API_TOKEN}
+		resolvers 1.1.1.1 8.8.8.8
+	}
+
 	request_body {
 		max_size 10MB
 	}

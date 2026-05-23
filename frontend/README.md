@@ -1,25 +1,27 @@
 # Meat Billing POS Frontend
 
-Expo React Native client for the Billing System. The app supports:
+Expo React Native client for the Billing System. The current app supports:
 
-- first admin registration on fresh installs
 - shared login flow for admin and shop users
-- admin dashboard for shops, sales, payments, bills, and audit logs
-- shop bootstrap flow with required daily price setup
-- counter billing cart and exact-payment checkout
-- receipt preview after a settled backend response
-- Android Bluetooth and USB ESC/POS receipt printing with saved printer setup
+- persisted auth session hydration on app launch
+- admin dashboard for shops, analytics, bills, and receipt preview/printing
+- shop bootstrap flow with required daily price setup before billing
+- billing cart, split payment checkout, and direct receipt printing
+- Android Bluetooth and USB ESC/POS printer setup with saved device selection
+- Tamil-aware shop UI translations for the billing flow
 
 ## Stack
 
 - Expo 54
-- React Native with TypeScript
+- React Native 0.81 with TypeScript
 - React Navigation
 - Zustand
 - React Hook Form
 - NativeWind
 - Axios
-- @haroldtran/react-native-thermal-printer
+- `@haroldtran/react-native-thermal-printer`
+- `expo-print`
+- `expo-secure-store`
 
 ## Project Layout
 
@@ -30,13 +32,17 @@ frontend/
 │   ├── components/
 │   ├── constants/
 │   ├── hooks/
+│   ├── locales/
 │   ├── navigation/
 │   ├── screens/
+│   ├── services/
 │   ├── store/
 │   ├── types/
 │   └── utils/
+├── scripts/
 ├── App.tsx
 ├── app.config.js
+├── eas.json
 ├── global.css
 ├── package.json
 └── README.md
@@ -46,19 +52,20 @@ frontend/
 
 - Node.js `18+`
 - npm
-- Running backend API on port `8000` or another reachable URL
-- Android emulator, iOS simulator, or browser
-- Android development build for Bluetooth and USB receipt printing
+- reachable backend API URL
+- Android emulator, Android device, iOS simulator, or browser
+- Android dev build for native Bluetooth and USB printer support
 
 ## Install
 
 ```bash
+cd frontend
 npm install
 ```
 
-## Environment Setup
+## Environment
 
-Create a local env file before running the app or taking a build:
+Create a local env file:
 
 ```bash
 cp .env.example .env
@@ -70,289 +77,281 @@ Set the backend URL:
 EXPO_PUBLIC_API_BASE_URL=https://your-api.example.com
 ```
 
-## Native Printer Build
+The Expo app config also reads `EXPO_PUBLIC_API_BASE_URL` from:
 
-Bluetooth and USB receipt printing use a native React Native printer module, so Expo Go cannot run the full POS printing workflow. Expo Go can open the app UI and use the system print fallback, but it cannot discover or connect ESC/POS Bluetooth or USB printers.
+- shell environment
+- local `frontend/.env`
+- Expo config `extra.expoPublicApiBaseUrl`
 
-Use an Android development build for real POS printer testing:
+Relevant files:
 
-```bash
-cd "/home/sachinn-p/Codes/Billing System/frontend"
-npm run doctor:android
-npm run android:dev
-npm run start:dev -- --clear
-```
+- [app.config.js](app.config.js)
+- [src/constants/config.ts](src/constants/config.ts)
+- [src/api/client.ts](src/api/client.ts)
 
-If `npm run doctor:android` reports missing `kvm group access` on Linux, run this once, then fully log out and log back in:
+## API Base URL Logic
 
-```bash
-sudo usermod -aG kvm $USER
-```
+The frontend does more than a simple fixed base URL:
 
-After the dev build is installed, scan the `exp+meat-billing-pos://...` QR code with that development build, not Expo Go.
+- it reads `EXPO_PUBLIC_API_BASE_URL`
+- on Android, it can generate fallback candidates such as `10.0.2.2`
+- it stores the last reachable API base URL in secure storage
+- it probes `/api/v1/health` and can fail over to another candidate
+- it shows different error messages for tunnel misuse, CORS failures, and network failures
+
+Important behavior:
+
+- Expo tunnel is not treated as a backend host
+- Expo tunnel shares the JS bundle only, not your backend
+- if the backend URL is missing, requests are blocked with a configuration error
 
 ## Run
 
 ### Expo Go
 
 ```bash
+cd frontend
 npm run start
 ```
 
 Or:
 
 ```bash
-npx expo start --go
+cd frontend
+npm run start:go
 ```
 
-Use Expo Go when you want to test the shared UI flow without direct Bluetooth or USB printer access.
+Use Expo Go for UI testing without native printer access.
+
+### Android Development Build
+
+```bash
+cd frontend
+npm run doctor:android
+npm run android:dev
+npm run start:dev -- --clear
+```
+
+This is the main path for real printer testing.
 
 ### Android Emulator
 
 ```bash
-npx expo start --android
+cd frontend
+npm run android:emu
 ```
 
-Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
-
-### Android Development Build For POS Printing
+Or start Metro separately:
 
 ```bash
-npm run doctor:android
-npm run android:dev
+cd frontend
 npm run start:android
 ```
 
-Use this path when you need Bluetooth or USB printer discovery and direct receipt printing.
-
 ### Physical Android Device Over USB
-
-Enable Developer options and USB debugging on the phone, then accept the RSA prompt after connecting the cable.
-
-Check that ADB can see the phone:
 
 ```bash
 adb devices
-```
-
-Install the native development build on the connected phone:
-
-```bash
+cd frontend
 npm run android:usb
-```
-
-Start Metro for the dev client in a second terminal:
-
-```bash
 npm run start:dev -- --clear
 ```
 
-If your backend is running on this computer and not on a public URL, forward it over USB before opening the app:
+If the backend runs on the same computer:
 
 ```bash
 adb reverse tcp:8000 tcp:8000
 ```
 
-Use this path when you want real-device Android testing without relying on the emulator or Wi-Fi discovery.
-
-### iOS Simulator
+### iOS
 
 ```bash
-npx expo start --ios
+cd frontend
+npm run ios
 ```
 
-Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
-
-### Local Web
+### Web
 
 ```bash
-npx expo start --web
+cd frontend
+npm run web
 ```
-
-Backend target comes from `EXPO_PUBLIC_API_BASE_URL`.
 
 ### Physical Device On The Same Wi-Fi
 
 ```bash
+cd frontend
 EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:8000 npx expo start --lan
 ```
 
-Replace `192.168.1.20` with your computer's LAN IP.
+Replace `192.168.1.20` with your machine’s LAN IP.
 
-### Physical Device Through Expo Tunnel
+### Expo Tunnel
 
-Expo tunnel mode does not expose the backend. Start Expo with a public backend URL:
+If you use Expo tunnel, point the app at a public backend URL:
 
 ```bash
-EXPO_PUBLIC_API_BASE_URL=https://your-backend-tunnel.example.com npx expo start --tunnel
+cd frontend
+EXPO_PUBLIC_API_BASE_URL=https://your-public-backend.example.com npx expo start --tunnel
 ```
-
-## API Base URL Logic
-
-The frontend resolves the API host from `src/constants/config.ts`.
-
-- If `EXPO_PUBLIC_API_BASE_URL` is set, that value is used.
-- If `EXPO_PUBLIC_API_BASE_URL` is missing, API requests are blocked and the app shows a configuration error.
-- The value may come from the local `.env` file or from Expo/EAS app config at build time.
-- Expo tunnel hosts are intentionally not treated as backend hosts.
-
-Current local `.env` example:
-
-```env
-EXPO_PUBLIC_API_BASE_URL=https://mahalakshmi-pos.onrender.com
-```
-
-## App Flow
-
-### Auth
-
-- `Login` screen supports both admin and shop sign-in.
-- `Create Admin` works only until the first admin already exists in the backend.
-- Auth state is persisted locally and restored on app launch.
-
-### Admin Experience
-
-- create shop accounts
-- view shop status and enable or disable access
-- monitor total sales, cash totals, and UPI totals
-- inspect recent bills
-- inspect audit logs
-
-### Shop Experience
-
-- fetch shop bootstrap data after login
-- set or update today's prices for every active item
-- add items to the cart using kg or unit rules
-- save one Bluetooth or USB receipt printer per POS device from the printer setup screen
-- split payment between cash and UPI
-- complete checkout only when payment exactly matches the total
-- preview receipt text after a successful bill
-- print directly to the saved Bluetooth or USB thermal printer on Android
-- fall back to system print on web and iOS
 
 ## Scripts
+
+Current scripts from [package.json](package.json):
 
 ```bash
 npm run start
 npm run start:go
 npm run start:dev
 npm run start:android
+npm run doctor:android
+npm run emulator:start
 npm run android
+npm run android:emu
 npm run android:usb
 npm run android:dev
 npm run ios
 npm run web
 npm run lint
 npm run typecheck
+npm run eas:configure
+npm run eas:android:preview
+npm run eas:android:production
+npm run eas:android:run
 ```
+
+The project also runs a bundled native dependency cleanup script automatically before several commands.
+
+## App Flow
+
+### Auth
+
+- the visible auth UI is currently login-only
+- session state is stored with secure storage and restored on launch
+- login resets cart and cached prices before storing the new session
+
+Relevant files:
+
+- [src/screens/auth/login-screen.tsx](src/screens/auth/login-screen.tsx)
+- [src/store/auth-store.ts](src/store/auth-store.ts)
+- [src/hooks/use-auth-hydration.ts](src/hooks/use-auth-hydration.ts)
+
+### Admin Experience
+
+The admin flow currently includes:
+
+- shop creation, update, enable/disable, and delete
+- dashboard bootstrap loading
+- sales, payment, and item analytics
+- bill detail and receipt preview
+- saved printer-based receipt printing
+- global and per-shop daily price management
+
+Main screen:
+
+- [src/screens/admin/admin-dashboard-screen.tsx](src/screens/admin/admin-dashboard-screen.tsx)
+
+### Shop Experience
+
+The shop flow currently includes:
+
+- shop bootstrap fetch after login
+- today's price setup
+- translated item labels for billing
+- quantity entry by `kg` or `unit`
+- cart review and removal
+- saved printer summary inside billing and checkout
+- exact-match split payment checkout
+- direct image-based receipt printing through the saved printer
+
+Main screens:
+
+- [src/screens/shop/billing-screen.tsx](src/screens/shop/billing-screen.tsx)
+- [src/screens/shop/checkout-screen.tsx](src/screens/shop/checkout-screen.tsx)
+- [src/screens/shop/printer-setup-screen.tsx](src/screens/shop/printer-setup-screen.tsx)
+
+## Printer Support
+
+The app supports:
+
+- Bluetooth printers
+- USB printers
+- saved preferred printer per device
+- test-print flow
+- image-based receipt printing after checkout
+
+Printer support notes:
+
+- Expo Go cannot use the native printer module
+- Android native builds can discover and connect Bluetooth/USB printers
+- web and iOS keep fallback print behavior through `expo-print`
+
+Relevant files:
+
+- [src/services/printer-service.ts](src/services/printer-service.ts)
+- [src/store/printer-store.ts](src/store/printer-store.ts)
+- [src/hooks/use-receipt-image-print-job.tsx](src/hooks/use-receipt-image-print-job.tsx)
+- [src/api/receipts.ts](src/api/receipts.ts)
+
+## Translations
+
+The shop flow includes translation support, including Tamil-aware UI treatment.
+
+Relevant files:
+
+- [src/hooks/use-shop-translation.ts](src/hooks/use-shop-translation.ts)
+- [src/locales/shop-translations.json](src/locales/shop-translations.json)
 
 ## EAS Build
 
-This project includes [eas.json](./eas.json) with these profiles:
+This project includes [eas.json](eas.json) with:
 
-- `development`: dev client build for local development
-- `preview`: internal Android APK build for direct install and testing
-- `production`: Android AAB build for Play Store submission
+- `development` - internal development client build
+- `preview` - internal Android APK build
+- `production` - Android AAB build
 
-### One-time setup
-
-```bash
-cd "/home/sachinn-p/Codes/Billing System/frontend"
-npx eas-cli@latest login --browser
-npx eas-cli@latest build:configure
-```
-
-`build:configure` links the app to your Expo project and may add the EAS project id to your app config if it is missing.
-
-If your Expo account uses Google OAuth, use browser login and choose `Continue with Google`. The terminal password prompt will fail for Google-only sign-in:
+One-time setup:
 
 ```bash
-npx eas-cli@latest login --browser
-npx eas-cli@latest whoami
+cd frontend
+npm run eas:configure
 ```
 
-### Set env values for cloud builds
-
-Local `.env` files are gitignored, so EAS cloud builds should use EAS environment variables instead of relying on the local file.
-
-Current API base URL for this project:
-
-```text
-https://mahalakshmi-pos.onrender.com
-```
-
-Preview build env:
+Preview build:
 
 ```bash
-npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment preview --visibility plaintext
-```
-
-Production build env:
-
-```bash
-npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment production --visibility plaintext
-```
-
-If you want your local `.env` to match an EAS environment later:
-
-```bash
-npx eas-cli@latest env:pull --environment development
-```
-
-### Build commands
-
-Installable Android APK:
-
-```bash
-npx eas-cli@latest build -p android --profile preview
-```
-
-Play Store Android AAB:
-
-```bash
-npx eas-cli@latest build -p android --profile production
-```
-
-After the preview build finishes, you can install it with:
-
-```bash
-npx eas-cli@latest build:run -p android --latest
-```
-
-### Full command sequence for this project
-
-Preview APK:
-
-```bash
-cd "/home/sachinn-p/Codes/Billing System/frontend"
-npx eas-cli@latest whoami
-npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment preview --visibility plaintext
+cd frontend
 npm run eas:android:preview
 ```
 
-Production AAB:
+Production build:
 
 ```bash
-cd "/home/sachinn-p/Codes/Billing System/frontend"
-npx eas-cli@latest whoami
-npx eas-cli@latest env:create --name EXPO_PUBLIC_API_BASE_URL --value https://mahalakshmi-pos.onrender.com --environment production --visibility plaintext
+cd frontend
 npm run eas:android:production
 ```
 
-## Printer Workflow
+Install latest built Android artifact:
 
-1. Open `Set Up Printer` from the billing screen or `Manage Printer` from the receipt screen.
-2. Refresh Bluetooth printers if the device is already linked in Android Bluetooth settings.
-3. Refresh USB printers after plugging the thermal printer into the device with OTG support.
-4. Connect one printer and save it on the device.
-5. Run `Print Test Slip` to confirm the printer is ready.
-6. Complete a bill and use `Print To Saved Printer` on the receipt screen.
+```bash
+cd frontend
+npm run eas:android:run
+```
+
+Cloud builds should use EAS environment variables for `EXPO_PUBLIC_API_BASE_URL`.
+
+## Lint And Typecheck
+
+```bash
+cd frontend
+npm run lint
+npm run typecheck
+```
 
 ## Notes
 
-- The app uses a single navigator that switches between auth, admin, and shop flows based on the stored session.
-- If today's price sheet is missing, shop users are redirected to the daily price screen before billing.
-- Changing today's prices from the billing screen clears the current cart to keep prices consistent for the next bill.
-- Bluetooth permissions are declared in `app.config.js` and requested at runtime on Android.
-- Expo Go cannot use the printer feature because the printer library requires custom native code.
-- If printer support is unavailable, the receipt screen still exposes the existing system-print fallback.
+- the navigation stack switches between auth, admin, and shop flows from stored session state
+- shop pricing must be completed before billing is available
+- checkout requires an exact payment match before printing can proceed
+- the app keeps a saved API host and can reuse it across launches
+- admin receipt printing uses the same saved printer infrastructure as the shop flow
