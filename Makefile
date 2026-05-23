@@ -65,7 +65,7 @@ docker-prod-config: ## Validate production Compose file
 	$(DOCKER_COMPOSE_PROD) --env-file .env.prod.example config
 
 docker-prod-up: ## Start full production stack (requires .env on VM)
-	$(DOCKER_COMPOSE_PROD) up -d --remove-orphans
+	COMPOSE_PROFILES=infra $(DOCKER_COMPOSE_PROD) up -d --remove-orphans
 
 docker-prod-down: ## Stop production stack
 	$(DOCKER_COMPOSE_PROD) down --remove-orphans

@@ -35,6 +35,7 @@ RUN addgroup --system --gid "${APP_GID}" app \
 
 COPY --from=builder /app/.venv/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder --chown=app:app /app/main.py /app/main.py
+COPY --from=builder --chown=app:app /app/migrate.py /app/migrate.py
 COPY --from=builder --chown=app:app /app/app /app/app
 COPY --from=builder --chown=app:app /app/assets /app/assets
 

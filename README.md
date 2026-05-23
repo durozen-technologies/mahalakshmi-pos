@@ -154,11 +154,44 @@ Data bind mounts (preserve existing VM data):
 1. Stop old standalone containers: `docker stop rustfs_container postgres_pos || true`
 2. Create deploy directory (e.g. `/home/ubuntu/mahalakshmi-pos`)
 3. Copy [`.env.prod.example`](.env.prod.example) to `.env` and fill values
-4. Bootstrap: `docker compose -f docker-compose.prod.yml up -d`
+4. Bootstrap infra once:
+
+   ```bash
+   COMPOSE_PROFILES=infra docker compose -f docker-compose.prod.yml --env-file .env up -d
+   ```
+
+### Routine deploy behavior
+
+- **Postgres / RustFS**: not pulled, not restarted if already healthy
+- **Backend / Caddy**: image pulled and recreated only
+- **Migrations**: `python migrate.py` runs before the backend server starts (schema + column fixes)
 
 ### CI/CD
 
-- [`.github/workflows/deploy-prod.yml`](.github/workflows/deploy-prod.yml) — on `main`: build/push backend + caddy to Docker Hub, SSH deploy to VM
+- [`.github/workflows/deploy-prod.yml`](.github/workflows/deploy-prod.yml)
+- **Path triggers** on `main` only when these change:
+  - `backend/**` → build + deploy **backend** only
+  - `caddy/**` → build + deploy **caddy** only
+  - `docker-compose.prod.yml`, `scripts/**`, workflow → deploy/sync only (no image rebuild)
+- **Manual run**: choose `build_backend` / `build_caddy`, or **skip_build** to pull existing tags
+- All services share Docker network **`mahalakshmi-pos-network`**
+
+### Postgres WAL corruption
+
+If Postgres logs show `invalid checkpoint record` / `could not locate a valid checkpoint record`, the data directory has WAL corruption (often from an unclean shutdown or copying data while Postgres was running).
+
+1. Stop postgres: `docker compose -f docker-compose.prod.yml stop postgres`
+2. On the VM, run: `bash scripts/postgres-recover.sh` (runs `pg_resetwal` after confirmation)
+3. Start postgres: `COMPOSE_PROFILES=infra docker compose -f docker-compose.prod.yml --env-file .env up -d postgres`
+4. Check: `~/pos-logs postgres`
+
+If recovery fails or data is unimportant, move the old directory aside and init fresh:
+
+```bash
+mv /home/ubuntu/pos-postgress/data /home/ubuntu/pos-postgress/data.bak.$(date +%s)
+mkdir -p /home/ubuntu/pos-postgress/data
+COMPOSE_PROFILES=infra docker compose -f docker-compose.prod.yml --env-file .env up -d postgres
+```
 
 ### GitHub Secrets
 

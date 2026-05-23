@@ -4,12 +4,20 @@ x-default-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+networks:
+  pos:
+    name: mahalakshmi-pos-network
+    driver: bridge
+
 services:
   postgres:
+    profiles: ["infra"]
     image: postgres:17-alpine
     init: true
     restart: unless-stopped
     logging: *default-logging
+    networks:
+      - pos
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-meat_billing}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -30,10 +38,13 @@ services:
       start_period: 10s
 
   rustfs:
+    profiles: ["infra"]
     image: rustfs/rustfs:latest
     init: true
     restart: unless-stopped
     logging: *default-logging
+    networks:
+      - pos
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
@@ -69,10 +80,12 @@ services:
       start_period: 20s
 
   backend:
-    image: ${DOCKERHUB_USERNAME:?Set DOCKERHUB_USERNAME}/mahalakshmi-pos-backend:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USERNAME:?Set DOCKERHUB_USERNAME}/mahalakshmi-pos-backend:${BACKEND_IMAGE_TAG:-${IMAGE_TAG:-latest}}
     init: true
     restart: unless-stopped
     logging: *default-logging
+    networks:
+      - pos
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,10 +122,12 @@ services:
       start_period: 20s
 
   caddy:
-    image: ${DOCKERHUB_USERNAME:?Set DOCKERHUB_USERNAME}/mahalakshmi-pos-caddy:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USERNAME:?Set DOCKERHUB_USERNAME}/mahalakshmi-pos-caddy:${CADDY_IMAGE_TAG:-${IMAGE_TAG:-latest}}
     init: true
     restart: unless-stopped
     logging: *default-logging
+    networks:
+      - pos
     depends_on:
       backend:
         condition: service_healthy

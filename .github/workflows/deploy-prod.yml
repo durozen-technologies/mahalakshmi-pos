@@ -4,7 +4,30 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "backend/**"
+      - "caddy/**"
+      - "docker-compose.prod.yml"
+      - "scripts/**"
+      - ".github/workflows/deploy-prod.yml"
   workflow_dispatch:
+    inputs:
+      skip_build:
+        description: Deploy existing Docker Hub images without rebuilding
+        type: boolean
+        default: false
+      build_backend:
+        description: Build and deploy backend (manual runs only)
+        type: boolean
+        default: true
+      build_caddy:
+        description: Build and deploy caddy (manual runs only)
+        type: boolean
+        default: true
+      image_tag:
+        description: Image tag to deploy when skip_build is true (default latest)
+        type: string
+        required: false
 
 concurrency:
   group: production-deploy
@@ -15,23 +38,45 @@ env:
   CADDY_IMAGE: mahalakshmi-pos-caddy
 
 jobs:
-  build-and-push:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      caddy: ${{ steps.filter.outputs.caddy }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            caddy:
+              - 'caddy/**'
+            deploy:
+              - 'docker-compose.prod.yml'
+              - 'scripts/**'
+              - '.github/workflows/deploy-prod.yml'
+
+  build-backend:
+    needs: changes
+    if: |
+      needs.changes.outputs.backend == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.skip_build != true && inputs.build_backend == true)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push backend
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -39,11 +84,26 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
-      - name: Build and push caddy
-        uses: docker/build-push-action@v6
+  build-caddy:
+    needs: changes
+    if: |
+      needs.changes.outputs.caddy == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.skip_build != true && inputs.build_caddy == true)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
         with:
           context: ./caddy
           file: ./caddy/Dockerfile
@@ -51,20 +111,81 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CADDY_IMAGE }}:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CADDY_IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=caddy
+          cache-to: type=gha,mode=max,scope=caddy
 
   deploy:
-    needs: build-and-push
+    needs: [changes, build-backend, build-caddy]
+    if: |
+      always() &&
+      (needs.build-backend.result == 'success' ||
+       needs.build-caddy.result == 'success' ||
+       needs.build-backend.result == 'skipped' ||
+       needs.build-caddy.result == 'skipped') &&
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.caddy == 'true' ||
+       needs.changes.outputs.deploy == 'true' ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Resolve deploy plan
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_BACKEND: ${{ needs.changes.outputs.backend }}
+          CHANGED_CADDY: ${{ needs.changes.outputs.caddy }}
+          CHANGED_DEPLOY: ${{ needs.changes.outputs.deploy }}
+          BUILT_BACKEND: ${{ needs.build-backend.result }}
+          BUILT_CADDY: ${{ needs.build-caddy.result }}
+          SKIP_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_build }}
+          MANUAL_BACKEND: ${{ github.event_name == 'workflow_dispatch' && inputs.build_backend }}
+          MANUAL_CADDY: ${{ github.event_name == 'workflow_dispatch' && inputs.build_caddy }}
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag }}
+        run: |
+          DEPLOY_BACKEND=false
+          DEPLOY_CADDY=false
+          BACKEND_TAG="${{ github.sha }}"
+          CADDY_TAG="${{ github.sha }}"
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SKIP_BUILD" = "true" ]; then
+            TAG="${INPUT_TAG:-latest}"
+            BACKEND_TAG="$TAG"
+            CADDY_TAG="$TAG"
+            if [ "$MANUAL_BACKEND" = "true" ]; then DEPLOY_BACKEND=true; fi
+            if [ "$MANUAL_CADDY" = "true" ]; then DEPLOY_CADDY=true; fi
+          else
+            if [ "$CHANGED_BACKEND" = "true" ] || [ "$BUILT_BACKEND" = "success" ]; then DEPLOY_BACKEND=true; fi
+            if [ "$CHANGED_CADDY" = "true" ] || [ "$BUILT_CADDY" = "success" ]; then DEPLOY_CADDY=true; fi
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              if [ "$MANUAL_BACKEND" != "true" ]; then DEPLOY_BACKEND=false; fi
+              if [ "$MANUAL_CADDY" != "true" ]; then DEPLOY_CADDY=false; fi
+            fi
+          fi
+
+          if [ "$CHANGED_DEPLOY" = "true" ] && [ "$DEPLOY_BACKEND" = "false" ] && [ "$DEPLOY_CADDY" = "false" ]; then
+            SYNC_COMPOSE=true
+          else
+            SYNC_COMPOSE=false
+          fi
+
+          {
+            echo "deploy_backend=$DEPLOY_BACKEND"
+            echo "deploy_caddy=$DEPLOY_CADDY"
+            echo "sync_compose=$SYNC_COMPOSE"
+            echo "backend_tag=$BACKEND_TAG"
+            echo "caddy_tag=$CADDY_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create production .env
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          IMAGE_TAG: ${{ github.sha }}
+          BACKEND_IMAGE_TAG: ${{ steps.plan.outputs.backend_tag }}
+          CADDY_IMAGE_TAG: ${{ steps.plan.outputs.caddy_tag }}
+          DEPLOY_BACKEND: ${{ steps.plan.outputs.deploy_backend }}
+          DEPLOY_CADDY: ${{ steps.plan.outputs.deploy_caddy }}
+          SYNC_COMPOSE: ${{ steps.plan.outputs.sync_compose }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -79,7 +200,11 @@ jobs:
         run: |
           cat > .env.deploy <<EOF
           DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
-          IMAGE_TAG=${IMAGE_TAG}
+          BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG}
+          CADDY_IMAGE_TAG=${CADDY_IMAGE_TAG}
+          DEPLOY_BACKEND=${DEPLOY_BACKEND}
+          DEPLOY_CADDY=${DEPLOY_CADDY}
+          SYNC_COMPOSE=${SYNC_COMPOSE}
           POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data
           RUSTFS_DATA_DIR=/home/ubuntu/rustfs/data
           POSTGRES_DB=${POSTGRES_DB:-meat_billing}
@@ -97,18 +222,16 @@ jobs:
           CADDY_UPSTREAM=backend:8000
           EOF
 
-      - name: Copy deploy artifacts to VM
-        uses: appleboy/scp-action@v0.1.7
+      - uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "docker-compose.prod.yml,.env.deploy,scripts/deploy-prod.sh,scripts/pos-logs.sh"
+          source: "docker-compose.prod.yml,.env.deploy,scripts/deploy-prod.sh,scripts/pos-logs.sh,scripts/postgres-recover.sh"
           target: ${{ secrets.DEPLOY_PATH }}
           strip_components: 0
 
-      - name: Run production deploy
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: appleboy/ssh-action@v1.2.0
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -121,7 +244,7 @@ jobs:
             set -euo pipefail
             cd "${{ secrets.DEPLOY_PATH }}"
             mv -f .env.deploy .env
-            chmod +x scripts/deploy-prod.sh scripts/pos-logs.sh
+            chmod +x scripts/deploy-prod.sh scripts/pos-logs.sh scripts/postgres-recover.sh
             export DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME}"
             export DOCKERHUB_TOKEN="${DOCKERHUB_TOKEN}"
             bash scripts/deploy-prod.sh

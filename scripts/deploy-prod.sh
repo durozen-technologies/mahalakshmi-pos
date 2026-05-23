@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Production deploy: pull app images, rolling update backend/caddy, rollback on failure.
+# Production deploy: selective backend/caddy updates, shared network, infra stays up.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,6 +12,7 @@ LOG_DIR="${DEPLOY_ROOT}/logs"
 DEPLOY_LOG="${LOG_DIR}/deploy.log"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-infra}"
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 touch "${DEPLOY_LOG}"
@@ -24,6 +25,27 @@ log() {
 
 compose() {
   docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@"
+}
+
+service_container_id() {
+  local service="$1"
+  compose ps -q "${service}" 2>/dev/null | head -n1
+}
+
+service_health() {
+  local service="$1"
+  local cid
+  cid="$(service_container_id "${service}")"
+  if [[ -z "${cid}" ]]; then
+    echo "missing"
+    return 0
+  fi
+  docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}" 2>/dev/null || echo "unknown"
+}
+
+infra_healthy() {
+  [[ "$(service_health postgres)" == "healthy" ]] \
+    && [[ "$(service_health rustfs)" == "healthy" ]]
 }
 
 read_state() {
@@ -62,20 +84,35 @@ docker_login() {
   fi
 }
 
-infra_running() {
-  compose ps --status running --services 2>/dev/null | grep -qx postgres \
-    && compose ps --status running --services 2>/dev/null | grep -qx rustfs
-}
-
 bootstrap_infra() {
-  if infra_running; then
-    log "Postgres and RustFS already running — skipping infra bootstrap"
+  if infra_healthy; then
+    log "Postgres and RustFS healthy — skipping infra (no restart, no pull)"
     return 0
   fi
-  log "Bootstrapping postgres and rustfs"
-  compose pull postgres rustfs
+
+  local pg_cid
+  pg_cid="$(service_container_id postgres)"
+  if [[ -n "${pg_cid}" ]]; then
+    local pg_health
+    pg_health="$(service_health postgres)"
+    log "Postgres container exists but is not healthy (status=${pg_health})"
+    log "Not restarting Postgres automatically — fix data/WAL or run scripts/postgres-recover.sh"
+    exit 1
+  fi
+
+  log "First-time infra bootstrap: starting postgres and rustfs on mahalakshmi-pos-network"
   compose up -d postgres rustfs
   compose up -d --wait postgres rustfs
+}
+
+sync_compose_project() {
+  log "Applying compose/network changes without recreating containers"
+  compose up -d --no-recreate
+}
+
+run_migrations() {
+  log "Running backend database migrations"
+  compose run --rm --no-deps backend python migrate.py
 }
 
 wait_backend_health() {
@@ -111,50 +148,96 @@ wait_caddy_health() {
 rollback() {
   local backend_tag="${1:-}"
   local caddy_tag="${2:-}"
-  if [[ -z "${backend_tag}" || -z "${caddy_tag}" ]]; then
-    log "No previous tags to roll back to"
-    return 1
+  local rollback_backend="${3:-false}"
+  local rollback_caddy="${4:-false}"
+
+  if [[ "${rollback_backend}" == "true" && -n "${backend_tag}" ]]; then
+    log "Rolling back backend to ${backend_tag}"
+    BACKEND_IMAGE_TAG="${backend_tag}" compose pull backend || true
+    BACKEND_IMAGE_TAG="${backend_tag}" compose up -d --no-deps backend
+    wait_backend_health || true
   fi
-  log "Rolling back to BACKEND_TAG=${backend_tag} CADDY_TAG=${caddy_tag}"
-  export IMAGE_TAG="${backend_tag}"
-  compose pull backend || true
-  compose up -d --no-deps backend
-  wait_backend_health || true
-  export IMAGE_TAG="${caddy_tag}"
-  compose pull caddy || true
-  compose up -d --no-deps caddy
-  wait_caddy_health || true
-  write_state "${backend_tag}" "${caddy_tag}"
+
+  if [[ "${rollback_caddy}" == "true" && -n "${caddy_tag}" ]]; then
+    log "Rolling back caddy to ${caddy_tag}"
+    CADDY_IMAGE_TAG="${caddy_tag}" compose pull caddy || true
+    CADDY_IMAGE_TAG="${caddy_tag}" compose up -d --no-deps caddy
+    wait_caddy_health || true
+  fi
+
+  write_state \
+    "$( [[ "${rollback_backend}" == "true" && -n "${backend_tag}" ]] && echo "${backend_tag}" || echo "${BACKEND_TAG_PREVIOUS}" )" \
+    "$( [[ "${rollback_caddy}" == "true" && -n "${caddy_tag}" ]] && echo "${caddy_tag}" || echo "${CADDY_TAG_PREVIOUS}" )"
 }
 
 deploy_app() {
-  local new_tag="${IMAGE_TAG:-latest}"
-  local rollback_backend="${BACKEND_TAG_PREVIOUS:-}"
-  local rollback_caddy="${CADDY_TAG_PREVIOUS:-}"
+  local deploy_backend="${DEPLOY_BACKEND:-true}"
+  local deploy_caddy="${DEPLOY_CADDY:-true}"
+  local sync_compose="${SYNC_COMPOSE:-false}"
+  local new_backend_tag="${BACKEND_IMAGE_TAG:-${IMAGE_TAG:-latest}}"
+  local new_caddy_tag="${CADDY_IMAGE_TAG:-${IMAGE_TAG:-latest}}"
+  local final_backend_tag="${BACKEND_TAG_PREVIOUS}"
+  local final_caddy_tag="${CADDY_TAG_PREVIOUS}"
 
   bootstrap_infra
 
-  log "Pulling backend and caddy images (tag=${new_tag})"
-  compose pull backend caddy
-
-  log "Deploying backend"
-  compose up -d --no-deps backend
-  if ! wait_backend_health; then
-    log "Backend health check failed"
-    rollback "${rollback_backend}" "${rollback_caddy}"
-    exit 1
+  if [[ "${sync_compose}" == "true" && "${deploy_backend}" != "true" && "${deploy_caddy}" != "true" ]]; then
+    sync_compose_project
+    log "Compose sync complete (no image updates)"
+    return 0
   fi
 
-  log "Deploying caddy"
-  compose up -d --no-deps caddy
-  if ! wait_caddy_health; then
-    log "Caddy health check failed"
-    rollback "${rollback_backend}" "${rollback_caddy}"
-    exit 1
+  if [[ "${deploy_backend}" != "true" && "${deploy_caddy}" != "true" ]]; then
+    log "Nothing to deploy (DEPLOY_BACKEND=false, DEPLOY_CADDY=false)"
+    return 0
   fi
 
-  write_state "${new_tag}" "${new_tag}"
-  log "Deploy succeeded (IMAGE_TAG=${new_tag})"
+  sync_compose_project
+
+  if [[ "${deploy_backend}" == "true" ]]; then
+    log "Pulling backend image (tag=${new_backend_tag})"
+    BACKEND_IMAGE_TAG="${new_backend_tag}" compose pull backend
+
+    if ! run_migrations; then
+      log "Database migration failed"
+      rollback "${BACKEND_TAG_PREVIOUS}" "${CADDY_TAG_PREVIOUS}" true false
+      exit 1
+    fi
+
+    log "Deploying backend"
+    BACKEND_IMAGE_TAG="${new_backend_tag}" compose up -d --no-deps backend
+
+    if ! wait_backend_health; then
+      log "Backend health check failed"
+      rollback "${BACKEND_TAG_PREVIOUS}" "${CADDY_TAG_PREVIOUS}" true false
+      exit 1
+    fi
+    final_backend_tag="${new_backend_tag}"
+  else
+    log "Skipping backend deploy"
+  fi
+
+  if [[ "${deploy_caddy}" == "true" ]]; then
+    log "Pulling caddy image (tag=${new_caddy_tag})"
+    CADDY_IMAGE_TAG="${new_caddy_tag}" compose pull caddy
+
+    log "Deploying caddy"
+    CADDY_IMAGE_TAG="${new_caddy_tag}" compose up -d --no-deps caddy
+
+    if ! wait_caddy_health; then
+      log "Caddy health check failed"
+      rollback "${BACKEND_TAG_PREVIOUS}" "${CADDY_TAG_PREVIOUS}" false true
+      exit 1
+    fi
+    final_caddy_tag="${new_caddy_tag}"
+  else
+    log "Skipping caddy deploy"
+  fi
+
+  write_state \
+    "${final_backend_tag:-${new_backend_tag}}" \
+    "${final_caddy_tag:-${new_caddy_tag}}"
+  log "Deploy succeeded (backend=${final_backend_tag}, caddy=${final_caddy_tag})"
 }
 
 main() {

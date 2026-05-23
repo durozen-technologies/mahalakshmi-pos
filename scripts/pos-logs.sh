@@ -10,6 +10,8 @@ LOG_DIR="${DEPLOY_ROOT}/logs"
 ARCHIVE_DIR="${LOG_DIR}/archive"
 SERVICES=(postgres rustfs backend caddy)
 
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-infra}"
+
 compose() {
   docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@"
 }
