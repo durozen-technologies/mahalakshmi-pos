@@ -205,36 +205,35 @@ jobs:
             exit 1
           fi
 
-          BACKEND_ALLOWED_HOSTS='["'"${CADDY_PUBLIC_HOST}"'","127.0.0.1","localhost","backend"]'
+          BACKEND_ALLOWED_HOSTS="${CADDY_PUBLIC_HOST},127.0.0.1,localhost,backend"
           if [ -n "${CADDY_DUCKDNS_HOST}" ]; then
-            BACKEND_ALLOWED_HOSTS='["'"${CADDY_PUBLIC_HOST}"'","'"${CADDY_DUCKDNS_HOST}"'","127.0.0.1","localhost","backend"]'
+            BACKEND_ALLOWED_HOSTS="${CADDY_PUBLIC_HOST},${CADDY_DUCKDNS_HOST},127.0.0.1,localhost,backend"
           fi
 
-          cat > .env.deploy <<EOF
-          DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
-          BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG}
-          CADDY_IMAGE_TAG=${CADDY_IMAGE_TAG}
-          DEPLOY_BACKEND=${DEPLOY_BACKEND}
-          DEPLOY_CADDY=${DEPLOY_CADDY}
-          SYNC_COMPOSE=${SYNC_COMPOSE}
-          POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data
-          RUSTFS_DATA_DIR=/home/ubuntu/rustfs/data
-          POSTGRES_DB=${POSTGRES_DB:-meat_billing}
-          POSTGRES_USER=${POSTGRES_USER:-postgres}
-          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-          RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
-          RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
-          RUSTFS_SERVER_DOMAINS=${RUSTFS_SERVER_DOMAINS}
-          BACKEND_SECRET_KEY=${BACKEND_SECRET_KEY}
-          BACKEND_PRODUCTION=True
-          BACKEND_ALLOWED_HOSTS=${BACKEND_ALLOWED_HOSTS}
-          BACKEND_RUSTFS_BUCKET_NAME=${BACKEND_RUSTFS_BUCKET_NAME:-pos-mlb-items}
-          CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL}
-          CADDY_PUBLIC_HOST=${CADDY_PUBLIC_HOST}
-          CADDY_DUCKDNS_HOST=${CADDY_DUCKDNS_HOST}
-          DUCKDNS_API_TOKEN=${DUCKDNS_API_TOKEN}
-          CADDY_UPSTREAM=backend:8000
-          EOF
+          : > .env.deploy
+          echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}" >> .env.deploy
+          echo "BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG}" >> .env.deploy
+          echo "CADDY_IMAGE_TAG=${CADDY_IMAGE_TAG}" >> .env.deploy
+          echo "DEPLOY_BACKEND=${DEPLOY_BACKEND}" >> .env.deploy
+          echo "DEPLOY_CADDY=${DEPLOY_CADDY}" >> .env.deploy
+          echo "SYNC_COMPOSE=${SYNC_COMPOSE}" >> .env.deploy
+          echo "POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data" >> .env.deploy
+          echo "RUSTFS_DATA_DIR=/home/ubuntu/rustfs/data" >> .env.deploy
+          echo "POSTGRES_DB=${POSTGRES_DB:-meat_billing}" >> .env.deploy
+          echo "POSTGRES_USER=${POSTGRES_USER:-postgres}" >> .env.deploy
+          echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" >> .env.deploy
+          echo "RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}" >> .env.deploy
+          echo "RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}" >> .env.deploy
+          echo "RUSTFS_SERVER_DOMAINS=${RUSTFS_SERVER_DOMAINS}" >> .env.deploy
+          echo "BACKEND_SECRET_KEY=${BACKEND_SECRET_KEY}" >> .env.deploy
+          echo "BACKEND_PRODUCTION=True" >> .env.deploy
+          echo "BACKEND_ALLOWED_HOSTS=${BACKEND_ALLOWED_HOSTS}" >> .env.deploy
+          echo "BACKEND_RUSTFS_BUCKET_NAME=${BACKEND_RUSTFS_BUCKET_NAME:-pos-mlb-items}" >> .env.deploy
+          echo "CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL}" >> .env.deploy
+          echo "CADDY_PUBLIC_HOST=${CADDY_PUBLIC_HOST}" >> .env.deploy
+          echo "CADDY_DUCKDNS_HOST=${CADDY_DUCKDNS_HOST}" >> .env.deploy
+          echo "DUCKDNS_API_TOKEN=${DUCKDNS_API_TOKEN}" >> .env.deploy
+          echo "CADDY_UPSTREAM=backend:8000" >> .env.deploy
 
       - uses: appleboy/scp-action@v0.1.7
         with:

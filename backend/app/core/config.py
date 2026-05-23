@@ -3,9 +3,10 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 S3_BUCKET_NAME_PATTERN = re.compile(
     r"^(?!xn--)(?!.*\.\.)(?!.*\.$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
@@ -22,8 +23,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 12 * 60
     shop_default_password: str = "ml123"
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
-    allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
     cors_allow_credentials: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 10
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
     enable_rate_limit: bool = True
     rate_limit_requests: int = 120
     rate_limit_window_seconds: int = 60
-    rate_limit_exempt_paths: list[str] = Field(
+    rate_limit_exempt_paths: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "/api/v1/health",
             "/docs",
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
             "/api/v1/openapi.json",
         ]
     )
-    trusted_proxies: list[str] = Field(default_factory=list)
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
     trusted_proxy_depth: int = 1
     trust_x_forwarded_proto: bool = False
     enable_penetration_detection: bool = True
@@ -80,7 +81,11 @@ class Settings(BaseSettings):
             if not stripped:
                 return []
             if stripped.startswith("["):
-                return json.loads(stripped)
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    inner = stripped.strip("[]")
+                    return [item.strip().strip('"') for item in inner.split(",") if item.strip()]
             return [item.strip() for item in stripped.split(",") if item.strip()]
         return value
 
