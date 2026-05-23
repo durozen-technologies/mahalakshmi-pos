@@ -194,11 +194,12 @@ wait_caddy_health() {
 }
 
 backend_allowed_hosts_mismatch() {
-  local cid current
+  local cid current expected
   cid="$(service_container_id backend)"
   [[ -z "${cid}" ]] && return 1
   current="$(compose exec -T backend printenv ALLOWED_HOSTS 2>/dev/null || true)"
-  [[ "${current}" != "${BACKEND_ALLOWED_HOSTS:-}" ]]
+  expected="${BACKEND_ALLOWED_HOSTS:-}"
+  [[ "${current}" != "${expected}" ]]
 }
 
 refresh_backend_env_if_needed() {

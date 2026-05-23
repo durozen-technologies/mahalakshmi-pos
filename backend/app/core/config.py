@@ -3,15 +3,36 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 S3_BUCKET_NAME_PATTERN = re.compile(
     r"^(?!xn--)(?!.*\.\.)(?!.*\.$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
 )
 ENV_FILE_PATH = Path(__file__).resolve().parents[2] / ".env"
+
+
+def parse_list_setting(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                inner = stripped.strip("[]")
+                return [item.strip().strip('"') for item in inner.split(",") if item.strip()]
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            return [str(parsed).strip()]
+        return [item.strip() for item in stripped.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
 
 
 class Settings(BaseSettings):
@@ -23,8 +44,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 12 * 60
     shop_default_password: str = "ml123"
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
-    allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    allowed_hosts_raw: str = Field(default="*", validation_alias="ALLOWED_HOSTS")
+    cors_origins_raw: str = Field(default="*", validation_alias="CORS_ORIGINS")
     cors_allow_credentials: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 10
@@ -34,7 +55,7 @@ class Settings(BaseSettings):
     enable_rate_limit: bool = True
     rate_limit_requests: int = 120
     rate_limit_window_seconds: int = 60
-    rate_limit_exempt_paths: Annotated[list[str], NoDecode] = Field(
+    rate_limit_exempt_paths: list[str] = Field(
         default_factory=lambda: [
             "/api/v1/health",
             "/docs",
@@ -44,7 +65,7 @@ class Settings(BaseSettings):
             "/api/v1/openapi.json",
         ]
     )
-    trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    trusted_proxies_raw: str = Field(default="", validation_alias="TRUSTED_PROXIES")
     trusted_proxy_depth: int = 1
     trust_x_forwarded_proto: bool = False
     enable_penetration_detection: bool = True
@@ -63,31 +84,25 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
-    @field_validator(
-        "cors_origins",
-        "allowed_hosts",
-        "rate_limit_exempt_paths",
-        "trusted_proxies",
-        mode="before",
-    )
+    @property
+    def allowed_hosts(self) -> list[str]:
+        return parse_list_setting(self.allowed_hosts_raw)
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return parse_list_setting(self.cors_origins_raw)
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        return parse_list_setting(self.trusted_proxies_raw)
+
+    @field_validator("rate_limit_exempt_paths", mode="before")
     @classmethod
-    def parse_list_settings(cls, value: object) -> object:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return []
-            if stripped.startswith("["):
-                try:
-                    return json.loads(stripped)
-                except json.JSONDecodeError:
-                    inner = stripped.strip("[]")
-                    return [item.strip().strip('"') for item in inner.split(",") if item.strip()]
-            return [item.strip() for item in stripped.split(",") if item.strip()]
-        return value
+    def parse_rate_limit_exempt_paths(cls, value: object) -> object:
+        return parse_list_setting(value)
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
@@ -141,10 +156,10 @@ class Settings(BaseSettings):
         if not self.database_url:
             raise ValueError("DATABASE_URL must be set in production")
         if self.cors_origins == ["*"]:
-            self.cors_origins = []
+            self.cors_origins_raw = ""
         if not self.allowed_hosts or self.allowed_hosts == ["*"]:
             if render_external_hostname:
-                self.allowed_hosts = [render_external_hostname]
+                self.allowed_hosts_raw = render_external_hostname
             else:
                 raise ValueError("ALLOWED_HOSTS must be explicitly set in production")
         if self.rate_limit_requests < 1:
