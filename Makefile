@@ -5,11 +5,15 @@ FRONTEND_DIR := frontend
 UV := uv
 NPM := npm
 COMPOSE_FILE ?= compose.yaml
+PROD_COMPOSE_FILE ?= docker-compose.prod.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
+DOCKER_COMPOSE_PROD := docker compose -f $(PROD_COMPOSE_FILE)
 
 .PHONY: help \
 	backend-sync backend-sync-dev backend-dev backend-gunicorn \
-	backend-docker-build nginx-docker-build docker-build docker-config docker-up docker-rebuild docker-down docker-logs docker-ps caddy-export-local-ca caddy-trust-local-ca caddy-trust-browser-ca \
+	backend-docker-build nginx-docker-build docker-build docker-config docker-up docker-rebuild docker-down docker-logs docker-ps \
+	docker-prod-config docker-prod-up docker-prod-down docker-prod-logs docker-prod-ps docker-prod-deploy \
+	caddy-export-local-ca caddy-trust-local-ca caddy-trust-browser-ca \
 	backend-lint backend-lint-fix backend-format \
 	backend-test backend-test-unit backend-test-integration backend-test-cov \
 	frontend-install frontend-dev frontend-dev-go frontend-android frontend-android-device frontend-ios frontend-web \
@@ -56,6 +60,24 @@ docker-logs: ## Tail logs from the selected Compose file; use COMPOSE_FILE=...
 
 docker-ps: ## Show service status from the selected Compose file; use COMPOSE_FILE=...
 	$(DOCKER_COMPOSE) ps
+
+docker-prod-config: ## Validate production Compose file
+	$(DOCKER_COMPOSE_PROD) --env-file .env.prod.example config
+
+docker-prod-up: ## Start full production stack (requires .env on VM)
+	$(DOCKER_COMPOSE_PROD) up -d --remove-orphans
+
+docker-prod-down: ## Stop production stack
+	$(DOCKER_COMPOSE_PROD) down --remove-orphans
+
+docker-prod-logs: ## Tail production stack logs
+	$(DOCKER_COMPOSE_PROD) logs -f
+
+docker-prod-ps: ## Show production service status
+	$(DOCKER_COMPOSE_PROD) ps
+
+docker-prod-deploy: ## Run production deploy script (pull app images, rollback on failure)
+	bash scripts/deploy-prod.sh
 
 caddy-export-local-ca: ## Copy Caddy's local root CA to caddy/certs/caddy-local-root.crt
 	mkdir -p caddy/certs

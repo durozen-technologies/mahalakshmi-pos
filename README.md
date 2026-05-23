@@ -133,7 +133,68 @@ The Makefile also supports selecting a different compose file:
 make docker-up COMPOSE_FILE=docker-compose.prod.yml
 ```
 
-Note: `docker-compose.prod.yml` is currently a parked commented file, not the active deployment definition.
+## Production deployment (VM + Docker Hub + GitHub Actions)
+
+Production uses [`docker-compose.prod.yml`](docker-compose.prod.yml) with **pre-built images** from Docker Hub (no source build on the VM).
+
+| Service | Image | Restarts on routine deploy |
+|---------|-------|----------------------------|
+| `postgres` | `postgres:17-alpine` | No |
+| `rustfs` | `rustfs/rustfs:latest` | No |
+| `backend` | `DOCKERHUB_USERNAME/mahalakshmi-pos-backend:IMAGE_TAG` | Yes |
+| `caddy` | `DOCKERHUB_USERNAME/mahalakshmi-pos-caddy:IMAGE_TAG` | Yes |
+
+Data bind mounts (preserve existing VM data):
+
+- Postgres: `/home/ubuntu/pos-postgress/data`
+- RustFS: `/home/ubuntu/rustfs/data`
+
+### One-time VM setup
+
+1. Stop old standalone containers: `docker stop rustfs_container postgres_pos || true`
+2. Create deploy directory (e.g. `/home/ubuntu/mahalakshmi-pos`)
+3. Copy [`.env.prod.example`](.env.prod.example) to `.env` and fill values
+4. Bootstrap: `docker compose -f docker-compose.prod.yml up -d`
+
+### CI/CD
+
+- [`.github/workflows/deploy-prod.yml`](.github/workflows/deploy-prod.yml) — on `main`: build/push backend + caddy to Docker Hub, SSH deploy to VM
+
+### GitHub Secrets
+
+| Secret | Used for |
+|--------|----------|
+| `DOCKERHUB_USERNAME` | Image namespace |
+| `DOCKERHUB_TOKEN` | Docker Hub login (build + VM pull) |
+| `DEPLOY_HOST` | VM IP or hostname |
+| `DEPLOY_USER` | SSH user (e.g. `ubuntu`) |
+| `DEPLOY_SSH_KEY` | SSH private key (PEM) |
+| `DEPLOY_PATH` | Deploy dir (e.g. `/home/ubuntu/mahalakshmi-pos`) |
+| `POSTGRES_PASSWORD` | Database |
+| `POSTGRES_DB`, `POSTGRES_USER` | Optional overrides |
+| `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | Object storage |
+| `RUSTFS_SERVER_DOMAINS` | RustFS console domain (e.g. `1.2.3.4:9001`) |
+| `BACKEND_SECRET_KEY` | 32+ char JWT secret (`PRODUCTION=True`) |
+| `BACKEND_ALLOWED_HOSTS` | e.g. `["pos-mlb.duckdns.org"]` |
+| `CADDY_ACME_EMAIL`, `DUCKDNS_API_TOKEN` | TLS |
+| `BACKEND_RUSTFS_BUCKET_NAME` | Optional |
+
+### Logs from VM home directory
+
+After deploy, symlinks are created in the deploy user's home:
+
+| Command | Action |
+|---------|--------|
+| `~/pos-logs` | Follow all container logs |
+| `~/pos-logs backend` | Follow one service |
+| `~/pos-logs export` | Write logs to `~/mahalakshmi-pos/logs/*.log` |
+| `~/pos-logs tail backend` | `tail -f` exported log file |
+| `~/pos-logs deploy` | Tail `logs/deploy.log` (deploy history) |
+
+```bash
+make docker-prod-deploy   # run deploy script locally on VM
+make docker-prod-logs
+```
 
 ## HTTPS
 
