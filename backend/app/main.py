@@ -6,8 +6,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from guard import SecurityConfig
-from guard.middleware import SecurityMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -18,36 +16,6 @@ from app.routers import api_router
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
-
-
-def build_security_config() -> SecurityConfig:
-    return SecurityConfig(
-        enable_redis=False,
-        enable_rate_limiting=settings.enable_rate_limit,
-        rate_limit=settings.rate_limit_requests,
-        rate_limit_window=settings.rate_limit_window_seconds,
-        exclude_paths=settings.rate_limit_exempt_paths,
-        trusted_proxies=settings.trusted_proxies,
-        trusted_proxy_depth=settings.trusted_proxy_depth,
-        trust_x_forwarded_proto=settings.trust_x_forwarded_proto,
-        enable_penetration_detection=settings.enable_penetration_detection,
-        passive_mode=settings.security_passive_mode,
-        log_request_level="INFO" if settings.enable_request_logging else None,
-        log_suspicious_level="WARNING",
-        custom_error_responses={
-            429: "Rate limit exceeded. Please retry after a short delay.",
-        },
-        security_headers={
-            "enabled": True,
-            "frame_options": "DENY",
-            "content_type_options": "nosniff",
-            "xss_protection": "1; mode=block",
-            "referrer_policy": "strict-origin-when-cross-origin",
-            "custom": {
-                "X-RateLimit-Window": str(settings.rate_limit_window_seconds),
-            },
-        },
-    )
 
 
 @asynccontextmanager
@@ -105,7 +73,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SecurityMiddleware, config=build_security_config())
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)

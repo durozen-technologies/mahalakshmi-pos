@@ -269,7 +269,6 @@ dependencies = [
     { name = "asyncpg" },
     { name = "boto3" },
     { name = "fastapi" },
-    { name = "fastapi-guard" },
     { name = "gunicorn" },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic-settings" },
@@ -291,7 +290,6 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "boto3", specifier = ">=1.39.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "fastapi-guard", specifier = ">=7.1.0" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.2.1" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
@@ -619,21 +617,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5d/45/c130091c2dfa061bbfe3150f2a5091ef1adf149f2a8d2ae769ecaf6e99a2/fastapi-0.136.1.tar.gz", hash = "sha256:7af665ad7acfa0a3baf8983d393b6b471b9da10ede59c60045f49fbc89a0fa7f", size = 397448, upload-time = "2026-04-23T16:49:44.046Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/ff/2e4eca3ade2c22fe1dea7043b8ee9dabe47753349eb1b56a202de8af6349/fastapi-0.136.1-py3-none-any.whl", hash = "sha256:a6e9d7eeada96c93a4d69cb03836b44fa34e2854accb7244a1ece36cd4781c3f", size = 117683, upload-time = "2026-04-23T16:49:42.437Z" },
-]
-
-[[package]]
-name = "fastapi-guard"
-version = "7.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "guard-core" },
-    { name = "starlette" },
-    { name = "uvicorn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/b5/2f6853faeb45da9ea237d04f09c799f8c88858564eebeddf0de98812bc33/fastapi_guard-7.1.0.tar.gz", hash = "sha256:bc85e6ee2e4ec3481635b1c8ca4e874ae039747a1e72708bcca4cf6f71896220", size = 19144, upload-time = "2026-05-14T23:32:43.506Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/ab/7269cd725a6880fb68bb9f7a738a29d4bc162ce6745f672d905e1f63e459/fastapi_guard-7.1.0-py3-none-any.whl", hash = "sha256:ec6ba9dc1fbe86bed8b9483e9a688071d6bf3a589b6237dd16af744ff273fcdb", size = 13775, upload-time = "2026-05-14T23:32:42.48Z" },
 ]
 
 [[package]]

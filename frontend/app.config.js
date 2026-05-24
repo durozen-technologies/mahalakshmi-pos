@@ -22,6 +22,7 @@ function readEnvFileValue(key) {
 const expoPublicApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   readEnvFileValue("EXPO_PUBLIC_API_BASE_URL");
+const logoPath = "./assets/Logo.png";
 
 const config = {
   name: "Meat Billing POS",
@@ -30,11 +31,16 @@ const config = {
   orientation: "portrait",
   scheme: "meatbillingpos",
   userInterfaceStyle: "light",
+  icon: logoPath,
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.anonymous.meatbillingpos",
   },
   android: {
+    adaptiveIcon: {
+      foregroundImage: logoPath,
+      backgroundColor: "#ffffff",
+    },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     permissions: [

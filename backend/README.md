@@ -18,7 +18,6 @@ FastAPI backend for the Billing System. It handles:
 - PostgreSQL via `asyncpg`
 - `pwdlib[argon2]` for password hashing
 - `python-jose` for JWT tokens
-- `fastapi-guard` for rate limiting and request security middleware
 - `uv` for dependency and runtime management
 
 ## Project Layout
@@ -64,15 +63,6 @@ PRODUCTION=False
 CORS_ORIGINS=["*"]
 ALLOWED_HOSTS=["*"]
 CORS_ALLOW_CREDENTIALS=False
-TRUSTED_PROXIES=[]
-TRUSTED_PROXY_DEPTH=1
-TRUST_X_FORWARDED_PROTO=False
-ENABLE_REQUEST_LOGGING=True
-ENABLE_RATE_LIMIT=True
-RATE_LIMIT_REQUESTS=120
-RATE_LIMIT_WINDOW_SECONDS=60
-ENABLE_PENETRATION_DETECTION=True
-SECURITY_PASSIVE_MODE=False
 RUSTFS_ENDPOINT_URL=
 RUSTFS_ACCESS_KEY_ID=
 RUSTFS_SECRET_ACCESS_KEY=
@@ -203,17 +193,12 @@ If RustFS is enabled but unavailable, the backend keeps database copies of item 
 The app adds:
 
 - CORS middleware
-- `fastapi-guard` security middleware
 - request ID middleware
 - gzip middleware
 - trusted host middleware
 
 Behavior includes:
 
-- rate limiting with `429` responses
-- request security headers
-- optional penetration-detection logging
-- proxy-aware handling through `TRUSTED_PROXIES`, `TRUSTED_PROXY_DEPTH`, and `TRUST_X_FORWARDED_PROTO`
 - `X-Request-ID` response IDs
 
 Docs behavior:

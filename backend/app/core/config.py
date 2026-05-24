@@ -4,7 +4,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 S3_BUCKET_NAME_PATTERN = re.compile(
@@ -51,25 +51,6 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
-    enable_request_logging: bool = True
-    enable_rate_limit: bool = True
-    rate_limit_requests: int = 120
-    rate_limit_window_seconds: int = 60
-    rate_limit_exempt_paths: list[str] = Field(
-        default_factory=lambda: [
-            "/api/v1/health",
-            "/docs",
-            "/docs/oauth2-redirect",
-            "/redoc",
-            "/openapi.json",
-            "/api/v1/openapi.json",
-        ]
-    )
-    trusted_proxies_raw: str = Field(default="", validation_alias="TRUSTED_PROXIES")
-    trusted_proxy_depth: int = 1
-    trust_x_forwarded_proto: bool = False
-    enable_penetration_detection: bool = True
-    security_passive_mode: bool = False
     rustfs_endpoint_url: str | None = None
     rustfs_access_key_id: str | None = None
     rustfs_secret_access_key: str | None = None
@@ -94,15 +75,6 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return parse_list_setting(self.cors_origins_raw)
-
-    @property
-    def trusted_proxies(self) -> list[str]:
-        return parse_list_setting(self.trusted_proxies_raw)
-
-    @field_validator("rate_limit_exempt_paths", mode="before")
-    @classmethod
-    def parse_rate_limit_exempt_paths(cls, value: object) -> object:
-        return parse_list_setting(value)
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
@@ -162,12 +134,6 @@ class Settings(BaseSettings):
                 self.allowed_hosts_raw = render_external_hostname
             else:
                 raise ValueError("ALLOWED_HOSTS must be explicitly set in production")
-        if self.rate_limit_requests < 1:
-            raise ValueError("RATE_LIMIT_REQUESTS must be greater than 0")
-        if self.rate_limit_window_seconds < 1:
-            raise ValueError("RATE_LIMIT_WINDOW_SECONDS must be greater than 0")
-        if self.trusted_proxy_depth < 1:
-            raise ValueError("TRUSTED_PROXY_DEPTH must be greater than 0")
 
         return self
 
