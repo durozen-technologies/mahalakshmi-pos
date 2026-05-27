@@ -4,6 +4,7 @@ Mobile-first meat billing system with:
 
 - a FastAPI backend for auth, shops, pricing, billing, receipts, audit logs, and item images
 - an Expo React Native frontend for admin and shop operators
+- a FastAPI-based WhatsApp sales bot that reuses backend database models and schemas
 - Android Bluetooth and USB ESC/POS receipt printing
 - a Caddy reverse proxy with automatic HTTPS
 
@@ -11,6 +12,7 @@ Mobile-first meat billing system with:
 
 - `backend/` - FastAPI API, database access, RustFS integration
 - `frontend/` - Expo React Native app
+- `WhatsApp Bot/` - FastAPI WhatsApp bot, using shared `backend.app` models and schemas
 - `caddy/` - reverse proxy, rate limiting, DuckDNS DNS-challenge TLS
 - `rustfs/` - optional object storage container helpers
 - `duckdns/` - local DuckDNS update script used for cron-based IP refresh
@@ -38,6 +40,7 @@ Mobile-first meat billing system with:
 .
 ├── backend/
 ├── frontend/
+├── WhatsApp Bot/
 ├── caddy/
 ├── rustfs/
 ├── duckdns/
@@ -47,6 +50,17 @@ Mobile-first meat billing system with:
 ├── scripts/deploy-prod.sh
 └── README.md
 ```
+
+## Shared Backend Domain Package
+
+The backend package is also the shared source of truth for the WhatsApp bot's domain layer.
+
+- SQLAlchemy models live in [`backend/app/models/`](backend/app/models/)
+- Pydantic schemas live in [`backend/app/schemas/`](backend/app/schemas/)
+- WhatsApp-specific shared types live in [`backend/app/models/whatsapp.py`](backend/app/models/whatsapp.py) and [`backend/app/schemas/whatsapp.py`](backend/app/schemas/whatsapp.py)
+- [`WhatsApp Bot/app/models.py`](WhatsApp%20Bot/app/models.py) and [`WhatsApp Bot/app/schemas.py`](WhatsApp%20Bot/app/schemas.py) are compatibility shims that re-export from `backend.app`
+
+When adding or changing data structures used by both services, update `backend.app` first and let the bot import from there instead of creating duplicate local definitions.
 
 ## Prerequisites
 
@@ -98,6 +112,16 @@ If the backend runs on the same machine and the frontend is on a physical Androi
 ```bash
 adb reverse tcp:8000 tcp:8000
 ```
+
+## Local WhatsApp Bot
+
+```bash
+cd "WhatsApp Bot"
+uv sync
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8001
+```
+
+The bot keeps its routers and services in `WhatsApp Bot/app/`, but shared database models and reusable schemas come from `backend.app`.
 
 ## Docker Stack
 

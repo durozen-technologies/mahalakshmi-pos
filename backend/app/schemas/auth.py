@@ -3,8 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
-from app.models import UserRole
-from app.schemas.common import ORMModel
+from ..models import UserRole
+from .common import ORMModel
 
 
 class LoginRequest(BaseModel):

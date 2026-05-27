@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from app.core.config import get_settings
-from app.db.default_items import DEFAULT_ITEM_DEFINITIONS, DEFAULT_ITEM_IMAGE_PATHS
+from ..core.config import get_settings
+from .default_items import DEFAULT_ITEM_DEFINITIONS, DEFAULT_ITEM_IMAGE_PATHS
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def initialize_database() -> None:
-    import app.models  # noqa: F401
+    from .. import models as _models  # noqa: F401
 
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -170,7 +170,7 @@ async def initialize_database() -> None:
 
 
 async def _upsert_default_items(db: AsyncSession):
-    from app.models import BaseUnit, Item, UnitType
+    from ..models import BaseUnit, Item, UnitType
 
     existing_items_result = await db.scalars(select(Item))
     existing_items = {item.name: item for item in existing_items_result.all()}
@@ -220,7 +220,7 @@ async def _seed_default_item_images_for_items(
     *,
     force: bool = False,
 ) -> int:
-    from app.db.storage import save_item_image_content
+    from .storage import save_item_image_content
 
     uploaded_count = 0
     for item_definition in DEFAULT_ITEM_DEFINITIONS:
@@ -260,7 +260,7 @@ async def seed_default_item_images(
     *,
     force: bool = False,
 ) -> int:
-    from app.models import Item
+    from ..models import Item
 
     existing_items_result = await db.scalars(
         select(Item).where(Item.name.in_(tuple(DEFAULT_ITEM_IMAGE_PATHS)))

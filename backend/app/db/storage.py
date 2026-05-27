@@ -17,9 +17,9 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
-from app.models import Item
-from app.schemas.pricing import ItemImageRead
+from ..core.config import get_settings
+from ..models import Item
+from ..schemas.pricing import ItemImageRead
 
 settings = get_settings()
 logger = logging.getLogger(__name__)

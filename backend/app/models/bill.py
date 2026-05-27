@@ -6,10 +6,10 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import ForeignKey, Index, Numeric, String, desc
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.ids import UUID_SQL_TYPE, uuid7
-from app.db.database import Base
-from app.models.base import BaseModelMixin
-from app.models.enums import BaseUnit
+from ..core.ids import UUID_SQL_TYPE, uuid7
+from ..db.database import Base
+from .base import BaseModelMixin
+from .enums import BaseUnit
 
 
 class BillStatus(str, Enum):

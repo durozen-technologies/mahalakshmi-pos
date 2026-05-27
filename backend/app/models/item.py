@@ -3,9 +3,9 @@ from uuid import UUID
 from sqlalchemy import Boolean, Enum, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.ids import UUID_SQL_TYPE, uuid7
-from app.db.database import Base
-from app.models.enums import BaseUnit, UnitType
+from ..core.ids import UUID_SQL_TYPE, uuid7
+from ..db.database import Base
+from .enums import BaseUnit, UnitType
 
 
 class Item(Base):

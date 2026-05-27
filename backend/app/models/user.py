@@ -3,10 +3,10 @@ from uuid import UUID
 from sqlalchemy import Boolean, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.ids import UUID_SQL_TYPE, uuid7
-from app.db.database import Base
-from app.models.base import BaseModelMixin
-from app.models.enums import UserRole
+from ..core.ids import UUID_SQL_TYPE, uuid7
+from ..db.database import Base
+from .base import BaseModelMixin
+from .enums import UserRole
 
 
 class User(Base, BaseModelMixin):

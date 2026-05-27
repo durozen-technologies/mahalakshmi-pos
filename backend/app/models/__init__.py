@@ -1,13 +1,19 @@
-from app.db.database import Base
-from app.models.base import BaseModelMixin
-from app.models.bill import Bill, BillItem, BillStatus, MonthlyBillSequence
-from app.models.daily_price import DailyPrice
-from app.models.enums import BaseUnit, UnitType, UserRole
-from app.models.item import Item
-from app.models.payment import Payment
-from app.models.receipt import Receipt
-from app.models.shop import Shop
-from app.models.user import User
+from ..db.database import Base
+from .base import BaseModelMixin
+from .bill import Bill, BillItem, BillStatus, MonthlyBillSequence
+from .daily_price import DailyPrice
+from .enums import BaseUnit, UnitType, UserRole
+from .item import Item
+from .payment import Payment
+from .receipt import Receipt
+from .shop import Shop
+from .user import User
+from .whatsapp import (
+    ProcessedWhatsAppMessage,
+    WhatsAppConversation,
+    WhatsAppUser,
+    WhatsAppUserShop,
+)
 
 __all__ = [
     "Base",
@@ -25,4 +31,8 @@ __all__ = [
     "UnitType",
     "User",
     "UserRole",
+    "ProcessedWhatsAppMessage",
+    "WhatsAppConversation",
+    "WhatsAppUser",
+    "WhatsAppUserShop",
 ]

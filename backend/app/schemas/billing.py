@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.enums import BaseUnit
-from app.schemas.common import ORMModel
+from ..models.enums import BaseUnit
+from .common import ORMModel
 
 
 class BillItemInput(BaseModel):

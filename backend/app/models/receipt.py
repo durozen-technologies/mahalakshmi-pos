@@ -4,8 +4,8 @@ from uuid import UUID
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.ids import UUID_SQL_TYPE, uuid7
-from app.db.database import Base
+from ..core.ids import UUID_SQL_TYPE, uuid7
+from ..db.database import Base
 
 
 class Receipt(Base):

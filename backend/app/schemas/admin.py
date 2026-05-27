@@ -5,8 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models import BaseUnit, UnitType
-from app.schemas.common import ORMModel
+from ..models import BaseUnit, UnitType
+from .common import ORMModel
 
 AnalyticsPeriod = Literal["date", "month", "week", "year"]
 

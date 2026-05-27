@@ -1,4 +1,4 @@
-from app.schemas.admin import (
+from .admin import (
     AdminBillSummary,
     AnalyticsPeriod,
     ItemCreate,
@@ -11,8 +11,8 @@ from app.schemas.admin import (
     ShopSalesSummary,
     ShopStatusUpdate,
 )
-from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, TokenPayload, UserSession
-from app.schemas.billing import (
+from .auth import LoginRequest, LoginResponse, RegisterRequest, TokenPayload, UserSession
+from .billing import (
     BillCheckoutRequest,
     BillItemInput,
     BillRead,
@@ -20,13 +20,25 @@ from app.schemas.billing import (
     PaymentRead,
     ReceiptRead,
 )
-from app.schemas.pricing import (
+from .pricing import (
     DailyPriceCreate,
     DailyPriceEntry,
     DailyPriceRead,
     ItemImageRead,
     ItemPriceRead,
     ShopBootstrapResponse,
+)
+from .whatsapp import (
+    BotStage,
+    BranchRead,
+    ConversationState,
+    HealthResponse,
+    IncomingMessageKind,
+    IncomingUserMessage,
+    SalesSummaryItem,
+    SalesSummaryResponse,
+    WebhookProcessResponse,
+    WhatsAppWebhookPayload,
 )
 
 __all__ = [
@@ -58,4 +70,14 @@ __all__ = [
     "UserSession",
     "ItemSalesSummary",
     "ItemUpdate",
+    "BotStage",
+    "BranchRead",
+    "ConversationState",
+    "HealthResponse",
+    "IncomingMessageKind",
+    "IncomingUserMessage",
+    "SalesSummaryItem",
+    "SalesSummaryResponse",
+    "WebhookProcessResponse",
+    "WhatsAppWebhookPayload",
 ]

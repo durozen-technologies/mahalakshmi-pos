@@ -56,6 +56,16 @@ backend/*.log
 backend/*.pid
 backend/*.pid.lock
 
+# WhatsApp bot
+WhatsApp Bot/.env
+WhatsApp Bot/.env.*
+!WhatsApp Bot/.env.example
+WhatsApp Bot/.agents
+WhatsApp Bot/.agents/
+WhatsApp Bot/.venv/
+WhatsApp Bot/__pycache__/
+WhatsApp Bot/.ruff_cache/
+
 # Node/Expo frontend
 frontend/.env
 frontend/.env.*
