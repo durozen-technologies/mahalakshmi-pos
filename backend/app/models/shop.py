@@ -22,5 +22,9 @@ class Shop(Base, BaseModelMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     owner = relationship("User", back_populates="shop")
+    items = relationship("Item", back_populates="shop")
     daily_prices = relationship("DailyPrice", back_populates="shop")
     bills = relationship("Bill", back_populates="shop")
+    item_allocations = relationship(
+        "ShopItemAllocation", back_populates="shop", cascade="all, delete-orphan"
+    )

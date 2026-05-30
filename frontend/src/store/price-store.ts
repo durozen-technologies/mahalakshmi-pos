@@ -15,5 +15,10 @@ export const usePriceStore = create<PriceState>((set) => ({
   todayPrices: [],
   setBootstrap: (bootstrap) => set({ bootstrap }),
   setTodayPrices: (todayPrices) => set({ todayPrices }),
-  clear: () => set({ bootstrap: null, todayPrices: [] }),
+  clear: () =>
+    set((state) =>
+      state.bootstrap === null && state.todayPrices.length === 0
+        ? state
+        : { bootstrap: null, todayPrices: [] },
+    ),
 }));

@@ -33,9 +33,7 @@ class WhatsAppUser(Base):
 
 class WhatsAppUserShop(Base):
     __tablename__ = "whatsapp_user_shops"
-    __table_args__ = (
-        UniqueConstraint("user_id", "shop_id", name="uq_whatsapp_user_shop"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "shop_id", name="uq_whatsapp_user_shop"),)
 
     id: Mapped[UUID] = mapped_column(UUID_SQL_TYPE, primary_key=True, index=True, default=uuid7)
     user_id: Mapped[UUID] = mapped_column(

@@ -11,7 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import get_settings
 from app.core.middleware import RequestIdMiddleware
-from app.db.database import initialize_database
+from app.db.database import run_database_startup_tasks
 from app.routers import api_router
 
 settings = get_settings()
@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     app.state.database_error = None
 
     try:
-        await initialize_database()
+        await run_database_startup_tasks()
         app.state.database_ready = True
     except Exception as exc:
         app.state.database_error = str(exc)

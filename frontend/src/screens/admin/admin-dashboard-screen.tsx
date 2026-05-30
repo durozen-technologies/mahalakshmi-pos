@@ -23,13 +23,13 @@ import { z } from "zod";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useReceiptImagePrintJob } from "@/hooks/use-receipt-image-print-job";
+import type { AdminDashboardScreenProps } from "@/navigation/types";
 import { useAuthStore } from "@/store/auth-store";
 import { useAdminThemeStore } from "@/store/admin-theme-store";
 import { useCartStore } from "@/store/cart-store";
 import { usePrinterStore } from "@/store/printer-store";
 import { usePriceStore } from "@/store/price-store";
 import type { AnalyticsPeriod, BillRead, ShopRead, UUID } from "@/types/api";
-import { isPositiveNumber, toMoneyString } from "@/utils/decimal";
 
 import { adminShadow, getAdminPalette } from "./admin-dashboard-theme";
 import {
@@ -50,7 +50,6 @@ import {
 } from "./components/admin-dashboard-primitives";
 import {
   BillPreviewSheet,
-  PriceUpdateSheet,
   ShopEditorSheet,
 } from "./components/admin-dashboard-sheets";
 import {
@@ -58,7 +57,6 @@ import {
 } from "./components/admin-dashboard-settings-tab";
 import {
   useAdminDashboardAnalytics,
-  useAdminPriceEditorModel,
 } from "./hooks/use-admin-dashboard-view-model";
 import { useAdminDashboardData } from "./hooks/use-admin-dashboard-data";
 import {
@@ -89,7 +87,6 @@ const editShopSchema = z.object({
 
 type CreateShopFormValues = z.infer<typeof createShopSchema>;
 type EditShopFormValues = z.infer<typeof editShopSchema>;
-
 const PERIOD_OPTIONS: { key: AnalyticsPeriod; label: string }[] = [
   { key: "date", label: "Date" },
   { key: "month", label: "Month" },
@@ -103,7 +100,7 @@ function isNewArchitectureEnabled() {
   return Boolean((globalThis as typeof globalThis & { nativeFabricUIManager?: unknown }).nativeFabricUIManager);
 }
 
-export function AdminDashboardScreen() {
+export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const systemColorScheme = useColorScheme();
   const { width: windowWidth } = useWindowDimensions();
@@ -138,14 +135,6 @@ export function AdminDashboardScreen() {
   const [updatingShop, setUpdatingShop] = useState(false);
   const [deletingShopId, setDeletingShopId] = useState<UUID | null>(null);
   const [statusUpdatingShopId, setStatusUpdatingShopId] = useState<UUID | null>(null);
-  const [priceSheetOpen, setPriceSheetOpen] = useState(false);
-  const [savingPrice, setSavingPrice] = useState(false);
-  const [selectedPriceItemId, setSelectedPriceItemId] = useState<UUID | null>(null);
-  const [priceSelectedShopId, setPriceSelectedShopId] = useState<UUID | null>(null);
-  const [priceShopPickerOpen, setPriceShopPickerOpen] = useState(false);
-  const [draftPrices, setDraftPrices] = useState<Record<UUID, string>>({});
-  const [itemPickerOpen, setItemPickerOpen] = useState(false);
-  const [priceError, setPriceError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
   const [billPreviewOpen, setBillPreviewOpen] = useState(false);
   const [billPreviewLoading, setBillPreviewLoading] = useState(false);
@@ -179,14 +168,9 @@ export function AdminDashboardScreen() {
     loadBillDetail,
     loadDashboard,
     loadMoreBills,
-    loadShopPriceBootstrap,
     loading,
-    priceBootstrap,
-    priceLoading,
     refreshing,
-    saveShopPriceBook,
     selectedShopName,
-    setPriceBootstrap,
     shops,
     deleteBranch,
     toggleBranchStatus,
@@ -249,34 +233,6 @@ export function AdminDashboardScreen() {
       showToast("error", dashboardError);
     }
   }, [dashboardError, shops.length, showToast]);
-
-  useEffect(() => {
-    if (!priceBootstrap) {
-      return;
-    }
-
-    const nextItem =
-      priceBootstrap.items.find((item) => item.item_id === selectedPriceItemId) ?? priceBootstrap.items[0];
-    if (!nextItem) {
-      return;
-    }
-
-    setSelectedPriceItemId(nextItem.item_id);
-  }, [priceBootstrap, selectedPriceItemId]);
-
-  const {
-    currentPriceItem,
-    draftPrice,
-    priceHelperText,
-    resolvePriceDraft,
-    saveDisabled,
-    unresolvedPriceItems,
-  } = useAdminPriceEditorModel({
-    priceBootstrap,
-    selectedPriceItemId,
-    draftPrices,
-    selectedPriceShopId: priceSelectedShopId,
-  });
 
   const {
     analyticsReferenceLabel,
@@ -490,38 +446,6 @@ export function AdminDashboardScreen() {
     [shops, showToast, toggleBranchStatus],
   );
 
-  const openPriceSheet = useCallback(async () => {
-    setPriceSheetOpen(true);
-    setDraftPrices({});
-    setPriceError(null);
-    setPriceBootstrap(null);
-
-    if (selectedShopId !== null) {
-      setPriceSelectedShopId(selectedShopId);
-      try {
-        const bootstrap = await loadShopPriceBootstrap(selectedShopId);
-        const firstItem =
-          bootstrap?.items.find((item) => !isPositiveNumber(item.current_price ?? "")) ?? bootstrap?.items[0];
-        if (firstItem) {
-          setSelectedPriceItemId(firstItem.item_id);
-        }
-      } catch (error) {
-        showToast("error", error instanceof Error ? error.message : "Unable to load price controls.");
-      }
-    } else {
-      setPriceSelectedShopId(null);
-    }
-  }, [loadShopPriceBootstrap, selectedShopId, setPriceBootstrap, showToast]);
-
-  function closePriceSheet() {
-    setPriceSheetOpen(false);
-    setItemPickerOpen(false);
-    setPriceShopPickerOpen(false);
-    setPriceSelectedShopId(null);
-    setDraftPrices({});
-    setPriceError(null);
-  }
-
   const openBillPreview = useCallback(async (billId: UUID) => {
     setBillPreviewOpen(true);
     setBillPreviewLoading(true);
@@ -542,103 +466,6 @@ export function AdminDashboardScreen() {
     setBillPreviewOpen(false);
     setBillPreviewLoading(false);
     setSelectedBillPreview(null);
-  }
-
-  function handleSelectPriceItem(itemId: UUID) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setSelectedPriceItemId(itemId);
-    setItemPickerOpen(false);
-    setPriceError(null);
-  }
-
-  function handleChangeDraftPrice(value: string) {
-    if (!selectedPriceItemId) {
-      return;
-    }
-
-    setDraftPrices((current) => ({
-      ...current,
-      [selectedPriceItemId]: value.replace(/[^\d.]/g, ""),
-    }));
-    setPriceError(null);
-  }
-
-  async function handleSavePrice() {
-    if (!priceBootstrap || !selectedPriceItemId || !currentPriceItem || !priceSelectedShopId) {
-      return;
-    }
-
-    const normalizedValue = draftPrice.trim();
-    if (!isPositiveNumber(normalizedValue)) {
-      setPriceError("Enter a valid numeric price before saving.");
-      triggerHaptic(Haptics.ImpactFeedbackStyle.Heavy);
-      return;
-    }
-
-    if (unresolvedPriceItems.length > 0) {
-      const itemNames = unresolvedPriceItems.map((item) => item.item_name);
-      const preview = itemNames.slice(0, 3).join(", ");
-      const suffix = itemNames.length > 3 ? `, +${itemNames.length - 3} more` : "";
-      setPriceError(`Add valid prices for every active item before saving. Remaining: ${preview}${suffix}.`);
-      triggerHaptic(Haptics.ImpactFeedbackStyle.Heavy);
-      return;
-    }
-
-    const entries: { item_id: UUID; price_per_unit: string }[] = [];
-    for (const item of priceBootstrap.items) {
-      const rawValue = resolvePriceDraft(item.item_id, item.current_price);
-      entries.push({
-        item_id: item.item_id,
-        price_per_unit: toMoneyString(rawValue),
-      });
-    }
-
-    const previousBootstrap = priceBootstrap;
-    setSavingPrice(true);
-    setPriceError(null);
-    setPriceBootstrap({
-      ...priceBootstrap,
-      items: priceBootstrap.items.map((item) => ({
-        ...item,
-        current_price: toMoneyString(resolvePriceDraft(item.item_id, item.current_price)),
-      })),
-    });
-    setDraftPrices({});
-
-    const shopName = shops.find((shop) => shop.id === priceSelectedShopId)?.name ?? "shop";
-    try {
-      await saveShopPriceBook(priceSelectedShopId, {
-        entries,
-      });
-      closePriceSheet();
-      showToast("success", `Prices saved for ${shopName}.`);
-    } catch (error) {
-      setPriceBootstrap(previousBootstrap);
-      setDraftPrices(Object.fromEntries(entries.map((entry) => [entry.item_id, entry.price_per_unit])));
-      setPriceError(error instanceof Error ? error.message : "Unable to save price update.");
-      showToast("error", error instanceof Error ? error.message : "Unable to save price update.");
-    } finally {
-      setSavingPrice(false);
-    }
-  }
-
-  async function handleSelectPriceShop(shopId: UUID) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setPriceSelectedShopId(shopId);
-    setPriceShopPickerOpen(false);
-    setDraftPrices({});
-    setSelectedPriceItemId(null);
-    setPriceError(null);
-    try {
-      const bootstrap = await loadShopPriceBootstrap(shopId);
-      const firstItem =
-        bootstrap?.items.find((item) => !isPositiveNumber(item.current_price ?? "")) ?? bootstrap?.items[0];
-      if (firstItem) {
-        setSelectedPriceItemId(firstItem.item_id);
-      }
-    } catch (error) {
-      showToast("error", error instanceof Error ? error.message : "Unable to load prices for this shop.");
-    }
   }
 
   const handleQuickRefresh = useCallback(() => {
@@ -675,7 +502,7 @@ export function AdminDashboardScreen() {
     } finally {
       setPrintingAll(false);
     }
-  }, [loadBillDetail, preferredPrinter, printingAll, visibleBills]);
+  }, [loadBillDetail, preferredPrinter, printingAll, startReceiptImagePrintJob, visibleBills]);
 
   const handleLoadMoreBills = useCallback(() => {
     void loadMoreBills().catch((error) => {
@@ -702,13 +529,18 @@ export function AdminDashboardScreen() {
     void handleToggleShop(shopId, isActive);
   }, [handleToggleShop]);
 
-  const handleOpenPriceSheet = useCallback(() => {
-    void openPriceSheet();
-  }, [openPriceSheet]);
+  const handleOpenPriceNavigation = useCallback(() => {
+    const targetShopId = selectedShopId ?? shops[0]?.id ?? null;
+    navigation.navigate("AdminItemPrices", { shopId: targetShopId ?? undefined });
+  }, [navigation, selectedShopId, shops]);
 
   const handleSelectNav = useCallback((key: string) => {
+    if (key === "items") {
+      navigation.navigate("AdminItemsCatalogue");
+      return;
+    }
     setActiveNav(key as AdminNavTab);
-  }, []);
+  }, [navigation]);
 
   if (loading && shops.length === 0) {
     return <DashboardSkeleton palette={palette} />;
@@ -959,8 +791,8 @@ export function AdminDashboardScreen() {
       {activeNav === "dashboard" || activeNav === "settings" ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Open update price sheet"
-          onPress={handleOpenPriceSheet}
+          accessibilityLabel="Navigate to price setup"
+          onPress={handleOpenPriceNavigation}
           style={[
             styles.fab,
             adminShadow(palette.shadow, 0.12, 14, 20),
@@ -968,42 +800,9 @@ export function AdminDashboardScreen() {
           ]}
         >
           <MaterialCommunityIcons name="cash-edit" size={18} color="#FFFFFF" />
-          <Text style={styles.fabLabel}>Update Price</Text>
+          <Text style={styles.fabLabel}>Price Setup</Text>
         </Pressable>
       ) : null}
-
-      <PriceUpdateSheet
-        visible={priceSheetOpen}
-        onClose={closePriceSheet}
-        palette={palette}
-        bottomInset={insets.bottom}
-        priceLoading={priceLoading}
-        priceBootstrap={priceBootstrap}
-        currentPriceItem={currentPriceItem}
-        selectedPriceItemId={selectedPriceItemId}
-        resolveItemPrice={resolvePriceDraft}
-        onSelectItem={handleSelectPriceItem}
-        draftPrice={draftPrice}
-        onChangeDraftPrice={handleChangeDraftPrice}
-        priceError={priceError}
-        priceHelperText={priceHelperText}
-        saveDisabled={saveDisabled}
-        itemPickerOpen={itemPickerOpen}
-        onToggleItemPicker={() => {
-          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-          setItemPickerOpen((current) => !current);
-        }}
-        savingPrice={savingPrice}
-        onSave={() => void handleSavePrice()}
-        shops={shops}
-        selectedPriceShopId={priceSelectedShopId}
-        onSelectShop={handleSelectPriceShop}
-        shopPickerOpen={priceShopPickerOpen}
-        onToggleShopPicker={() => {
-          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-          setPriceShopPickerOpen((current) => !current);
-        }}
-      />
 
       <BillPreviewSheet
         visible={billPreviewOpen}

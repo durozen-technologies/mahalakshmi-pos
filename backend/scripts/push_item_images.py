@@ -13,7 +13,7 @@ def log(message: str) -> None:
 
 
 async def main() -> None:
-    from app.db.database import initialize_database
+    from app.db.database import run_database_startup_tasks
     from app.db.storage import settings
 
     log("Starting item image push...")
@@ -24,9 +24,9 @@ async def main() -> None:
         f"connect={settings.rustfs_connect_timeout_seconds}s, "
         f"read={settings.rustfs_read_timeout_seconds}s"
     )
-    log("Initializing database...")
-    await initialize_database()
-    log("Database initialized and default item images synced.")
+    log("Running database startup tasks...")
+    await run_database_startup_tasks()
+    log("Default item images synced.")
 
 
 if __name__ == "__main__":

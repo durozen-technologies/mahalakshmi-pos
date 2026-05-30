@@ -15,20 +15,6 @@ export function Screen({ children, refreshing = false, onRefresh, topSlot, scrol
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-cream">
-      <View className="absolute inset-0">
-        <View
-          className="absolute -top-16 -right-10 h-72 w-72 rounded-full bg-accentSoft"
-          style={{ opacity: 0.55 }}
-        />
-        <View
-          className="absolute top-24 left-[-58px] h-44 w-44 rounded-full bg-white"
-          style={{ opacity: 0.65 }}
-        />
-        <View
-          className="absolute bottom-16 right-[-56px] h-52 w-52 rounded-full bg-surface"
-          style={{ opacity: 0.9 }}
-        />
-      </View>
       {topSlot ? <View className="px-4 pb-2">{topSlot}</View> : null}
       {scroll ? (
         <ScrollView

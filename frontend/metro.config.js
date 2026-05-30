@@ -5,6 +5,14 @@ const { withNativeWind } = require("nativewind/metro");
 const projectRoot = __dirname;
 const config = getDefaultConfig(projectRoot);
 const rootNodeModules = path.join(projectRoot, "node_modules");
+const tamaguiLegacyColorsCjs = path.join(
+  rootNodeModules,
+  "@tamagui",
+  "colors",
+  "dist",
+  "cjs",
+  "legacy.native.js",
+);
 
 function escapeForRegExp(value) {
   return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
@@ -47,5 +55,16 @@ config.resolver.blockList = [
     : [config.resolver.blockList].filter(Boolean)),
   ...blockedNestedDependencyPatterns,
 ];
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === "@tamagui/colors/legacy") {
+    return {
+      filePath: tamaguiLegacyColorsCjs,
+      type: "sourceFile",
+    };
+  }
+
+  return context.resolveRequest(context, moduleName, platform);
+};
 
 module.exports = withNativeWind(config, { input: "./global.css" });

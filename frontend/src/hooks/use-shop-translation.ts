@@ -1,3 +1,5 @@
+import { useCallback } from "react";
+
 import translations from "@/locales/shop-translations.json";
 import { ShopLanguage, useShopLanguageStore } from "@/store/shop-language-store";
 
@@ -38,18 +40,42 @@ export function translateShopItemName(language: ShopLanguage, itemName: string) 
   return dictionary[translationKey] ?? fallbackDictionary[translationKey] ?? itemName;
 }
 
+export function getLocalizedItemName(
+  language: ShopLanguage,
+  itemName: string,
+  itemTamilName?: string | null,
+) {
+  if (language === "ta") {
+    const tamilName = itemTamilName?.trim();
+    if (tamilName) {
+      return tamilName;
+    }
+  }
+
+  return language === "en" ? itemName : translateShopItemName(language, itemName);
+}
+
 export function useShopTranslation() {
   const language = useShopLanguageStore((state) => state.language);
   const setLanguage = useShopLanguageStore((state) => state.setLanguage);
   const toggleLanguage = useShopLanguageStore((state) => state.toggleLanguage);
   const isTamil = language === "ta";
+  const t = useCallback(
+    (key: ShopTranslationKey, params?: TranslationParams) => translateShopText(language, key, params),
+    [language],
+  );
+  const translateItemName = useCallback(
+    (itemName: string, itemTamilName?: string | null) =>
+      getLocalizedItemName(language, itemName, itemTamilName),
+    [language],
+  );
 
   return {
     language,
     isTamil,
     setLanguage,
     toggleLanguage,
-    t: (key: ShopTranslationKey, params?: TranslationParams) => translateShopText(language, key, params),
-    translateItemName: (itemName: string) => translateShopItemName(language, itemName),
+    t,
+    translateItemName,
   };
 }

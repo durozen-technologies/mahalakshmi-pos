@@ -4,6 +4,17 @@ export type UnitType = "weight" | "count";
 export type AnalyticsPeriod = "date" | "month" | "week" | "year";
 export type UUID = string;
 
+export enum PriceStatus {
+  Missing = "missing",
+  Stale = "stale",
+  Current = "current",
+}
+
+export enum ItemScope {
+  Global = "global",
+  Shop = "shop",
+}
+
 export interface UserSession {
   id: UUID;
   username: string;
@@ -36,10 +47,104 @@ export interface LoginResponse {
 export interface ItemPriceRead {
   item_id: UUID;
   item_name: string;
+  item_tamil_name?: string | null;
   unit_type: UnitType;
   base_unit: BaseUnit;
   current_price?: string | null;
+  latest_price_date?: string | null;
+  price_status?: PriceStatus;
+  sort_order?: number;
+  category_id?: UUID | null;
+  category?: string | null;
   image_path?: string | null;
+}
+
+export interface ItemCategoryRead {
+  id: UUID;
+  name: string;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface ItemCategoryCreate {
+  name: string;
+}
+
+export interface ItemRead {
+  id: UUID;
+  shop_id?: UUID | null;
+  name: string;
+  tamil_name?: string | null;
+  unit_type: UnitType;
+  base_unit: BaseUnit;
+  is_active: boolean;
+  sort_order: number;
+  category_id?: UUID | null;
+  category?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  custom_attributes: Record<string, string | number | boolean | null>;
+  image_path?: string | null;
+  image_content_type?: string | null;
+}
+
+export interface ItemMetadataUpdate {
+  name?: string;
+  tamil_name?: string;
+  unit_type?: UnitType;
+  base_unit?: BaseUnit;
+  is_active?: boolean;
+  sort_order?: number;
+  category_id?: UUID | null;
+  category?: string | null;
+  custom_attributes?: Record<string, string | number | boolean | null>;
+}
+
+export interface ShopItemAllocationUpdate {
+  display_name?: string | null;
+  tamil_name?: string | null;
+  is_active?: boolean;
+  sort_order?: number;
+  custom_attributes?: Record<string, string | number | boolean | null>;
+}
+
+export interface ShopItemRead extends ItemRead {
+  current_price?: string | null;
+  price_date?: string | null;
+  latest_price_date?: string | null;
+  price_status: PriceStatus;
+  scope: ItemScope;
+  allocated: boolean;
+  available_for_billing: boolean;
+  can_delete: boolean;
+  can_deallocate: boolean;
+  bill_count: number;
+  price_count: number;
+  allocated_shop_count: number;
+}
+
+export interface ShopItemCounts {
+  all: number;
+  allocated: number;
+  available: number;
+  catalogue: number;
+  shop: number;
+  priced: number;
+  needs_price: number;
+  stale_price: number;
+  paused: number;
+}
+
+export interface ShopItemPage {
+  items: ShopItemRead[];
+  limit: number;
+  total_count: number;
+  counts: ShopItemCounts;
+  has_more: boolean;
+  next_cursor_group?: number | null;
+  next_cursor_sort_order?: number | null;
+  next_cursor_name?: string | null;
+  next_cursor_id?: UUID | null;
 }
 
 export interface ShopBootstrapResponse {
@@ -58,6 +163,10 @@ export interface DailyPriceEntry {
 
 export interface DailyPriceCreate {
   entries: DailyPriceEntry[];
+}
+
+export interface DailyPriceUpdate {
+  price_per_unit: string;
 }
 
 export interface DailyPriceRead {
@@ -84,9 +193,16 @@ export interface BillCheckoutRequest {
   payment: CheckoutPaymentInput;
 }
 
+export interface BillCheckoutCommitRequest extends BillCheckoutRequest {
+  checkout_token: string;
+}
+
 export interface BillLineRead {
   item_id: UUID;
   item_name: string;
+  item_tamil_name?: string | null;
+  item_unit_type?: UnitType | null;
+  item_base_unit?: BaseUnit | null;
   quantity: string;
   unit: BaseUnit;
   price_per_unit: string;
@@ -119,6 +235,10 @@ export interface BillRead {
   items: BillLineRead[];
   payment: PaymentRead;
   receipt: ReceiptRead;
+}
+
+export interface BillCheckoutPreviewRead extends BillRead {
+  checkout_token: string;
 }
 
 export interface ShopCreate {
@@ -161,6 +281,7 @@ export interface PaymentSplitSummary {
 export interface ItemSalesSummary {
   item_id: UUID;
   item_name: string;
+  item_tamil_name?: string | null;
   base_unit: BaseUnit;
   quantity_sold: string;
   total_amount: string;

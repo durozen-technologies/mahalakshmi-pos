@@ -1,8 +1,10 @@
 from app.db.storage import (
     build_item_image_path,
+    delete_item_image,
     delete_item_image_storage,
     ensure_bucket_exists,
     get_item_image_response_payload,
+    migrate_item_image_data_to_rustfs,
     save_item_image_content,
     save_item_image_upload,
     settings,
@@ -11,9 +13,11 @@ from app.db.storage import (
 
 __all__ = [
     "build_item_image_path",
+    "delete_item_image",
     "delete_item_image_storage",
     "ensure_bucket_exists",
     "get_item_image_response_payload",
+    "migrate_item_image_data_to_rustfs",
     "save_item_image_content",
     "save_item_image_upload",
     "settings",

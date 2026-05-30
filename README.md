@@ -425,11 +425,11 @@ EXPO_PUBLIC_API_BASE_URL=https://<CADDY_PUBLIC_HOST>
 
 ### Database migrations
 
-Schema updates are **code-driven** (no Alembic). [`backend/migrate.py`](backend/migrate.py) calls `initialize_database()` in [`backend/app/db/database.py`](backend/app/db/database.py), which:
+Schema updates are Alembic-based. [`backend/migrate.py`](backend/migrate.py) runs `alembic upgrade head`, then calls idempotent data/startup tasks in [`backend/app/db/database.py`](backend/app/db/database.py), which:
 
-- creates missing tables (`create_all` from SQLAlchemy models)
-- applies incremental fixes (legacy column drops, UUID columns, indexes, item image columns)
-- seeds default catalog data and bundled item images
+- seeds default catalog data
+- syncs bundled item images to RustFS when RustFS is configured
+- migrates legacy `items.image_data` bytes to RustFS and drops the old DB byte column
 
 When you change models or migration logic, commit under `backend/` and push to `main` — CI/CD applies migrations on the production VM automatically.
 
@@ -439,21 +439,23 @@ When you change models or migration logic, commit under `backend/` and push to `
 |------|-----|
 | **CI/CD** (push `backend/**` to `main`) | `deploy-prod.sh` → `run_migrations` with the pulled `:latest` image, then recreate backend |
 | **Production container start** | [`backend/docker-entrypoint.sh`](backend/docker-entrypoint.sh) → `migrate.py` → Gunicorn |
-| **FastAPI lifespan** | `initialize_database()` on API startup (dev reload and production) |
-| **Local dev** (`make backend-dev`) | Migrates on start; re-runs when `app/db/`, `app/models/`, or `migrate.py` change |
+| **FastAPI lifespan** | data/startup tasks only; schema changes must already be migrated |
+| **Local dev** | run `make backend-migrate`, then `make backend-dev` |
 
 #### Changing the schema (developer workflow)
 
-1. Update models in `backend/app/models/` and migration helpers in `backend/app/db/database.py` as needed.
-2. Test locally: `make backend-migrate` or `make backend-dev`.
-3. Push to `main` with changes under `backend/**`.
-4. Confirm the **Deploy Production** workflow succeeded and health shows `database: connected`.
+1. Update models in `backend/app/models/`.
+2. Create an Alembic revision from `backend/`: `uv run alembic revision -m "describe change"`.
+3. Edit the revision in `backend/migrations/versions/`.
+4. Test locally: `make backend-migrate`, then run tests.
+5. Push to `main` with changes under `backend/**`.
+6. Confirm the **Deploy Production** workflow succeeded and health shows `database: connected`.
 
 #### Local commands
 
 ```bash
 make backend-migrate   # one-off migration
-make backend-dev       # dev server with auto-migrate
+make backend-dev       # dev server after migrations
 ```
 
 #### Manual migration on the VM

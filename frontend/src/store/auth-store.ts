@@ -22,7 +22,12 @@ export const useAuthStore = create<AuthState>()(
       hydrated: false,
       setSession: (token, user) => set({ token, user }),
       setHydrated: (hydrated) => set({ hydrated }),
-      clearSession: () => set({ token: null, user: null }),
+      clearSession: () =>
+        set((state) =>
+          state.token === null && state.user === null
+            ? state
+            : { token: null, user: null },
+        ),
     }),
     {
       name: AUTH_STORAGE_KEY,

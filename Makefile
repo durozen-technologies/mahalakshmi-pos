@@ -28,11 +28,11 @@ backend-sync: ## Install backend dependencies
 backend-sync-dev: ## Install backend dependencies with dev tools
 	cd $(BACKEND_DIR) && $(UV) sync --group dev
 
-backend-migrate: ## Apply database schema updates (create tables + incremental fixes)
+backend-migrate: ## Apply Alembic schema migrations and startup data tasks
 	cd $(BACKEND_DIR) && $(UV) run python migrate.py
 
-backend-dev: ## Run backend with auto-migrate on start and when schema files change
-	cd $(BACKEND_DIR) && $(UV) run python scripts/dev.py
+backend-dev: ## Run backend dev server
+	cd $(BACKEND_DIR) && $(UV) run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 backend-gunicorn: ## Run the backend with Gunicorn
 	cd $(BACKEND_DIR) && $(UV) run python -m gunicorn main:app --bind 0.0.0.0:$${PORT:-8000} --worker-class uvicorn_worker.UvicornWorker --workers $${WEB_CONCURRENCY:-$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)} --timeout $${GUNICORN_TIMEOUT:-60} --graceful-timeout $${GUNICORN_GRACEFUL_TIMEOUT:-30} --keep-alive $${GUNICORN_KEEPALIVE:-5} --access-logfile - --error-logfile - --log-level $${LOG_LEVEL:-info} --capture-output

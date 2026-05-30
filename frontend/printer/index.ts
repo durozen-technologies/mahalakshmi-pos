@@ -6,7 +6,7 @@ import {
   type PrinterOptions as NativePrinterOptions,
 } from "@haroldtran/react-native-thermal-printer";
 
-import { translateShopItemName } from "@/hooks/use-shop-translation";
+import { getLocalizedItemName } from "@/hooks/use-shop-translation";
 import { ShopLanguage } from "@/store/shop-language-store";
 import { BillRead } from "@/types/api";
 import {
@@ -229,9 +229,10 @@ function buildPrintableReceiptLines(bill: BillRead): PrintableReceiptLine[] {
   const divider = "-".repeat(PAPER_WIDTH_58);
 
   const itemLines = bill.items.flatMap((item) => {
-    const translatedItemName = translateShopItemName(
+    const translatedItemName = getLocalizedItemName(
       language,
       item.item_name,
+      item.item_tamil_name,
     );
     const wrappedName = wrapReceiptLine(translatedItemName, 18);
     const lines: PrintableReceiptLine[] = [

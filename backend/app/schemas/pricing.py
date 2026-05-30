@@ -5,16 +5,21 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from ..models import BaseUnit, UnitType
+from .admin import PriceStatus
 from .common import ORMModel
 
 
 class DailyPriceEntry(BaseModel):
     item_id: UUID
-    price_per_unit: Decimal = Field(gt=0)
+    price_per_unit: Decimal = Field(ge=0)
 
 
 class DailyPriceCreate(BaseModel):
     entries: list[DailyPriceEntry]
+
+
+class DailyPriceUpdate(BaseModel):
+    price_per_unit: Decimal = Field(ge=0)
 
 
 class DailyPriceRead(ORMModel):
@@ -29,15 +34,22 @@ class DailyPriceRead(ORMModel):
 class ItemPriceRead(BaseModel):
     item_id: UUID
     item_name: str
+    item_tamil_name: str | None = None
     unit_type: UnitType
     base_unit: BaseUnit
     current_price: Decimal | None = None
+    latest_price_date: date | None = None
+    price_status: PriceStatus = PriceStatus.MISSING
+    sort_order: int = 0
+    category_id: UUID | None = None
+    category: str | None = None
     image_path: str | None = None
 
 
 class ItemImageRead(BaseModel):
     item_id: UUID
     item_name: str
+    item_tamil_name: str | None = None
     image_path: str | None = None
     image_content_type: str | None = None
 

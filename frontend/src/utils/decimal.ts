@@ -23,6 +23,22 @@ export function sumMoney(values: (string | number | null | undefined)[]) {
   return values.reduce((total, value) => total.plus(money(value)), new Decimal(0));
 }
 
+function parseStrictDecimal(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    return null;
+  }
+  try {
+    return new Decimal(trimmed);
+  } catch {
+    return null;
+  }
+}
+
 export function isPositiveNumber(value: string) {
-  return money(value).greaterThan(0);
+  return parseStrictDecimal(value)?.greaterThan(0) ?? false;
+}
+
+export function isNonNegativeNumber(value: string) {
+  return parseStrictDecimal(value)?.greaterThanOrEqualTo(0) ?? false;
 }

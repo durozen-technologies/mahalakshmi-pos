@@ -1,48 +1,168 @@
 import { useState } from "react";
 import {
+  type TextStyle,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
-  ScrollView,
   StatusBar,
-  Text,
-  TextInput,
   TouchableWithoutFeedback,
-  View,
+  useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
   Eye,
   EyeOff,
   LockKeyhole,
+  LogIn,
   ShieldCheck,
   Store,
   TriangleAlert,
   User2,
 } from "lucide-react-native";
 
+import { Image } from "expo-image";
+import {
+  Button as TButton,
+  Input,
+  ScrollView,
+  Spinner,
+  Text,
+  View as Stack,
+  XStack,
+  YStack,
+} from "tamagui";
+
 import { login } from "@/api/auth";
 import { toApiError } from "@/api/client";
-import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { usePriceStore } from "@/store/price-store";
+
+const logoImage = require("../../../assets/Logo.png");
+
+const fieldInputTextStyle: TextStyle = {
+  fontWeight: "700",
+};
+
+const C = {
+  background: "#F6F8F5",
+  hero: "#09110D",
+  heroDeep: "#050806",
+  heroSoft: "rgba(255,255,255,0.07)",
+  heroBorder: "rgba(255,255,255,0.14)",
+  card: "#FFFFFF",
+  surface: "#F3F7F4",
+  surfaceStrong: "#ECF5EF",
+  border: "#DCE6DF",
+  borderStrong: "#B9D5C4",
+  accent: "#16A34A",
+  accentDark: "#166534",
+  accentBlack: "#0F2A1A",
+  accentSoft: "#DCFCE7",
+  ink: "#101827",
+  muted: "#667085",
+  mutedDark: "#475467",
+  danger: "#DC2626",
+  dangerBorder: "#FECACA",
+  dangerSoft: "#FEF2F2",
+  white: "#FFFFFF",
+};
+
+type FieldName = "username" | "password";
 
 function collapseWhitespace(value: string) {
   return value.split(/\s+/).filter(Boolean).join(" ");
 }
 
+function FieldLabel({ children }: { children: string }) {
+  return (
+    <Text
+      style={{
+        color: C.mutedDark,
+        fontSize: 11,
+        fontWeight: "900",
+        letterSpacing: 1.1,
+        textTransform: "uppercase",
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function IconTile({
+  children,
+  tone = "soft",
+}: {
+  children: React.ReactNode;
+  tone?: "soft" | "inverse";
+}) {
+  return (
+    <Stack
+      width={44}
+      height={44}
+      alignItems="center"
+      justifyContent="center"
+      borderRadius={12}
+      borderWidth={1}
+      borderColor={tone === "inverse" ? C.heroBorder : C.borderStrong}
+      backgroundColor={tone === "inverse" ? C.heroSoft : C.accentSoft}
+    >
+      {children}
+    </Stack>
+  );
+}
+
+function SecurityChip({
+  icon,
+  label,
+}: {
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <XStack
+      alignItems="center"
+      gap={7}
+      minHeight={34}
+      paddingHorizontal={12}
+      borderRadius={10}
+      borderWidth={1}
+      borderColor={C.heroBorder}
+      backgroundColor="rgba(255,255,255,0.06)"
+    >
+      {icon}
+      <Text
+        numberOfLines={1}
+        style={{
+          color: "#DDFBE8",
+          fontSize: 11,
+          fontWeight: "800",
+          flexShrink: 1,
+        }}
+      >
+        {label}
+      </Text>
+    </XStack>
+  );
+}
+
 export function LoginScreen() {
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   const [submitting, setSubmitting] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [focusedField, setFocusedField] = useState<FieldName | null>(null);
 
   const setSession = useAuthStore((state) => state.setSession);
   const resetCart = useCartStore((state) => state.resetCart);
   const clearPrices = usePriceStore((state) => state.clear);
+
+  const credentialsReady = Boolean(collapseWhitespace(username).trim() && password.trim());
 
   async function handleLogin() {
     const normalizedUsername = collapseWhitespace(username).trim();
@@ -76,234 +196,361 @@ export function LoginScreen() {
     }
   }
 
+  function clearError() {
+    if (errorMessage) {
+      setErrorMessage("");
+    }
+  }
+
   return (
     <>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor="#052E16"
-      />
+      <StatusBar barStyle="light-content" backgroundColor={C.heroDeep} />
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, backgroundColor: C.background }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             showsVerticalScrollIndicator={false}
             bounces={false}
-            contentContainerStyle={{ flexGrow: 1 }}
-            className="bg-[#04130A]"
+            backgroundColor={C.background}
+            contentContainerStyle={{
+              flexGrow: 1,
+              minHeight: height,
+              backgroundColor: C.background,
+            }}
           >
-            <View className="flex-1">
+            <YStack flex={1} minHeight={height} backgroundColor={C.background}>
+              <YStack
+                minHeight={292}
+                paddingHorizontal={22}
+                paddingTop={insets.top + 24}
+                paddingBottom={50}
+                backgroundColor={C.hero}
+                borderBottomWidth={1}
+                borderBottomColor="rgba(255,255,255,0.08)"
+              >
+                <YStack width="100%" maxWidth={520} alignSelf="center" gap={22}>
+                  <XStack alignItems="center" justifyContent="space-between" gap={16}>
+                    <XStack alignItems="center" gap={12} flex={1} minWidth={0}>
+                      <Stack
+                        width={68}
+                        height={68}
+                        alignItems="center"
+                        justifyContent="center"
+                        borderRadius={14}
+                        borderWidth={1}
+                        borderColor={C.heroBorder}
+                        backgroundColor={C.heroSoft}
+                      >
+                        <Image
+                          source={logoImage}
+                          style={{ width: 42, height: 42 }}
+                          contentFit="contain"
+                        />
+                      </Stack>
 
-              {/* TOP SECTION */}
+                      <YStack flex={1} minWidth={0}>
+                        <Text
+                          numberOfLines={2}
+                          style={{
+                            color: C.white,
+                            fontSize: 20,
+                            lineHeight: 25,
+                            fontWeight: "900",
+                            flexShrink: 1,
+                          }}
+                        >
+                          SRI MAHALAKSHMI BROILERS
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            color: "#9AE6B4",
+                            fontSize: 12,
+                            fontWeight: "900",
+                            letterSpacing: 1.2,
+                            marginTop: 3,
+                          }}
+                        >
+                          SMB WORKSPACE
+                        </Text>
+                      </YStack>
+                    </XStack>
 
-              <View className="relative overflow-hidden bg-[#052E16] px-6 pb-20 pt-16">
+                    <IconTile tone="inverse">
+                      <ShieldCheck size={22} color="#BBF7D0" strokeWidth={2.5} />
+                    </IconTile>
+                  </XStack>
 
-                {/* Decorative Background */}
-
-                <View className="absolute left-[-40px] top-[-30px] h-44 w-44 rounded-full bg-[#22C55E]/20" />
-
-                <View className="absolute right-[-30px] top-16 h-52 w-52 rounded-full bg-[#4ADE80]/10" />
-
-                <View className="absolute bottom-[-50px] left-10 h-36 w-36 rounded-full bg-[#16A34A]/20" />
-
-                {/* Logo */}
-
-                <View className="items-center">
-
-                  <View className="h-24 w-24 items-center justify-center rounded-[32px] border border-white/10 bg-white/10 shadow-2xl">
-
-                    <Store
-                      size={42}
-                      color="#DCFCE7"
-                      strokeWidth={2.4}
-                    />
-                  </View>
-
-                  <Text className="mt-6 text-center text-4xl font-extrabold tracking-wide text-white">
-                    Sri Mahalaksmi
-                  </Text>
-
-                  <Text className="mt-1 text-lg font-semibold tracking-[3px] text-[#86EFAC]">
-                    BROILERS
-                  </Text>
-
-                  <View className="mt-5 flex-row items-center rounded-full border border-[#22C55E]/20 bg-[#14532D]/70 px-4 py-2">
-
-                    <ShieldCheck
-                      size={16}
-                      color="#86EFAC"
-                      strokeWidth={2.3}
-                    />
-
-                    <Text className="ml-2 text-xs font-semibold tracking-wide text-[#DCFCE7]">
-                      SECURE ADMIN & BILLING PORTAL
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* LOGIN CARD */}
-
-              <View className="mt-[-45px] flex-1 rounded-t-[38px] bg-[#F8FAF8] px-6 pb-10 pt-8">
-
-                <Text className="text-3xl font-extrabold text-[#111827]">
-                  Welcome Back 👋
-                </Text>
-
-                <Text className="mt-2 text-base leading-6 text-[#6B7280]">
-                  Sign in to manage billing, inventory, pricing, and
-                  staff operations.
-                </Text>
-
-                {/* USERNAME */}
-
-                <View className="mt-8">
-
-                  <Text className="mb-3 text-[12px] font-bold uppercase tracking-[1.5px] text-[#4B5563]">
-                    Username
-                  </Text>
-
-                  <View className="flex-row items-center rounded-[24px] border border-[#E5E7EB] bg-white px-5 shadow-sm">
-
-                    <View className="h-11 w-11 items-center justify-center rounded-full bg-[#DCFCE7]">
-
-                      <User2
-                        size={20}
-                        color="#15803D"
-                        strokeWidth={2.4}
-                      />
-                    </View>
-
-                    <TextInput
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      autoComplete="username"
-                      textContentType="username"
-                      placeholder="Enter your username"
-                      placeholderTextColor="#9CA3AF"
-                      value={username}
-                      onChangeText={(value) => {
-                        setUsername(value);
-
-                        if (errorMessage) {
-                          setErrorMessage("");
-                        }
+                  <YStack gap={12}>
+        
+                    <Text
+                      style={{
+                        color: "rgba(255,255,255,0.76)",
+                        fontSize: 14,
+                        lineHeight: 21,
+                        fontWeight: "600",
                       }}
-                      returnKeyType="next"
-                      blurOnSubmit={false}
-                      className="ml-4 flex-1 py-5 text-base font-medium text-[#111827]"
-                    />
-                  </View>
-                </View>
-
-                {/* PASSWORD */}
-
-                <View className="mt-6">
-
-                  <Text className="mb-3 text-[12px] font-bold uppercase tracking-[1.5px] text-[#4B5563]">
-                    Password
-                  </Text>
-
-                  <View className="flex-row items-center rounded-[24px] border border-[#E5E7EB] bg-white px-5 shadow-sm">
-
-                    <View className="h-11 w-11 items-center justify-center rounded-full bg-[#DCFCE7]">
-
-                      <LockKeyhole
-                        size={20}
-                        color="#15803D"
-                        strokeWidth={2.4}
-                      />
-                    </View>
-
-                    <TextInput
-                      secureTextEntry={!showPassword}
-                      autoCorrect={false}
-                      autoComplete="password"
-                      textContentType="password"
-                      placeholder="Enter your password"
-                      placeholderTextColor="#9CA3AF"
-                      value={password}
-                      onChangeText={(value) => {
-                        setPassword(value);
-
-                        if (errorMessage) {
-                          setErrorMessage("");
-                        }
-                      }}
-                      className="ml-4 flex-1 py-5 text-base font-medium text-[#111827]"
-                      returnKeyType="done"
-                      onSubmitEditing={handleLogin}
-                    />
-
-                    <Pressable
-                      onPress={() => setShowPassword((prev) => !prev)}
-                      hitSlop={10}
-                      className="rounded-full bg-[#F3F4F6] p-3"
                     >
-                      {showPassword ? (
-                        <EyeOff
-                          size={20}
-                          color="#4B5563"
-                          strokeWidth={2.4}
-                        />
-                      ) : (
-                        <Eye
-                          size={20}
-                          color="#4B5563"
-                          strokeWidth={2.4}
-                        />
-                      )}
-                    </Pressable>
-                  </View>
-                </View>
-
-                {/* ERROR */}
-
-                {errorMessage ? (
-                  <View className="mt-6 flex-row items-start rounded-[22px] border border-red-200 bg-red-50 px-4 py-4">
-
-                    <TriangleAlert
-                      size={18}
-                      color="#DC2626"
-                      strokeWidth={2.4}
-                    />
-
-                    <Text className="ml-3 flex-1 text-sm font-semibold leading-5 text-red-700">
-                      {errorMessage}
+                      Manage billing, inventory, pricing, and staff operations from one secure counter.
                     </Text>
-                  </View>
-                ) : null}
+                  </YStack>
 
-                {/* LOGIN BUTTON */}
+                  <XStack flexWrap="wrap" gap={9}>
+                    <SecurityChip
+                      label="Billing"
+                      icon={<Store size={14} color="#BBF7D0" strokeWidth={2.4} />}
+                    />
+                    <SecurityChip
+                      label="Inventory"
+                      icon={<ShieldCheck size={14} color="#BBF7D0" strokeWidth={2.4} />}
+                    />
+                    <SecurityChip
+                      label="Staff access"
+                      icon={<LockKeyhole size={14} color="#BBF7D0" strokeWidth={2.4} />}
+                    />
+                  </XStack>
+                </YStack>
+              </YStack>
 
-                <View className="mt-8 overflow-hidden rounded-[24px]">
+              <YStack
+                flex={1}
+                justifyContent="space-between"
+                marginTop={-28}
+                paddingHorizontal={18}
+                paddingBottom={insets.bottom + 26}
+              >
+                <YStack
+                  width="100%"
+                  maxWidth={520}
+                  alignSelf="center"
+                  gap={22}
+                  padding={18}
+                  borderRadius={16}
+                  borderWidth={1}
+                  borderColor={C.border}
+                  backgroundColor={C.card}
+                  shadowColor="#07110B"
+                  shadowOpacity={0.14}
+                  shadowRadius={18}
+                  shadowOffset={{ width: 0, height: 10 }}
+                  elevation={5}
+                >
+                  <YStack gap={6}>
+                    <Text
+                      style={{
+                        color: C.ink,
+                        fontSize: 24,
+                        lineHeight: 30,
+                        fontWeight: "900",
+                      }}
+                    >
+                      Welcome back
+                    </Text>
+                    <Text
+                      style={{
+                        color: C.muted,
+                        fontSize: 13,
+                        lineHeight: 20,
+                        fontWeight: "600",
+                      }}
+                    >
+                      Use your staff credentials to enter the billing workspace.
+                    </Text>
+                  </YStack>
 
-                  <Button
-                    label={submitting ? "Signing In..." : "Enter Workspace"}
+                  <YStack gap={16}>
+                    <YStack gap={8}>
+                      <FieldLabel>Username</FieldLabel>
+                      <XStack
+                        alignItems="center"
+                        gap={12}
+                        paddingHorizontal={13}
+                        minHeight={62}
+                        borderRadius={14}
+                        borderWidth={1.5}
+                        borderColor={focusedField === "username" ? C.accent : C.border}
+                        backgroundColor={focusedField === "username" ? "#FAFFFC" : C.surface}
+                      >
+                        <IconTile>
+                          <User2 size={20} color={C.accentDark} strokeWidth={2.4} />
+                        </IconTile>
+                        <Input
+                          flex={1}
+                          unstyled
+                          value={username}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="username"
+                          textContentType="username"
+                          placeholder="Enter your username"
+                          placeholderTextColor={C.muted as never}
+                          color={C.ink}
+                          fontSize={16}
+                          fontWeight="700"
+                          style={fieldInputTextStyle}
+                          paddingVertical={15}
+                          onFocus={() => setFocusedField("username")}
+                          onBlur={() => setFocusedField(null)}
+                          onChangeText={(value) => {
+                            setUsername(value);
+                            clearError();
+                          }}
+                          returnKeyType="next"
+                          blurOnSubmit={false}
+                        />
+                      </XStack>
+                    </YStack>
+
+                    <YStack gap={8}>
+                      <FieldLabel>Password</FieldLabel>
+                      <XStack
+                        alignItems="center"
+                        gap={12}
+                        paddingHorizontal={13}
+                        minHeight={62}
+                        borderRadius={14}
+                        borderWidth={1.5}
+                        borderColor={focusedField === "password" ? C.accent : C.border}
+                        backgroundColor={focusedField === "password" ? "#FAFFFC" : C.surface}
+                      >
+                        <IconTile>
+                          <LockKeyhole size={20} color={C.accentDark} strokeWidth={2.4} />
+                        </IconTile>
+                        <Input
+                          flex={1}
+                          unstyled
+                          secureTextEntry={!showPassword}
+                          autoCorrect={false}
+                          autoComplete="password"
+                          textContentType="password"
+                          placeholder="Enter your password"
+                          placeholderTextColor={C.muted as never}
+                          color={C.ink}
+                          fontSize={16}
+                          fontWeight="700"
+                          style={fieldInputTextStyle}
+                          paddingVertical={15}
+                          onFocus={() => setFocusedField("password")}
+                          onBlur={() => setFocusedField(null)}
+                          onChangeText={(value) => {
+                            setPassword(value);
+                            clearError();
+                          }}
+                          returnKeyType="done"
+                          onSubmitEditing={handleLogin}
+                        />
+
+                        <TButton
+                          accessibilityRole="button"
+                          accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                          width={44}
+                          height={44}
+                          padding={0}
+                          borderRadius={12}
+                          borderWidth={1}
+                          borderColor={C.border}
+                          backgroundColor={C.card}
+                          pressStyle={{ scale: 0.97, backgroundColor: C.surfaceStrong }}
+                          onPress={() => setShowPassword((prev) => !prev)}
+                        >
+                          {showPassword ? (
+                            <EyeOff size={20} color={C.mutedDark} strokeWidth={2.4} />
+                          ) : (
+                            <Eye size={20} color={C.mutedDark} strokeWidth={2.4} />
+                          )}
+                        </TButton>
+                      </XStack>
+                    </YStack>
+                  </YStack>
+
+                  {errorMessage ? (
+                    <XStack
+                      alignItems="flex-start"
+                      gap={11}
+                      padding={14}
+                      borderRadius={14}
+                      borderWidth={1}
+                      borderColor={C.dangerBorder}
+                      backgroundColor={C.dangerSoft}
+                    >
+                      <TriangleAlert size={19} color={C.danger} strokeWidth={2.5} />
+                      <Text
+                        style={{
+                          color: "#B42318",
+                          fontSize: 13,
+                          lineHeight: 19,
+                          fontWeight: "800",
+                          flex: 1,
+                        }}
+                      >
+                        {errorMessage}
+                      </Text>
+                    </XStack>
+                  ) : null}
+
+                  <TButton
+                    accessibilityRole="button"
+                    accessibilityLabel="Enter workspace"
                     onPress={handleLogin}
-                    loading={submitting}
-                  />
-                </View>
+                    disabled={submitting}
+                    minHeight={54}
+                    borderRadius={14}
+                    borderWidth={1}
+                    borderColor={credentialsReady ? "#1F5D35" : C.borderStrong}
+                    backgroundColor={credentialsReady ? C.accentBlack : "#315B3D"}
+                    opacity={submitting ? 0.82 : 1}
+                    pressStyle={{ scale: 0.985, backgroundColor: "#0B2014" }}
+                  >
+                    {submitting ? (
+                      <XStack alignItems="center" justifyContent="center" gap={10}>
+                        <Spinner color={C.white} />
+                        <Text style={{ color: C.white, fontSize: 15, fontWeight: "900" }}>
+                          Signing in...
+                        </Text>
+                      </XStack>
+                    ) : (
+                      <XStack alignItems="center" justifyContent="center" gap={9}>
+                        <LogIn size={18} color={C.white} strokeWidth={2.5} />
+                        <Text style={{ color: C.white, fontSize: 15, fontWeight: "900" }}>
+                          Enter workspace
+                        </Text>
+                      </XStack>
+                    )}
+                  </TButton>
+                </YStack>
 
-                {/* FOOTER */}
-
-                <View className="mt-8 items-center">
-
-                  <Text className="text-center text-xs leading-6 text-[#6B7280]">
-                    Authorized staff only.
+                <XStack
+                  width="100%"
+                  maxWidth={520}
+                  alignSelf="center"
+                  alignItems="center"
+                  justifyContent="center"
+                  gap={8}
+                  paddingTop={18}
+                  paddingHorizontal={12}
+                >
+                  <ShieldCheck size={15} color={C.accentDark} strokeWidth={2.4} />
+                  <Text
+                    style={{
+                      color: C.muted,
+                      fontSize: 12,
+                      lineHeight: 18,
+                      fontWeight: "700",
+                      textAlign: "center",
+                      flexShrink: 1,
+                    }}
+                  >
+                    Authorized staff only. Activity is monitored for billing security.
                   </Text>
-
-                  <Text className="text-center text-xs leading-6 text-[#6B7280]">
-                    All activities are securely monitored and encrypted.
-                  </Text>
-                </View>
-              </View>
-            </View>
+                </XStack>
+              </YStack>
+            </YStack>
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>

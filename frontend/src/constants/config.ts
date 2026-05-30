@@ -166,3 +166,4 @@ export const AUTH_STORAGE_KEY = "meat-billing-auth";
 export const PRINTER_STORAGE_KEY = "meat-billing-printer";
 export const SHOP_LANGUAGE_STORAGE_KEY = "meat-billing-shop-language";
 export const ADMIN_THEME_STORAGE_KEY = "meat-billing-admin-theme";
+export const ADMIN_ITEMS_STORAGE_KEY = "meat-billing-admin-items";

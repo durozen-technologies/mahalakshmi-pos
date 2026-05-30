@@ -25,13 +25,13 @@ export const Button = memo(function Button({
   textClassName,
 }: ButtonProps) {
   const palette = {
-    primary: "border border-accent bg-accent shadow-pos",
+    primary: "border border-accent bg-accent shadow-soft",
     secondary: "border border-border bg-card shadow-soft",
     danger: "border border-[#9F4335] bg-[#9F4335] shadow-soft",
   }[variant];
 
   const textColor = variant === "secondary" ? "text-ink" : "text-white";
-  const sizeStyles = size === "sm" ? "min-h-11 rounded-[18px] px-4" : "min-h-[58px] rounded-[24px] px-5";
+  const sizeStyles = size === "sm" ? "min-h-10 rounded-[12px] px-4" : "min-h-[50px] rounded-[14px] px-5";
   const textSize = size === "sm" ? "text-sm" : "text-[15px]";
 
   return (

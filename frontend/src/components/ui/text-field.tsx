@@ -25,7 +25,7 @@ export const TextField = memo(function TextField({ label, error, suffix, classNa
       </Text>
       <View
         className={cn(
-          "flex-row items-center rounded-[24px] border px-4 border-border bg-surface",
+          "flex-row items-center rounded-[14px] border px-4 border-border bg-surface",
           error ? "border-[#9F4335] bg-card" : "",
         )}
       >
@@ -36,7 +36,7 @@ export const TextField = memo(function TextField({ label, error, suffix, classNa
           selectionColor="#244734"
           cursorColor="#244734"
           placeholderTextColor="#95A293"
-          className={cn("min-h-[58px] flex-1 text-base text-ink", isTamil && "leading-6", className)}
+          className={cn("min-h-[52px] flex-1 text-base text-ink", isTamil && "leading-6", className)}
           {...props}
         />
         {suffix ? (

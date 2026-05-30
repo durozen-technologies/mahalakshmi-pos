@@ -1,5 +1,5 @@
 import { BillRead } from "@/types/api";
-import { translateShopItemName } from "@/hooks/use-shop-translation";
+import { getLocalizedItemName } from "@/hooks/use-shop-translation";
 import { ShopLanguage } from "@/store/shop-language-store";
 import { formatCurrency, formatDateTime, formatUnit } from "@/utils/format";
 
@@ -44,8 +44,8 @@ const RECEIPT_COPY = {
 
 const RECEIPT_LANGUAGE: ShopLanguage = "ta";
 
-function getReceiptLanguage(_: ShopLanguage | undefined = undefined) {
-  return RECEIPT_LANGUAGE;
+function getReceiptLanguage(language: ShopLanguage | undefined = undefined) {
+  return language ?? RECEIPT_LANGUAGE;
 }
 
 function getReceiptCopy(language?: ShopLanguage) {
@@ -824,7 +824,7 @@ export function buildReceiptText(bill: BillRead, language?: ShopLanguage) {
     "",
     ...bill.items.map(
       (item) =>
-        `${translateShopItemName(getReceiptLanguage(language), item.item_name).padEnd(15)} ${item.quantity}${formatUnit(item.unit).padEnd(5)} x ${formatReceiptCurrency(item.price_per_unit)} = ${formatReceiptCurrency(item.line_total)}`,
+        `${getLocalizedItemName(getReceiptLanguage(language), item.item_name, item.item_tamil_name).padEnd(15)} ${item.quantity}${formatUnit(item.unit).padEnd(5)} x ${formatReceiptCurrency(item.price_per_unit)} = ${formatReceiptCurrency(item.line_total)}`,
     ),
     "",
     `----------------------------------------`,
@@ -858,13 +858,14 @@ function escapeHtml(value: string) {
 //           </td>
 //         </tr>
 
-function buildReceiptHtmlBody(bill: BillRead) {
-  const copy = RECEIPT_COPY.en;
+function buildReceiptHtmlBody(bill: BillRead, language?: ShopLanguage) {
+  const resolvedLanguage = getReceiptLanguage(language);
+  const copy = getReceiptCopy(resolvedLanguage);
   const itemRows = bill.items
     .map(
       (item) => `
         <tr class="item-row">
-          <td class="item-name strong">${escapeHtml(translateShopItemName("ta", item.item_name))}</td>
+          <td class="item-name strong">${escapeHtml(getLocalizedItemName(resolvedLanguage, item.item_name, item.item_tamil_name))}</td>
           <td class="align-right item-qty">${escapeHtml(String(item.quantity))}&nbsp;${escapeHtml(formatUnit(item.unit))}</td>
           <td class="align-right item-total strong">${formatReceiptCurrency(item.line_total)}</td>
         </tr>
@@ -876,7 +877,7 @@ function buildReceiptHtmlBody(bill: BillRead) {
     <div class="receipt-container">
       <div class="center">
         <div class="strong header-main">${copy.companyName}</div>
-        <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, "en"))}</div>
+        <div class="strong header-sub">${escapeHtml(formatReceiptShopName(bill.shop_name, resolvedLanguage))}</div>
       </div>
 
       <div class="bill-meta">
@@ -929,12 +930,13 @@ function buildReceiptHtmlBody(bill: BillRead) {
     </div>`;
 }
 
-function buildReceiptExportPayload(bill: BillRead): ReceiptExportPayload {
-  const copy = RECEIPT_COPY.en;
+function buildReceiptExportPayload(bill: BillRead, language?: ShopLanguage): ReceiptExportPayload {
+  const resolvedLanguage = getReceiptLanguage(language);
+  const copy = getReceiptCopy(resolvedLanguage);
 
   return {
     companyName: copy.companyName,
-    shopName: formatReceiptShopName(bill.shop_name, "en"),
+    shopName: formatReceiptShopName(bill.shop_name, resolvedLanguage),
     billText: `${copy.bill}: ${bill.bill_no}`,
     dateText: `${copy.date}: ${formatDateTime(bill.created_at)}`,
     itemHeader: copy.item,
@@ -950,20 +952,20 @@ function buildReceiptExportPayload(bill: BillRead): ReceiptExportPayload {
     poweredBy: copy.poweredBy,
     provider: copy.provider,
     items: bill.items.map((item) => ({
-      itemName: translateShopItemName("ta", item.item_name),
+      itemName: getLocalizedItemName(resolvedLanguage, item.item_name, item.item_tamil_name),
       quantityText: `${item.quantity} ${formatUnit(item.unit)}`,
       lineTotal: formatReceiptCurrency(item.line_total),
     })),
   };
 }
 
-export function buildReceiptHtml(bill: BillRead) {
+export function buildReceiptHtml(bill: BillRead, language?: ShopLanguage) {
   return buildReceiptHtmlMarkup(
-    buildReceiptHtmlBody(bill),
-    buildReceiptExportPayload(bill),
+    buildReceiptHtmlBody(bill, language),
+    buildReceiptExportPayload(bill, language),
   );
 }
 
-export function buildBatchReceiptHtml(bills: BillRead[]) {
-  return buildReceiptHtmlMarkup(bills.map((bill) => buildReceiptHtmlBody(bill)).join(""));
+export function buildBatchReceiptHtml(bills: BillRead[], language?: ShopLanguage) {
+  return buildReceiptHtmlMarkup(bills.map((bill) => buildReceiptHtmlBody(bill, language)).join(""));
 }

@@ -2,8 +2,9 @@ import asyncio
 import logging
 import mimetypes
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import boto3
 from botocore.client import Config
@@ -14,7 +15,9 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import select
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
@@ -33,7 +36,7 @@ def build_item_image_path(
     image_object_key: str | None,
     image_content_type: str | None = None,
 ) -> str | None:
-    if not image_object_key and not image_content_type:
+    if not image_object_key:
         return None
     return f"{settings.api_v1_prefix}/catalog/items/{item_id}/image"
 
@@ -117,7 +120,39 @@ def _guess_content_type(filename: str, provided_content_type: str | None = None)
 
 def _get_object_key(item_id: UUID, filename: str) -> str:
     suffix = Path(filename).suffix.lower() or ".bin"
-    return f"items/{item_id}/image{suffix}"
+    return f"items/{item_id}/{uuid4().hex}{suffix}"
+
+
+def _normalize_square_image(content: bytes) -> tuple[bytes, str]:
+    try:
+        with Image.open(BytesIO(content)) as image:
+            width, height = image.size
+            if width != height:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="Item image must use a 1:1 square ratio",
+                )
+            normalized = image.convert("RGB")
+            output = BytesIO()
+            normalized.save(output, format="JPEG", quality=88, optimize=True)
+            return output.getvalue(), "image/jpeg"
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Uploaded file is not a valid image",
+        ) from exc
+
+
+async def _items_table_has_legacy_image_data(db: AsyncSession) -> bool:
+    def has_column(sync_session) -> bool:
+        connection = sync_session.connection()
+        table_names = set(inspect(connection).get_table_names())
+        if "items" not in table_names:
+            return False
+        column_names = {column["name"] for column in inspect(connection).get_columns("items")}
+        return "image_data" in column_names
+
+    return await db.run_sync(has_column)
 
 
 async def _upload_bytes(
@@ -197,39 +232,49 @@ async def save_item_image_content(
             detail="Only image uploads are supported",
         )
 
+    if not settings.rustfs_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is not configured. Image was not saved.",
+        )
+    content, resolved_content_type = _normalize_square_image(content)
+    filename = f"{Path(filename).stem or item.id}.jpg"
+
     previous_object_key = item.image_object_key
-    stored_content_type = resolved_content_type
-    object_key: str | None = None
+    uploaded_object_key: str | None = None
 
-    if settings.rustfs_enabled:
-        try:
-            object_key, stored_content_type = await _upload_bytes(
-                item_id=item.id,
-                filename=filename,
-                content=content,
-                content_type=resolved_content_type,
-            )
-        except Exception:
-            logger.warning(
-                "Unable to mirror image for item %s to RustFS; keeping database copy only.",
-                item.id,
-                exc_info=True,
-            )
+    try:
+        uploaded_object_key, resolved_content_type = await _upload_bytes(
+            item_id=item.id,
+            filename=filename,
+            content=content,
+            content_type=resolved_content_type,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is unavailable. Image was not saved.",
+        ) from exc
 
-    item.image_data = content
-    item.image_object_key = object_key
-    item.image_content_type = stored_content_type
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
+    item.image_object_key = uploaded_object_key
+    item.image_content_type = resolved_content_type
+    try:
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
+    except Exception:
+        if uploaded_object_key and uploaded_object_key != previous_object_key:
+            await _delete_object_if_present(uploaded_object_key)
+        raise
 
-    if commit and previous_object_key and previous_object_key != object_key:
+    if commit and previous_object_key and previous_object_key != item.image_object_key:
         await _delete_object_if_present(previous_object_key)
 
     return ItemImageRead(
         item_id=item.id,
         item_name=item.name,
+        item_tamil_name=item.tamil_name,
         image_path=build_item_image_path(item.id, item.image_object_key, item.image_content_type),
         image_content_type=item.image_content_type,
     )
@@ -265,19 +310,38 @@ async def upload_item_image(
     return await save_item_image_upload(db, item, file)
 
 
+async def delete_item_image(db: AsyncSession, item_id: UUID) -> ItemImageRead:
+    item = await db.scalar(select(Item).where(Item.id == item_id).with_for_update())
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+
+    previous_object_key = item.image_object_key
+    item.image_object_key = None
+    item.image_content_type = None
+    await db.commit()
+    await _delete_object_if_present(previous_object_key)
+    return ItemImageRead(
+        item_id=item.id,
+        item_name=item.name,
+        item_tamil_name=item.tamil_name,
+        image_path=None,
+        image_content_type=None,
+    )
+
+
 async def delete_item_image_storage(object_key: str | None) -> None:
     await _delete_object_if_present(object_key)
 
 
 async def get_item_image_response_payload(item: Item) -> tuple[bytes, str]:
-    if item.image_data:
-        return item.image_data, item.image_content_type or "image/jpeg"
-
     if not item.image_object_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
 
     if not settings.rustfs_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is not configured",
+        )
 
     client = _get_storage_client()
 
@@ -309,3 +373,74 @@ async def get_item_image_response_payload(item: Item) -> tuple[bytes, str]:
                 status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
             ) from exc
         raise
+
+
+async def migrate_item_image_data_to_rustfs(db: AsyncSession) -> int:
+    if not settings.rustfs_enabled:
+        return 0
+
+    if not await _items_table_has_legacy_image_data(db):
+        return 0
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT id, image_data, image_object_key, image_content_type
+            FROM items
+            WHERE image_data IS NOT NULL
+            """
+        )
+    )
+    processed_count = 0
+    uploaded_object_keys: list[str] = []
+
+    for row in rows.mappings().all():
+        existing_object_key = row["image_object_key"]
+        image_data = bytes(row["image_data"] or b"")
+        object_key = existing_object_key
+        content_type = row["image_content_type"] or "application/octet-stream"
+
+        if not object_key and image_data:
+            try:
+                object_key, content_type = await _upload_bytes(
+                    item_id=row["id"],
+                    filename=f"{row['id']}{mimetypes.guess_extension(row['image_content_type'] or '') or '.bin'}",
+                    content=image_data,
+                    content_type=content_type,
+                )
+            except Exception:
+                logger.warning(
+                    "Unable to migrate database image for item %s to RustFS.",
+                    row["id"],
+                    exc_info=True,
+                )
+                continue
+            uploaded_object_keys.append(object_key)
+
+        await db.execute(
+            text(
+                """
+                UPDATE items
+                SET image_object_key = :image_object_key,
+                    image_content_type = :image_content_type,
+                    image_data = NULL
+                WHERE id = :item_id
+                """
+            ),
+            {
+                "image_object_key": object_key,
+                "image_content_type": content_type,
+                "item_id": row["id"],
+            },
+        )
+        processed_count += 1
+
+    if processed_count:
+        try:
+            await db.commit()
+        except SQLAlchemyError:
+            for object_key in uploaded_object_keys:
+                await _delete_object_if_present(object_key)
+            raise
+
+    return processed_count

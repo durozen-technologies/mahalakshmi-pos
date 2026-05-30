@@ -11,11 +11,13 @@ import {
 } from "@/services/printer-service";
 import type { PrinterDevice } from "@/types/printer";
 import type { BillRead } from "@/types/api";
+import type { ShopLanguage } from "@/store/shop-language-store";
 
 type ReceiptPrintJob = {
   id: string;
   bills: BillRead[];
   device: PrinterDevice;
+  language?: ShopLanguage;
 };
 
 type ReceiptBridgeProps = {
@@ -163,7 +165,7 @@ function ReceiptImagePrintBridge({
         ref={webViewRef}
         key={currentExportKey ?? job.id}
         originWhitelist={["*"]}
-        source={{ html: buildReceiptHtml(currentBill) }}
+        source={{ html: buildReceiptHtml(currentBill, job.language) }}
         onLoadEnd={handleLoadEnd}
         onMessage={handleMessage}
         scrollEnabled={false}
@@ -201,7 +203,7 @@ export function useReceiptImagePrintJob() {
   }, []);
 
   const startReceiptImagePrintJob = useCallback(
-    (bills: BillRead[], device: PrinterDevice) =>
+    (bills: BillRead[], device: PrinterDevice, language?: ShopLanguage) =>
       new Promise<void>((resolve, reject) => {
         if (bills.length === 0) {
           resolve();
@@ -225,6 +227,7 @@ export function useReceiptImagePrintJob() {
           id: nextJobId,
           bills,
           device,
+          language,
         });
       }),
     [],

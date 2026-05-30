@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.ids import UUID_SQL_TYPE, uuid7
 from ..db.database import Base
 from .base import BaseModelMixin
-from .enums import BaseUnit
+from .enums import BaseUnit, UnitType
 
 
 class BillStatus(str, Enum):
@@ -53,6 +53,10 @@ class BillItem(Base):
     item_id: Mapped[UUID] = mapped_column(
         UUID_SQL_TYPE, ForeignKey("items.id"), index=True, nullable=False
     )
+    item_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    item_tamil_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    item_unit_type: Mapped[UnitType | None] = mapped_column(SqlEnum(UnitType), nullable=True)
+    item_base_unit: Mapped[BaseUnit | None] = mapped_column(SqlEnum(BaseUnit), nullable=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     unit: Mapped[BaseUnit] = mapped_column(SqlEnum(BaseUnit), nullable=False)
     price_per_unit: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)

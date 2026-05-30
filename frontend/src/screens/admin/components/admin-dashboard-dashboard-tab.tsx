@@ -1,5 +1,13 @@
 import { memo } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { RefreshControl } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ScrollView,
+  Text,
+  View as Stack,
+  XStack,
+  YStack,
+} from "tamagui";
 
 import type { UUID } from "@/types/api";
 
@@ -22,6 +30,66 @@ type AdminDashboardTabProps = {
   useCompactMetricCards: boolean;
 };
 
+type SnapshotChipProps = {
+  label: string;
+  value: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  backgroundColor: string;
+  borderColor: string;
+  iconColor: string;
+  textColor: string;
+};
+
+function SnapshotChip({
+  label,
+  value,
+  icon,
+  backgroundColor,
+  borderColor,
+  iconColor,
+  textColor,
+}: SnapshotChipProps) {
+  return (
+    <XStack
+      flex={1}
+      minWidth={136}
+      alignItems="center"
+      gap={9}
+      paddingHorizontal={11}
+      paddingVertical={10}
+      borderRadius={14}
+      borderWidth={1}
+      borderColor={borderColor}
+      backgroundColor={backgroundColor}
+    >
+      <Stack
+        width={34}
+        height={34}
+        borderRadius={12}
+        alignItems="center"
+        justifyContent="center"
+        backgroundColor="rgba(255,255,255,0.42)"
+      >
+        <MaterialCommunityIcons name={icon} size={17} color={iconColor} />
+      </Stack>
+      <YStack flex={1} minWidth={0} gap={2}>
+        <Text
+          numberOfLines={1}
+          style={{ color: textColor, fontSize: 10, lineHeight: 13, fontWeight: "800", opacity: 0.72 }}
+        >
+          {label}
+        </Text>
+        <Text
+          numberOfLines={1}
+          style={{ color: textColor, fontSize: 13, lineHeight: 17, fontWeight: "900", flexShrink: 1 }}
+        >
+          {value}
+        </Text>
+      </YStack>
+    </XStack>
+  );
+}
+
 export const AdminDashboardTab = memo(function AdminDashboardTab({
   dashboardError,
   hasShops,
@@ -32,13 +100,31 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
   selectedShopId,
   selectedShopName,
   analyticsReferenceLabel,
-  visibleBillCount,
   metricCards,
   useCompactMetricCards,
 }: AdminDashboardTabProps) {
   const subtitle = selectedShopId
     ? `${selectedShopName} · ${analyticsReferenceLabel}`
     : `All branches · ${analyticsReferenceLabel}`;
+  const isDark = palette.background === "#0E141A";
+  const snapshotColors = {
+    scope: {
+      backgroundColor: isDark ? "rgba(168,85,247,0.18)" : "#F0E7FF",
+      borderColor: isDark ? "rgba(168,85,247,0.34)" : "#D8B4FE",
+      iconColor: isDark ? "#D8B4FE" : "#7C3AED",
+      textColor: isDark ? "#F3E8FF" : "#581C87",
+    },
+    period: {
+      backgroundColor: isDark ? "rgba(245,158,11,0.18)" : "#FFF1D6",
+      borderColor: isDark ? "rgba(245,158,11,0.34)" : "#FCD88A",
+      iconColor: isDark ? "#FCD34D" : "#B45309",
+      textColor: isDark ? "#FEF3C7" : "#78350F",
+    },
+  };
+  const cashCollectionColors = {
+    accent: isDark ? "#22D3EE" : "#0891B2",
+    accentSoft: isDark ? "rgba(34,211,238,0.16)" : "#D9F4FA",
+  };
 
   return (
     <ScrollView
@@ -53,35 +139,63 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
         />
       }
     >
-      <DashboardErrorBanner dashboardError={dashboardError} hasShops={hasShops} palette={palette} style={styles.bannerSpacing} />
+      <DashboardErrorBanner
+        dashboardError={dashboardError}
+        hasShops={hasShops}
+        palette={palette}
+        style={{ marginBottom: 12 }}
+      />
 
-      <View style={styles.content}>
-        <View
-          style={[
-            styles.sectionCard,
-            adminShadow(palette.shadow, 0.05, 8, 16),
-            { backgroundColor: palette.card, borderColor: palette.border },
-          ]}
+      <YStack gap={14}>
+        <YStack
+          gap={16}
+          padding={16}
+          borderRadius={22}
+          borderWidth={1}
+          borderColor={palette.border}
+          backgroundColor={palette.card}
+          style={adminShadow(palette.shadow, 0.05, 8, 16)}
         >
-          <View style={[styles.sectionHeader, { paddingHorizontal: 0, paddingTop: 0 }]}>
-            <View style={styles.sectionHeaderText}>
-              <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Performance Snapshot</Text>
-              <Text style={[styles.sectionSubtitle, { color: palette.textMuted }]}>{subtitle}</Text>
-            </View>
-            <View style={styles.sectionBadge}>
-              <Text
-                style={[
-                  styles.sectionBadgeText,
-                  { color: palette.emeraldDark, backgroundColor: palette.emeraldSoft },
-                ]}
-              >
-                {visibleBillCount} bills
-              </Text>
-            </View>
-          </View>
+          <Stack
+            height={4}
+            width={76}
+            borderRadius={99}
+            backgroundColor={cashCollectionColors.accent}
+          />
 
-          <View style={styles.sectionBody}>
-            <View style={[styles.metricGrid, useCompactMetricCards && styles.metricGridCompact]}>
+          <YStack gap={12}>
+            <YStack minWidth={0} gap={4}>
+              <Text style={{ color: palette.textPrimary, fontSize: 20, lineHeight: 25, fontWeight: "900" }}>
+                Performance Snapshot
+              </Text>
+              <Text numberOfLines={2} style={{ color: palette.textMuted, fontSize: 12, lineHeight: 18 }}>
+                {subtitle}
+              </Text>
+            </YStack>
+
+            <XStack flexWrap="wrap" gap={10}>
+              <SnapshotChip
+                label="Scope"
+                value={selectedShopId ? selectedShopName : "All branches"}
+                icon={selectedShopId ? "storefront-outline" : "source-branch"}
+                {...snapshotColors.scope}
+              />
+              <SnapshotChip
+                label="Period"
+                value={analyticsReferenceLabel}
+                icon="calendar-clock"
+                {...snapshotColors.period}
+              />
+            </XStack>
+          </YStack>
+
+          <YStack gap={10}>
+            <XStack
+              flexDirection={useCompactMetricCards ? "column" : "row"}
+              flexWrap={useCompactMetricCards ? "nowrap" : "wrap"}
+              gap={12}
+              alignItems="stretch"
+            >
               {metricCards.map((metric) => (
                 <MetricCard
                   key={metric.key}
@@ -91,76 +205,18 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
                   note={metric.note}
                   noteIcon={metric.noteIcon}
                   icon={metric.icon}
-                  accent={metric.accent}
-                  accentSoft={metric.accentSoft}
+                  accent={metric.key === "cash" ? cashCollectionColors.accent : metric.accent}
+                  accentSoft={metric.key === "cash" ? cashCollectionColors.accentSoft : metric.accentSoft}
                   sparklineLabel={metric.sparklineLabel}
                   sparklineValues={metric.sparklineValues}
                   fullWidth={useCompactMetricCards}
                   palette={palette}
                 />
               ))}
-            </View>
-          </View>
-        </View>
-      </View>
+            </XStack>
+          </YStack>
+        </YStack>
+      </YStack>
     </ScrollView>
   );
-});
-
-const styles = StyleSheet.create({
-  bannerSpacing: {
-    marginBottom: 12,
-  },
-  content: {
-    gap: 14,
-  },
-  sectionCard: {
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 16,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 4,
-  },
-  sectionHeaderText: {
-    flex: 1,
-    gap: 3,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: "700",
-  },
-  sectionSubtitle: {
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  sectionBadge: {
-    justifyContent: "center",
-  },
-  sectionBadgeText: {
-    overflow: "hidden",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  sectionBody: {
-    marginTop: 12,
-    gap: 10,
-  },
-  metricGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    alignItems: "stretch",
-  },
-  metricGridCompact: {
-    flexDirection: "column",
-    flexWrap: "nowrap",
-  },
 });

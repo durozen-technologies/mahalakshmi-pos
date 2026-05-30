@@ -17,6 +17,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ["RUSTFS_ENDPOINT_URL"] = ""
+os.environ["RUSTFS_ACCESS_KEY_ID"] = ""
+os.environ["RUSTFS_SECRET_ACCESS_KEY"] = ""
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy import select  # noqa: E402
@@ -24,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
 from app.db.database import Base, seed_default_item_images, seed_defaults  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.models import DailyPrice, Item, Shop, User, UserRole  # noqa: E402
+from app.models import BaseUnit, DailyPrice, Item, Shop, UnitType, User, UserRole  # noqa: E402
 
 
 class AsyncSessionAdapter:
@@ -46,11 +49,20 @@ class AsyncSessionAdapter:
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         return self._session.execute(*args, **kwargs)
 
+    async def run_sync(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        return fn(self._session, *args, **kwargs)
+
     async def get(self, *args: Any, **kwargs: Any) -> Any:
         return self._session.get(*args, **kwargs)
 
     async def commit(self) -> None:
         self._session.commit()
+
+    async def rollback(self) -> None:
+        self._session.rollback()
+
+    async def delete(self, instance: Any) -> None:
+        self._session.delete(instance)
 
     async def refresh(self, instance: Any) -> None:
         self._session.refresh(instance)
@@ -122,6 +134,44 @@ class DatabaseHarness:
             )
         return entries
 
+    async def create_items_for_shop(
+        self,
+        shop_id: UUID,
+        item_names: tuple[str, ...] = ("Chicken", "Duck"),
+    ) -> list[Item]:
+        with self.session_factory() as session:
+            existing_items = session.scalars(
+                select(Item).where(Item.name.in_(item_names), Item.shop_id == shop_id)
+            ).all()
+            items_by_name = {item.name: item for item in existing_items}
+
+            template_items = session.scalars(
+                select(Item).where(Item.name.in_(item_names), Item.shop_id.is_(None))
+            ).all()
+            templates_by_name = {item.name: item for item in template_items}
+
+            for item_name in item_names:
+                if item_name in items_by_name:
+                    continue
+
+                template = templates_by_name.get(item_name)
+                item = Item(
+                    shop_id=shop_id,
+                    name=item_name,
+                    tamil_name=template.tamil_name if template else item_name,
+                    unit_type=template.unit_type if template else UnitType.WEIGHT,
+                    base_unit=template.base_unit if template else BaseUnit.KG,
+                    is_active=True,
+                )
+                session.add(item)
+                items_by_name[item_name] = item
+
+            session.commit()
+            for item in items_by_name.values():
+                session.refresh(item)
+
+            return [items_by_name[item_name] for item_name in item_names]
+
     async def create_admin_user(
         self, username: str = "admin", password: str = "password123"
     ) -> User:
@@ -168,9 +218,13 @@ class DatabaseHarness:
         price_date,
         prices_by_item_name: dict[str, str],
     ) -> list[DailyPrice]:
+        await self.create_items_for_shop(shop_id, tuple(prices_by_item_name.keys()))
         with self.session_factory() as session:
             items = session.scalars(
-                select(Item).where(Item.name.in_(tuple(prices_by_item_name.keys())))
+                select(Item).where(
+                    Item.name.in_(tuple(prices_by_item_name.keys())),
+                    Item.shop_id == shop_id,
+                )
             ).all()
             items_by_name = {item.name: item for item in items}
             prices: list[DailyPrice] = []

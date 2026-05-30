@@ -4,9 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_shop, require_roles
 from app.db.database import get_db
 from app.models import Shop, UserRole
-from app.schemas.billing import BillCheckoutRequest, BillRead
+from app.schemas.billing import (
+    BillCheckoutCommitRequest,
+    BillCheckoutPreviewRead,
+    BillCheckoutRequest,
+    BillRead,
+)
 from app.schemas.pricing import DailyPriceCreate, DailyPriceRead, ShopBootstrapResponse
-from app.services.billing import create_bill
+from app.services.billing import create_bill, preview_bill
 from app.services.pricing import create_daily_prices, get_shop_bootstrap, get_today_prices
 
 router = APIRouter(tags=["Shop"], dependencies=[Depends(require_roles(UserRole.SHOP_ACCOUNT))])
@@ -57,6 +62,22 @@ async def save_daily_prices(
 
 
 @router.post(
+    "/bills/preview",
+    response_model=BillCheckoutPreviewRead,
+    status_code=200,
+    response_model_exclude_unset=True,
+    summary="Preview Bill",
+)
+async def preview_checkout(
+    payload: BillCheckoutRequest,
+    db: AsyncSession = Depends(get_db),
+    shop: Shop = Depends(get_current_shop),
+) -> BillCheckoutPreviewRead:
+    """Validate and build a printable bill without saving billing data."""
+    return await preview_bill(db, shop, payload)
+
+
+@router.post(
     "/bills",
     response_model=BillRead,
     status_code=201,
@@ -64,9 +85,9 @@ async def save_daily_prices(
     summary="Checkout Bill",
 )
 async def checkout(
-    payload: BillCheckoutRequest,
+    payload: BillCheckoutCommitRequest,
     db: AsyncSession = Depends(get_db),
     shop: Shop = Depends(get_current_shop),
 ) -> BillRead:
-    """Create a paid bill for the signed-in shop using today's price book."""
+    """Save a paid bill after the signed-in shop has printed its receipt."""
     return await create_bill(db, shop, payload)

@@ -1,12 +1,15 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
   ListRenderItem,
+  Pressable,
   Text,
   View,
 } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -19,7 +22,7 @@ import { TextField } from "@/components/ui/text-field";
 
 import { useShopBootstrap } from "@/hooks/use-shop-bootstrap";
 import {
-  translateShopItemName,
+  getLocalizedItemName,
   useShopTranslation,
 } from "@/hooks/use-shop-translation";
 
@@ -36,20 +39,7 @@ import { ItemPriceRead, UUID } from "@/types/api";
 
 import { money, toQuantityString } from "@/utils/decimal";
 import { formatCurrency, formatUnit } from "@/utils/format";
-
-const ITEM_DISPLAY_ORDER = [
-  "Chicken",
-  "Chicken without skin",
-  "Country Chicken",
-  "Duck",
-  "Live Country Chicken",
-  "Live Chicken",
-  "Chicken Cleaning",
-] as const;
-
-const ITEM_DISPLAY_ORDER_INDEX = new Map<string, number>(
-  ITEM_DISPLAY_ORDER.map((item, index) => [item, index]),
-);
+import { cn } from "@/utils/cn";
 
 type ProductCardProps = {
   item: ItemPriceRead;
@@ -62,6 +52,68 @@ type ProductCardProps = {
   onChangeQuantity: (itemId: UUID, value: string) => void;
   onAddToCart: (item: ItemPriceRead, quantity: string) => void;
 };
+
+type BillingRefreshControlProps = {
+  title: string;
+  subtitle: string;
+  actionLabel: string;
+  loadingLabel: string;
+  loading: boolean;
+  onRefresh: () => void;
+};
+
+const BillingRefreshControl = memo(function BillingRefreshControl({
+  title,
+  subtitle,
+  actionLabel,
+  loadingLabel,
+  loading,
+  onRefresh,
+}: BillingRefreshControlProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={actionLabel}
+      accessibilityState={{ busy: loading, disabled: loading }}
+      disabled={loading}
+      onPress={onRefresh}
+      className={cn(
+        "w-full max-w-[820px] self-center rounded-[22px] border border-accentSoft bg-card px-4 py-3 shadow-soft",
+        loading && "opacity-90",
+      )}
+    >
+      <View className="flex-row items-center gap-3">
+        <View className="h-11 w-11 items-center justify-center rounded-[16px] bg-accentSoft">
+          {loading ? (
+            <ActivityIndicator color="#244734" />
+          ) : (
+            <MaterialCommunityIcons name="sync" size={22} color="#244734" />
+          )}
+        </View>
+
+        <View className="min-w-0 flex-1">
+          <Text className="text-[11px] font-semibold uppercase tracking-[1.2px] text-accentDeep">
+            {loading ? loadingLabel : actionLabel}
+          </Text>
+          <Text className="mt-0.5 text-base font-bold text-ink" numberOfLines={1}>
+            {title}
+          </Text>
+          <Text className="mt-0.5 text-xs leading-5 text-muted" numberOfLines={2}>
+            {subtitle}
+          </Text>
+        </View>
+
+        <View className="h-9 w-9 items-center justify-center rounded-full bg-surface">
+          <MaterialCommunityIcons
+            name="chevron-right"
+            size={22}
+            color="#6C7A70"
+          />
+        </View>
+      </View>
+    </Pressable>
+  );
+});
 
 const ProductCard = memo(
   ({
@@ -79,36 +131,44 @@ const ProductCard = memo(
       ? resolveApiUrl(item.image_path)
       : "";
 
+    const hasPrice = Boolean(item.current_price && money(item.current_price).greaterThan(0));
+
     return (
-      <Card className="mb-4 rounded-2xl border border-black/5 bg-white p-4 shadow-sm shadow-black/5">
-        <View className="flex-row gap-4">
+      <Card className={cn("mb-4 overflow-hidden", !hasPrice && "opacity-80")}>
+        <View className="flex-row gap-3">
           {itemImageUri ? (
-            <Image
-              source={{ uri: itemImageUri }}
-              resizeMode="cover"
-              fadeDuration={150}
-              className="h-24 w-24 rounded-xl bg-[#F3F4F6]"
-            />
+            <View
+              className="w-[108px] overflow-hidden rounded-[18px] border border-border/70 bg-surface"
+              style={{ aspectRatio: 1 }}
+            >
+              <Image
+                source={{ uri: itemImageUri }}
+                resizeMode="cover"
+                fadeDuration={150}
+                className="h-full w-full bg-surface"
+              />
+            </View>
           ) : (
-            <View className="h-24 w-24 rounded-xl bg-[#F3F4F6]" />
+            <View
+              className="w-[108px] items-center justify-center rounded-[18px] border border-dashed border-border bg-surface"
+              style={{ aspectRatio: 1 }}
+            >
+              <MaterialCommunityIcons name="food-drumstick-outline" size={28} color="#6C7A70" />
+            </View>
           )}
 
-          <View className="flex-1 justify-between">
-            <View>
-              <View className="flex-row items-start justify-between gap-2">
-                <View className="flex-1">
-                  <Text className="text-lg font-semibold text-[#111827]">
-                    {itemName}
-                  </Text>
+          <View className="min-w-0 flex-1">
+            <View className="min-w-0">
+              <Text className="text-[17px] font-bold leading-6 text-ink" numberOfLines={2}>
+                {itemName}
+              </Text>
 
-                  <Text className="mt-1 text-sm text-[#6B7280]">
-                    {priceText}
-                  </Text>
-                </View>
-              </View>
+              <Text className="mt-1 text-sm font-semibold text-accentDeep">
+                {priceText}
+              </Text>
             </View>
 
-            <View className="mt-4 gap-3">
+            <View className="mt-3 gap-3">
               <TextField
                 label={quantityLabel}
                 keyboardType="decimal-pad"
@@ -122,8 +182,7 @@ const ProductCard = memo(
               <Button
                 label={buttonLabel}
                 onPress={() => onAddToCart(item, quantity)}
-                disabled={!item.current_price}
-                className="h-11 rounded-xl bg-[#163020]"
+                disabled={!hasPrice}
               />
             </View>
           </View>
@@ -167,30 +226,39 @@ const CartLine = memo(
     removeButtonLabel,
     onRemove,
   }: CartLineProps) => (
-    <Card className="mb-4 rounded-2xl border border-black/5 bg-white p-4 shadow-sm shadow-black/5">
-      <View className="flex-row items-start justify-between gap-3">
-        <View className="flex-1">
-          <Text className="text-base font-semibold text-[#111827]">
-            {itemName}
-          </Text>
-          <Text className="mt-1 text-sm text-[#6B7280]">
-            {quantitySummary}
-          </Text>
-          <Text className="mt-3 text-xs text-[#6B7280]">
-            {removeHelpText}
-          </Text>
+    <Card className="mb-3">
+      <View className="flex-row items-start gap-3">
+        <View className="h-10 w-10 items-center justify-center rounded-[14px] bg-accentSoft">
+          <MaterialCommunityIcons name="basket-outline" size={18} color="#244734" />
         </View>
 
-        <View className="items-end gap-3">
-          <Text className="text-base font-bold text-[#111827]">
-            {totalText}
-          </Text>
-          <Button
-            label={removeButtonLabel}
-            onPress={() => onRemove(item.item_id)}
-            variant="secondary"
-            size="sm"
-          />
+        <View className="min-w-0 flex-1">
+          <View className="flex-row items-start justify-between gap-3">
+            <View className="min-w-0 flex-1">
+              <Text className="text-base font-bold leading-6 text-ink" numberOfLines={2}>
+                {itemName}
+              </Text>
+              <Text className="mt-1 text-sm leading-5 text-muted">
+                {quantitySummary}
+              </Text>
+            </View>
+
+            <Text className="text-right text-base font-bold text-ink">
+              {totalText}
+            </Text>
+          </View>
+
+          <View className="mt-3 flex-row items-center justify-between gap-3 border-t border-border/70 pt-3">
+            <Text className="flex-1 text-xs leading-5 text-muted">
+              {removeHelpText}
+            </Text>
+            <Button
+              label={removeButtonLabel}
+              onPress={() => onRemove(item.item_id)}
+              variant="secondary"
+              size="sm"
+            />
+          </View>
         </View>
       </View>
     </Card>
@@ -235,15 +303,12 @@ export function BillingScreen({
     if (!bootstrap) return [];
 
     return [...bootstrap.items].sort((a, b) => {
-      const left =
-        ITEM_DISPLAY_ORDER_INDEX.get(a.item_name) ??
-        Number.MAX_SAFE_INTEGER;
-
-      const right =
-        ITEM_DISPLAY_ORDER_INDEX.get(b.item_name) ??
-        Number.MAX_SAFE_INTEGER;
-
-      return left - right;
+      const leftSort = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+      const rightSort = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+      if (leftSort !== rightSort) {
+        return leftSort - rightSort;
+      }
+      return a.item_name.localeCompare(b.item_name);
     });
   }, [bootstrap]);
 
@@ -251,7 +316,7 @@ export function BillingScreen({
     const entries = orderedItems.map(
       (item): [UUID, string] => [
         item.item_id,
-        translateShopItemName(language, item.item_name),
+        getLocalizedItemName(language, item.item_name, item.item_tamil_name),
       ],
     );
 
@@ -281,7 +346,7 @@ export function BillingScreen({
         translatedItemNames.get(item.item_id) ??
         item.item_name;
 
-      if (!item.current_price) {
+      if (!item.current_price || money(item.current_price).lessThanOrEqualTo(0)) {
         Alert.alert(
           t("billing.alertPriceMissingTitle"),
           t("billing.alertPriceMissingMessage", {
@@ -309,6 +374,7 @@ export function BillingScreen({
       const cartLine: CartItem = {
         item_id: item.item_id,
         item_name: item.item_name,
+        item_tamil_name: item.item_tamil_name,
         base_unit: item.base_unit,
         unit_type: item.unit_type,
         price_per_unit: item.current_price,
@@ -339,6 +405,10 @@ export function BillingScreen({
     [removeItem],
   );
 
+  const handleRefreshBilling = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
   const renderProduct: ListRenderItem<ItemPriceRead> =
     useCallback(
       ({ item }) => {
@@ -360,14 +430,14 @@ export function BillingScreen({
               item.item_name
             }
             priceText={`${
-              item.current_price
+              item.current_price && money(item.current_price).greaterThan(0)
                 ? formatCurrency(item.current_price)
                 : t("common.pricePending")
             } / ${formatUnit(item.base_unit)}`}
             quantityLabel={quantityLabel}
             quantityPlaceholder={quantityPlaceholder}
             buttonLabel={
-              item.current_price
+              item.current_price && money(item.current_price).greaterThan(0)
                 ? t("action.addToCart")
                 : t("action.awaitingPrice")
             }
@@ -406,7 +476,7 @@ export function BillingScreen({
               item={item}
               itemName={
                 translatedItemNames.get(item.item_id) ??
-                item.item_name
+                getLocalizedItemName(language, item.item_name, item.item_tamil_name)
               }
               quantitySummary={`${item.quantity} ${formatUnit(item.base_unit)} x ${formatCurrency(item.price_per_unit)}`}
               totalText={formatCurrency(
@@ -421,25 +491,36 @@ export function BillingScreen({
           ))
         )}
 
-        <Card className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm shadow-black/5">
-          <Text className="text-sm font-semibold text-[#111827]">
-            {t("common.savedPrinter")}
-          </Text>
-          <Text className="mt-2 text-sm leading-6 text-[#6B7280]">
-            {preferredPrinter
-              ? preferredPrinter.name
-              : t("printer.noPrinterSavedDescription")}
-          </Text>
-          <Button
-            label={t("action.managePrinter")}
-            onPress={() => navigation.navigate("PrinterSetup")}
-            variant="secondary"
-            className="mt-4"
-          />
+        <Card className="mt-2">
+          <View className="flex-row items-start gap-3">
+            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-surface">
+              <MaterialCommunityIcons
+                name={preferredPrinter ? "printer-check" : "printer-alert"}
+                size={21}
+                color={preferredPrinter ? "#244734" : "#925F12"}
+              />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm font-bold text-ink">
+                {t("common.savedPrinter")}
+              </Text>
+              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
+                {preferredPrinter
+                  ? preferredPrinter.name
+                  : t("printer.noPrinterSavedDescription")}
+              </Text>
+              <Button
+                label={t("action.managePrinter")}
+                onPress={() => navigation.navigate("PrinterSetup")}
+                variant="secondary"
+                className="mt-4 self-start"
+              />
+            </View>
+          </View>
         </Card>
       </View>
     ),
-    [cartItems, handleRemoveItem, navigation, preferredPrinter, t, translatedItemNames],
+    [cartItems, handleRemoveItem, language, navigation, preferredPrinter, t, translatedItemNames],
   );
 
   if (loading && !bootstrap) {
@@ -487,9 +568,20 @@ export function BillingScreen({
   }
 
   return (
-    <View className="flex-1 bg-[#F7F7F5]">
-      <Screen scroll={false}>
-        
+    <View className="flex-1 bg-cream">
+      <Screen
+        scroll={false}
+        topSlot={
+          <BillingRefreshControl
+            title={t("billing.refreshPricesTitle")}
+            subtitle={t("billing.refreshPricesSubtitle")}
+            actionLabel={t("action.refreshBilling")}
+            loadingLabel={t("billing.refreshingPrices")}
+            loading={loading}
+            onRefresh={handleRefreshBilling}
+          />
+        }
+      >
         <FlatList
           style={{ flex: 1 }}
           data={orderedItems}

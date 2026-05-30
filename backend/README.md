@@ -118,14 +118,14 @@ Install dev tools:
 uv sync --group dev
 ```
 
-Start the API (recommended — auto-migrates on start and when schema files change):
+Start the API:
 
 ```bash
 # from repo root
 make backend-dev
 
 # or from backend/
-uv run python scripts/dev.py
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 One-off migration:
@@ -135,7 +135,7 @@ make backend-migrate
 # or: uv run python migrate.py
 ```
 
-Plain uvicorn (migrations still run via FastAPI lifespan on each reload):
+Plain uvicorn after migrations:
 
 ```bash
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -163,25 +163,21 @@ This backend uses `uvicorn-worker` as the Gunicorn worker class.
 
 On startup the backend:
 
-- creates tables from the SQLAlchemy models
-- ensures DB indexes exist
-- drops the legacy `shops.code` column if still present
 - validates that key identifier columns use UUID-compatible schema
-- ensures `items.image_data`, `items.image_object_key`, and `items.image_content_type` exist
-- upserts the default item catalog
-- refreshes bundled default item images
-- mirrors default images to RustFS when RustFS is configured and reachable
+- leaves item catalog creation to admin users; startup no longer seeds fixed/default items
+- stores new item images in RustFS when RustFS is configured
+- migrates legacy `items.image_data` rows to RustFS when RustFS is configured, then drops the legacy column
 
 In production, startup fails fast if database initialization fails.
 
 ## Database migrations
 
-Migrations are **not** Alembic-based. [`migrate.py`](migrate.py) runs `initialize_database()` (see [`app/db/database.py`](app/db/database.py)).
+Schema migrations are Alembic-based. [`migrate.py`](migrate.py) first migrates any legacy `items.image_data` bytes to RustFS, then runs `alembic upgrade head`, then runs idempotent data tasks from [`app/db/database.py`](app/db/database.py).
 
 | Environment | Command / trigger |
 |-------------|-------------------|
 | Local one-off | `make backend-migrate` or `uv run python migrate.py` |
-| Local dev server | `make backend-dev` (watches schema paths) |
+| Local dev server | run `make backend-migrate`, then `make backend-dev` |
 | Docker / production image | [`docker-entrypoint.sh`](docker-entrypoint.sh) runs `migrate.py` before Gunicorn |
 | Production CI/CD | Root [`scripts/deploy-prod.sh`](../scripts/deploy-prod.sh) runs `migrate.py` on the pulled image **before** recreating the backend (triggered by pushes to `backend/**` on `main`) |
 
@@ -232,7 +228,7 @@ So inside the backend container:
 - `localhost` means the container itself
 - `host.docker.internal` is the host machine
 
-If RustFS is enabled but unavailable, the backend keeps database copies of item images and logs the RustFS failure.
+Item images are stored and served from RustFS. New image uploads fail if RustFS is not configured or unavailable. Production startup requires RustFS configuration. Existing legacy `items.image_data` bytes are migrated to RustFS and the legacy column is dropped by Alembic; the application no longer reads or writes image bytes from Postgres.
 
 ## Middleware And Security
 
@@ -390,5 +386,4 @@ uv run ruff check app --select F401,F841
 
 ## Current Gaps
 
-- no Alembic revision history (schema changes are applied in `initialize_database()`)
 - rate limiting is still in-memory per process, so multiple workers apply limits independently

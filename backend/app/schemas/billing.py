@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..models.enums import BaseUnit
+from ..models.enums import BaseUnit, UnitType
 from .common import ORMModel
 
 
@@ -29,9 +29,16 @@ class BillCheckoutRequest(BaseModel):
         return self
 
 
+class BillCheckoutCommitRequest(BillCheckoutRequest):
+    checkout_token: str = Field(min_length=1)
+
+
 class BillLineRead(ORMModel):
     item_id: UUID
     item_name: str
+    item_tamil_name: str | None = None
+    item_unit_type: UnitType | None = None
+    item_base_unit: BaseUnit | None = None
     quantity: Decimal
     unit: BaseUnit
     price_per_unit: Decimal
@@ -64,3 +71,7 @@ class BillRead(ORMModel):
     items: list[BillLineRead]
     payment: PaymentRead
     receipt: ReceiptRead
+
+
+class BillCheckoutPreviewRead(BillRead):
+    checkout_token: str

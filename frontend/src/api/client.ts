@@ -27,6 +27,19 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 const FAILOVER_REQUEST_TIMEOUT_MS = 3500;
 const PROBE_REQUEST_TIMEOUT_MS = 1200;
 const HEALTHCHECK_PATH = "/api/v1/health";
+const API_FIELD_LABELS: Record<string, string> = {
+  base_unit: "Base unit",
+  category: "Category",
+  category_id: "Category",
+  custom_attributes: "Custom attributes",
+  image: "Image",
+  is_active: "Active status",
+  name: "English name",
+  remove_image: "Remove image",
+  sort_order: "Sort order",
+  tamil_name: "Tamil name",
+  unit_type: "Unit type",
+};
 
 let lastReachableBaseUrl = "";
 let hydratedStoredBaseUrl = false;
@@ -120,6 +133,101 @@ function getNetworkFailureMessage() {
   }
 
   return `Cannot reach API at ${displayedApiBaseUrl}. Check that the backend is running and avoid localhost or 127.0.0.1 from Expo Go on Android. Use your computer's LAN IP or let the app rewrite it automatically.`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getResponseFieldLabel(field: string) {
+  const normalizedField = field.trim();
+  if (!normalizedField) {
+    return "";
+  }
+  return (
+    API_FIELD_LABELS[normalizedField] ||
+    normalizedField
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase())
+  );
+}
+
+function getValidationLocationLabel(location: unknown) {
+  if (!Array.isArray(location) || location.length === 0) {
+    return "";
+  }
+
+  const field = [...location]
+    .reverse()
+    .find((part) => typeof part === "string" && !["body", "form", "query", "path"].includes(part));
+
+  return typeof field === "string" ? getResponseFieldLabel(field) : "";
+}
+
+function formatValidationDetailItem(item: unknown) {
+  if (typeof item === "string") {
+    return item;
+  }
+  if (!isRecord(item)) {
+    return "";
+  }
+
+  const message =
+    typeof item.msg === "string"
+      ? item.msg
+      : typeof item.message === "string"
+        ? item.message
+        : "";
+  if (!message) {
+    return "";
+  }
+
+  const locationLabel = getValidationLocationLabel(item.loc);
+  return locationLabel ? `${locationLabel}: ${message}` : message;
+}
+
+function getResponseMessage(data: unknown) {
+  if (!isRecord(data)) {
+    return "";
+  }
+
+  const detail = data.detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail.length > 0) {
+    const messages = detail.map(formatValidationDetailItem).filter(Boolean);
+    if (messages.length > 0) {
+      return messages.join("\n");
+    }
+  }
+  if (typeof data.message === "string") {
+    return data.message;
+  }
+  if (typeof data.error === "string") {
+    return data.error;
+  }
+
+  return "";
+}
+
+function isFormDataRequestBody(data: unknown) {
+  return typeof FormData !== "undefined" && data instanceof FormData;
+}
+
+function clearContentTypeHeader(headers: InternalAxiosRequestConfig["headers"]) {
+  const mutableHeaders = headers as {
+    delete?: (headerName: string) => void;
+  } & Record<string, unknown>;
+
+  if (typeof mutableHeaders.delete === "function") {
+    mutableHeaders.delete("Content-Type");
+    mutableHeaders.delete("content-type");
+    return;
+  }
+
+  delete mutableHeaders["Content-Type"];
+  delete mutableHeaders["content-type"];
 }
 
 function getBaseUrlCandidates(config: RetryableAxiosConfig) {
@@ -240,12 +348,9 @@ function getErrorMessage(error: unknown) {
     return getNetworkFailureMessage();
   }
 
-  const detail = error.response?.data?.detail;
-  if (typeof detail === "string") {
-    return detail;
-  }
-  if (Array.isArray(detail) && detail.length > 0) {
-    return detail.map((item) => item.msg).join(", ");
+  const responseMessage = getResponseMessage(error.response.data);
+  if (responseMessage) {
+    return responseMessage;
   }
   return error.message || "Request failed";
 }
@@ -287,6 +392,9 @@ apiClient.interceptors.request.use(async (config) => {
   const token = useAuthStore.getState().token;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (isFormDataRequestBody(config.data)) {
+    clearContentTypeHeader(config.headers);
   }
   return config;
 });

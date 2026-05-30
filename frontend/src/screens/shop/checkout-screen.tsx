@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import { Controller, Control, useForm, useWatch } from "react-hook-form";
 
-import { checkoutBill } from "@/api/billing";
+import { checkoutBill, previewBill } from "@/api/billing";
 import { toApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -157,7 +157,7 @@ const CheckoutPaymentStatus = memo(function CheckoutPaymentStatus({
 });
 
 export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
-  const { t } = useShopTranslation();
+  const { language, t } = useShopTranslation();
   const cartItems = useCartStore((state) => state.items);
   const resetCart = useCartStore((state) => state.resetCart);
   const preferredPrinter = usePrinterStore((state) => state.preferredPrinter);
@@ -211,7 +211,7 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
 
     setSubmitting(true);
     try {
-      const bill = await checkoutBill({
+      const checkoutPayload = {
         items: cartItems.map((item) => ({
           item_id: item.item_id,
           quantity: item.base_unit === "unit" ? money(item.quantity).toFixed(0) : money(item.quantity).toString(),
@@ -220,19 +220,25 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
           cash_amount: toMoneyString(values.cashAmount),
           upi_amount: toMoneyString(values.upiAmount),
         },
-      });
-
-      checkoutCompletedRef.current = true;
+      };
+      const billPreview = await previewBill(checkoutPayload);
 
       try {
-        await startReceiptImagePrintJob([bill], preferredPrinter);
+        await startReceiptImagePrintJob([billPreview], preferredPrinter, language);
       } catch (error) {
         Alert.alert(
           t("printer.connectionFailedTitle"),
           error instanceof Error ? error.message : t("checkout.unableToOpenPrinterMessage"),
         );
+        return;
       }
 
+      await checkoutBill({
+        ...checkoutPayload,
+        checkout_token: billPreview.checkout_token,
+      });
+
+      checkoutCompletedRef.current = true;
       resetCart();
       form.reset({
         cashAmount: "0",

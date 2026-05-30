@@ -134,6 +134,10 @@ class Settings(BaseSettings):
                 self.allowed_hosts_raw = render_external_hostname
             else:
                 raise ValueError("ALLOWED_HOSTS must be explicitly set in production")
+        if not self.rustfs_enabled:
+            raise ValueError(
+                "RustFS must be configured in production because item images are RustFS-only"
+            )
 
         return self
 

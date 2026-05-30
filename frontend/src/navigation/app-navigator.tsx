@@ -11,6 +11,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import { ShopHeaderActions, ShopHeaderTitle } from "@/components/shop-header";
 import { LoadingState } from "@/components/ui/loading-state";
+import { appTheme } from "@/constants/theme";
 import { useAuthHydration } from "@/hooks/use-auth-hydration";
 import { ShopTranslationKey } from "@/hooks/use-shop-translation";
 import { AppStackParamList } from "@/navigation/types";
@@ -22,14 +23,14 @@ const Stack = createNativeStackNavigator<AppStackParamList>();
 
 // ── Design Tokens (extracted from your existing #F7F1E8) ─────────────
 const COLORS = {
-  background: "#F7F1E8",
-  textPrimary: "#1E2B22",
-  textSecondary: "#5A6B5F",
-  accent: "#2D5A3D",
-  accentLight: "#E8F5E9",
-  border: "#D4CFC5",
-  danger: "#B71C1C",
-  white: "#FFFFFF",
+  background: appTheme.background,
+  textPrimary: appTheme.text,
+  textSecondary: appTheme.muted,
+  accent: appTheme.accent,
+  accentLight: appTheme.accentSoft,
+  border: appTheme.border,
+  danger: appTheme.danger,
+  white: appTheme.card,
   overlay: "rgba(30, 43, 34, 0.4)",
 } as const;
 
@@ -45,6 +46,14 @@ const screenOptions = {
 const getLoginScreen = () => require("@/screens/auth/login-screen").LoginScreen;
 const getAdminDashboardScreen = () =>
   require("@/screens/admin/admin-dashboard-screen").AdminDashboardScreen;
+const getAdminItemsCatalogueScreen = () =>
+  require("@/screens/admin/admin-items-route-screen").AdminItemsCatalogueScreen;
+const getAdminShopItemsScreen = () =>
+  require("@/screens/admin/admin-items-route-screen").AdminShopItemsScreen;
+const getAdminItemPricesScreen = () =>
+  require("@/screens/admin/admin-items-route-screen").AdminItemPricesScreen;
+const getAdminItemEditorScreen = () =>
+  require("@/screens/admin/admin-item-editor-screen").AdminItemEditorScreen;
 const getBillingScreen = () =>
   require("@/screens/shop/billing-screen").BillingScreen;
 const getCheckoutScreen = () =>
@@ -209,6 +218,26 @@ function AdminStack() {
         getComponent={getAdminDashboardScreen}
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="AdminItemsCatalogue"
+        getComponent={getAdminItemsCatalogueScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="AdminShopItems"
+        getComponent={getAdminShopItemsScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="AdminItemPrices"
+        getComponent={getAdminItemPricesScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="AdminItemEditor"
+        getComponent={getAdminItemEditorScreen}
+        options={{ headerShown: false }}
+      />
     </Stack.Navigator>
   );
 }
@@ -284,25 +313,6 @@ export function AppNavigator() {
   const hydrated = useAuthHydration();
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
-  const logout = useSessionReset();
-
-  // Memoized header renderers for the main component scope
-  const renderBillingHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.billing" />,
-    []
-  );
-  const renderCheckoutHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.checkout" />,
-    []
-  );
-  const renderPrinterHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.printerSetup" />,
-    []
-  );
-  const renderHeaderActions = useCallback(
-    () => <AnimatedHeaderActions onLogout={logout} />,
-    [logout]
-  );
 
   // Original effect: clear cart/prices when logged out
   useEffect(() => {
@@ -319,62 +329,16 @@ export function AppNavigator() {
 
   // Early return: not authenticated
   if (!token || !user) {
-    return (
-      <Stack.Navigator initialRouteName="Login" screenOptions={screenOptions}>
-        <Stack.Screen
-          name="Login"
-          getComponent={getLoginScreen}
-          options={{ headerShown: false }}
-        />
-      </Stack.Navigator>
-    );
+    return <AuthStack />;
   }
 
   // Admin route
   if (user.role === "admin") {
-    return (
-      <Stack.Navigator
-        initialRouteName="AdminDashboard"
-        screenOptions={screenOptions}
-      >
-        <Stack.Screen
-          name="AdminDashboard"
-          getComponent={getAdminDashboardScreen}
-          options={{ headerShown: false }}
-        />
-      </Stack.Navigator>
-    );
+    return <AdminStack />;
   }
 
   // Shop route (default)
-  return (
-    <Stack.Navigator initialRouteName="Billing" screenOptions={screenOptions}>
-      <Stack.Screen
-        name="Billing"
-        getComponent={getBillingScreen}
-        options={{
-          headerTitle: renderBillingHeaderTitle,
-          headerRight: renderHeaderActions,
-        }}
-      />
-      <Stack.Screen
-        name="Checkout"
-        getComponent={getCheckoutScreen}
-        options={{
-          headerTitle: renderCheckoutHeaderTitle,
-          headerRight: renderHeaderActions,
-        }}
-      />
-      <Stack.Screen
-        name="PrinterSetup"
-        getComponent={getPrinterSetupScreen}
-        options={{
-          headerTitle: renderPrinterHeaderTitle,
-          headerRight: renderHeaderActions,
-        }}
-      />
-    </Stack.Navigator>
-  );
+  return <ShopStack />;
 }
 
 // ── Styles ───────────────────────────────────────────────────────────

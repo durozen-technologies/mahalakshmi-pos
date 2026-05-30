@@ -6,10 +6,6 @@ import {
   fetchAdminBillDetail,
   fetchDailyBills,
   fetchDashboardBootstrap,
-  fetchGlobalPriceBootstrap,
-  fetchShopPriceBootstrap,
-  saveGlobalDailyPrices,
-  saveShopDailyPrices,
   updateShop,
   updateShopStatus,
 } from "@/api/admin";
@@ -18,10 +14,8 @@ import type {
   AdminBillSummary,
   AnalyticsPeriod,
   BillRead,
-  DailyPriceCreate,
   ItemSalesSummary,
   PaymentSplitSummary,
-  ShopBootstrapResponse,
   ShopRead,
   ShopSalesSummary,
   ShopUpdate,
@@ -65,8 +59,6 @@ export function useAdminDashboardData({
   const [refreshing, setRefreshing] = useState(false);
   const [isOfflineSnapshot, setIsOfflineSnapshot] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
-  const [priceLoading, setPriceLoading] = useState(false);
-  const [priceBootstrap, setPriceBootstrap] = useState<ShopBootstrapResponse | null>(null);
   const [dashboardData, setDashboardData] = useState<{
     shops: ShopRead[];
     salesSummary: ShopSalesSummary[];
@@ -96,12 +88,12 @@ export function useAdminDashboardData({
   const mountedRef = useRef(true);
   const dashboardRequestIdRef = useRef(0);
   const dailyBillsLoadMoreInFlightRef = useRef(false);
-  const globalPriceBootstrapCacheRef = useRef<ShopBootstrapResponse | null>(null);
-  const shopPriceBootstrapCacheRef = useRef(new Map<UUID, ShopBootstrapResponse>());
   const billDetailCacheRef = useRef(new Map<UUID, BillRead>());
   const billDetailRequestRef = useRef(new Map<UUID, Promise<BillRead>>());
 
   useEffect(() => {
+    mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
     };
@@ -218,63 +210,6 @@ export function useAdminDashboardData({
     selectedShopId,
   ]);
 
-  const loadPriceBootstrap = useCallback(async (forceRefresh = false) => {
-    if (!forceRefresh) {
-      const cachedBootstrap = globalPriceBootstrapCacheRef.current ?? priceBootstrap;
-      if (cachedBootstrap) {
-        if (priceBootstrap !== cachedBootstrap) {
-          setPriceBootstrap(cachedBootstrap);
-        }
-        return cachedBootstrap;
-      }
-    }
-
-    setPriceLoading(true);
-    try {
-      const bootstrap = await fetchGlobalPriceBootstrap();
-      globalPriceBootstrapCacheRef.current = bootstrap;
-      setPriceBootstrap(bootstrap);
-      return bootstrap;
-    } catch (error) {
-      throw new Error(toApiError(error).message);
-    } finally {
-      setPriceLoading(false);
-    }
-  }, [priceBootstrap]);
-
-  const loadShopPriceBootstrap = useCallback(async (shopId: UUID, forceRefresh = false) => {
-    if (!forceRefresh) {
-      const cachedBootstrap = shopPriceBootstrapCacheRef.current.get(shopId);
-      if (cachedBootstrap) {
-        setPriceBootstrap(cachedBootstrap);
-        return cachedBootstrap;
-      }
-    }
-
-    setPriceBootstrap(null);
-    setPriceLoading(true);
-    try {
-      const bootstrap = await fetchShopPriceBootstrap(shopId);
-      shopPriceBootstrapCacheRef.current.set(shopId, bootstrap);
-      setPriceBootstrap(bootstrap);
-      return bootstrap;
-    } catch (error) {
-      throw new Error(toApiError(error).message);
-    } finally {
-      setPriceLoading(false);
-    }
-  }, []);
-
-  const saveShopPriceBook = useCallback(async (shopId: UUID, payload: DailyPriceCreate) => {
-    try {
-      await saveShopDailyPrices(shopId, payload);
-      shopPriceBootstrapCacheRef.current.delete(shopId);
-      await loadDashboard(true);
-    } catch (error) {
-      throw new Error(toApiError(error).message);
-    }
-  }, [loadDashboard]);
-
   const applyShopUpdate = useCallback((updatedShop: ShopRead) => {
     setDashboardData((current) => ({
       ...current,
@@ -376,16 +311,6 @@ export function useAdminDashboardData({
     }
   }, [loadDashboard]);
 
-  const saveGlobalPriceBook = useCallback(async (payload: DailyPriceCreate) => {
-    try {
-      await saveGlobalDailyPrices(payload);
-      globalPriceBootstrapCacheRef.current = null;
-      await Promise.all([loadPriceBootstrap(true), loadDashboard(true)]);
-    } catch (error) {
-      throw new Error(toApiError(error).message);
-    }
-  }, [loadDashboard, loadPriceBootstrap]);
-
   const loadBillDetail = useCallback(async (billId: UUID): Promise<BillRead> => {
     const cachedBill = billDetailCacheRef.current.get(billId);
     if (cachedBill) {
@@ -432,18 +357,11 @@ export function useAdminDashboardData({
     loadBillDetail,
     loadDashboard,
     loadMoreBills,
-    loadPriceBootstrap,
-    loadShopPriceBootstrap,
     loading,
     paymentSummary: dashboardData.paymentSummary,
-    priceBootstrap,
-    priceLoading,
     refreshing,
     salesSummary: dashboardData.salesSummary,
-    saveGlobalPriceBook,
-    saveShopPriceBook,
     selectedShopName,
-    setPriceBootstrap,
     shopRows,
     shops: dashboardData.shops,
     updateBranch,

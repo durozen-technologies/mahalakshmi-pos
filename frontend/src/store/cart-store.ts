@@ -6,6 +6,7 @@ import { money } from "@/utils/decimal";
 export type CartItem = {
   item_id: UUID;
   item_name: string;
+  item_tamil_name?: string | null;
   base_unit: BaseUnit;
   unit_type: UnitType;
   price_per_unit: string;
@@ -46,7 +47,8 @@ export const useCartStore = create<CartState>((set) => ({
     })),
   removeItem: (itemId) =>
     set((state) => ({ items: state.items.filter((item) => item.item_id !== itemId) })),
-  resetCart: () => set({ items: [] }),
+  resetCart: () =>
+    set((state) => (state.items.length === 0 ? state : { items: [] })),
 }));
 
 export function getCartTotal(items: CartItem[]) {

@@ -1,6 +1,7 @@
 import importlib
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 from uuid import UUID
 
@@ -22,6 +23,7 @@ ConversationStore = bot_service.ConversationStore
 IncomingUserMessage = schemas.IncomingUserMessage
 Settings = importlib.import_module("app.config").Settings
 resolve_branch_selection = bot_service.resolve_branch_selection
+parse_date_range = bot_service.parse_date_range
 resolve_preset_range = bot_service.resolve_preset_range
 BranchRead = schemas.BranchRead
 
@@ -170,6 +172,21 @@ class BranchSelectionParsingTests(unittest.TestCase):
 
 
 class DateRangePresetTests(unittest.TestCase):
+    def test_parses_user_date_range_format(self) -> None:
+        self.assertEqual(
+            parse_date_range("01-05-2026 to 27-05-2026"),
+            (date(2026, 5, 1), date(2026, 5, 27)),
+        )
+
+    def test_parses_single_user_date_as_one_day_range(self) -> None:
+        self.assertEqual(
+            parse_date_range("27-05-2026"),
+            (date(2026, 5, 27), date(2026, 5, 27)),
+        )
+
+    def test_rejects_iso_date_range_format(self) -> None:
+        self.assertIsNone(parse_date_range("2026-05-01 to 2026-05-27"))
+
     def test_resolves_today_range(self) -> None:
         from_date, to_date = resolve_preset_range("range::today", "Asia/Kolkata")
         self.assertEqual(from_date, to_date)

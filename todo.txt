@@ -1,0 +1,27 @@
+In catalogue page:
+- It should only allow to add an item, and upate the item.
+- It contains of global items.
+- Set the category type to be added 1,2, 3..N (How much category does the user want to create), also it can be also deleted by the user.
+- While adding or editing(updating) the items, they want to set the type of category they created. 
+- it ca't set price, or allogate to shop.
+- remove  sort order, custom attributes.
+- remove allocated tag, active tag, missing price. bills and prices (in item card)
+- just show total, no need to show the allocated, need price, stale
+- remove 3 dot button, because there's already a edit button in item card.
+- Full name, and tamil name should be fully shown and displayed.
+
+In shop items page:
+- They should be select shop -> set the items want from the catalogue page(global items) , then select the needed items to be in the particular shop, not more that that(import).
+- No prices should be set here.
+- remove the tag like allocated, stale and stale rs, active bills and prices
+- remove set price and 3 dot button.
+- Add item from the existing added catalogue, and button to remove it.
+- Also remove the new button to added the items.
+- select tages, all,needed price, stale, priced and paused should be removed.
+
+In prices page:
+- to save the items page if they item price are edited.  Or use complete today button to go with the same prices of the items.
+- Remove the all tages, like all, missing, stale, current.
+- Image of the items also should be there in the item card.
+
+Important: Improve the api performance and query optimization, sclabe and effient functions. Improve the frontend performance.

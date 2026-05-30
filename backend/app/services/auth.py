@@ -2,27 +2,45 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models import DailyPrice, User, UserRole
+from app.models import DailyPrice, Item, ShopItemAllocation, User, UserRole
 from app.schemas.auth import LoginResponse, RegisterRequest, UserSession
 
 
 async def _requires_price_setup(db: AsyncSession, shop_id: UUID) -> bool:
-    has_today_price = await db.scalar(
+    has_missing_today_price = await db.scalar(
         select(
-            select(DailyPrice.id)
+            select(Item.id)
             .where(
-                DailyPrice.shop_id == shop_id,
-                DailyPrice.price_date == date.today(),
+                Item.is_active.is_(True),
+                or_(
+                    Item.shop_id == shop_id,
+                    and_(
+                        Item.shop_id.is_(None),
+                        select(ShopItemAllocation.id)
+                        .where(
+                            ShopItemAllocation.shop_id == shop_id,
+                            ShopItemAllocation.item_id == Item.id,
+                        )
+                        .exists(),
+                    ),
+                ),
+                ~select(DailyPrice.id)
+                .where(
+                    DailyPrice.shop_id == shop_id,
+                    DailyPrice.item_id == Item.id,
+                    DailyPrice.price_date == date.today(),
+                )
+                .exists(),
             )
             .exists()
         )
     )
-    return not bool(has_today_price)
+    return bool(has_missing_today_price)
 
 
 def _build_user_session(

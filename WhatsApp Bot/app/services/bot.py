@@ -33,7 +33,7 @@ DATE_RANGE_KEYWORDS = {"2", "custom", "custom range", "date range", "range", "da
 START_DEBOUNCE_SECONDS = 12
 BRANCH_CACHE_TTL_SECONDS = 30
 DATE_RANGE_PATTERN = re.compile(
-    r"^\s*(\d{4}-\d{2}-\d{2})(?:\s+to\s+(\d{4}-\d{2}-\d{2}))?\s*$",
+    r"^\s*(\d{2}-\d{2}-\d{4})(?:\s+to\s+(\d{2}-\d{2}-\d{4}))?\s*$",
     flags=re.IGNORECASE,
 )
 NUMBERED_BRANCH_PATTERN = re.compile(r"^\s*(\d+)\.\s*(.+?)\s*$")
@@ -150,14 +150,14 @@ class WhatsAppClient:
         reply_markup = Inline_keyboard(
             [
                 Inline_button("Today's sale", button_id="sales::today"),
-                Inline_button("Choose date range", button_id="sales::dates"),
+                Inline_button("Custom range", button_id="sales::dates"),
             ]
         )
         text = (
             f"Branch selected: {branch_name}\n"
             "Choose an option by tapping a button:\n"
             "1. Today's sale\n"
-            "2. Choose date range"
+            "2. Custom range"
         )
         await self.send_text(phone_number, text, reply_markup=reply_markup)
 
@@ -177,7 +177,9 @@ class WhatsAppClient:
             phone_number,
             (
                 f"Branch selected: {branch_name}\n"
-                "Choose a date range from the list below."
+                "Choose a date range from the list below, or send:\n"
+                "dd-mm-yyyy to dd-mm-yyyy\n"
+                "Example: 01-05-2026 to 27-05-2026"
             ),
             reply_markup=reply_markup,
         )
@@ -432,7 +434,7 @@ class BotOrchestrator:
         reply_markup = Inline_keyboard(
             [
                 Inline_button("Today's sale", button_id="sales::today"),
-                Inline_button("Choose date range", button_id="sales::dates"),
+                Inline_button("Custom range", button_id="sales::dates"),
             ]
         )
         await self.whatsapp_client.send_sales_summary(
@@ -610,14 +612,18 @@ def parse_date_range(raw_value: str) -> tuple[date, date] | None:
 
     start_text, end_text = match.groups()
     try:
-        from_date = date.fromisoformat(start_text)
-        to_date = date.fromisoformat(end_text or start_text)
+        from_date = parse_user_date(start_text)
+        to_date = parse_user_date(end_text or start_text)
     except ValueError:
         return None
 
     if to_date < from_date:
         return None
     return from_date, to_date
+
+
+def parse_user_date(raw_value: str) -> date:
+    return datetime.strptime(raw_value, "%d-%m-%Y").date()
 
 
 def resolve_preset_range(

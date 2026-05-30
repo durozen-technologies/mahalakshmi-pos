@@ -1,14 +1,17 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..models import BaseUnit, UnitType
 from .common import ORMModel
 
-AnalyticsPeriod = Literal["date", "month", "week", "year"]
+AnalyticsPeriod = Literal["date", "week", "month", "year"]
+JsonScalar = str | int | float | bool | None
+JsonObject = dict[str, JsonScalar]
 
 
 class ShopCreate(BaseModel):
@@ -35,29 +38,155 @@ class ShopRead(ORMModel):
     username: str
 
 
+class ItemCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ItemCategoryRead(ORMModel):
+    id: UUID
+    name: str
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
 class ItemCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    tamil_name: str = Field(min_length=1, max_length=120)
     unit_type: UnitType
     base_unit: BaseUnit
     is_active: bool = True
+    sort_order: int = 0
+    category_id: UUID | None = None
+    category: str | None = Field(default=None, max_length=80)
+    custom_attributes: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_unit_pair(self) -> "ItemCreate":
+        if self.unit_type == UnitType.WEIGHT and self.base_unit != BaseUnit.KG:
+            raise ValueError("Weight items must use kg as the base unit")
+        if self.unit_type == UnitType.COUNT and self.base_unit != BaseUnit.UNIT:
+            raise ValueError("Count items must use unit as the base unit")
+        return self
 
 
 class ItemUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    tamil_name: str = Field(min_length=1, max_length=120)
     unit_type: UnitType
     base_unit: BaseUnit
     is_active: bool
+    sort_order: int = 0
+    category_id: UUID | None = None
+    category: str | None = Field(default=None, max_length=80)
+    custom_attributes: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_unit_pair(self) -> "ItemUpdate":
+        if self.unit_type == UnitType.WEIGHT and self.base_unit != BaseUnit.KG:
+            raise ValueError("Weight items must use kg as the base unit")
+        if self.unit_type == UnitType.COUNT and self.base_unit != BaseUnit.UNIT:
+            raise ValueError("Count items must use unit as the base unit")
+        return self
+
+
+class ItemMetadataUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    tamil_name: str | None = Field(default=None, min_length=1, max_length=120)
+    unit_type: UnitType | None = None
+    base_unit: BaseUnit | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+    category_id: UUID | None = None
+    category: str | None = Field(default=None, max_length=80)
+    custom_attributes: JsonObject | None = None
+
+    @model_validator(mode="after")
+    def validate_unit_pair(self) -> "ItemMetadataUpdate":
+        if self.unit_type is None and self.base_unit is None:
+            return self
+        if self.unit_type == UnitType.WEIGHT and self.base_unit != BaseUnit.KG:
+            raise ValueError("Weight items must use kg as the base unit")
+        if self.unit_type == UnitType.COUNT and self.base_unit != BaseUnit.UNIT:
+            raise ValueError("Count items must use unit as the base unit")
+        if self.unit_type is None or self.base_unit is None:
+            raise ValueError("unit_type and base_unit must be updated together")
+        return self
 
 
 class ItemRead(ORMModel):
     id: UUID
+    shop_id: UUID | None = None
     name: str
+    tamil_name: str | None = None
     unit_type: UnitType
     base_unit: BaseUnit
     is_active: bool
+    sort_order: int = 0
+    category_id: UUID | None = None
+    category: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
+    custom_attributes: JsonObject = Field(default_factory=dict)
     image_path: str | None = None
     image_content_type: str | None = None
+
+
+class PriceStatus(str, Enum):
+    MISSING = "missing"
+    STALE = "stale"
+    CURRENT = "current"
+
+
+class ItemScope(str, Enum):
+    GLOBAL = "global"
+    SHOP = "shop"
+
+
+class ShopItemRead(ItemRead):
+    current_price: Decimal | None = None
+    price_date: date | None = None
+    latest_price_date: date | None = None
+    price_status: PriceStatus = PriceStatus.MISSING
+    scope: ItemScope
+    allocated: bool = False
+    available_for_billing: bool = False
+    can_delete: bool = False
+    can_deallocate: bool = False
+    bill_count: int = 0
+    price_count: int = 0
+    allocated_shop_count: int = 0
+
+
+class ShopItemAllocationUpdate(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    tamil_name: str | None = Field(default=None, max_length=120)
+    is_active: bool | None = None
+    sort_order: int | None = None
+    custom_attributes: JsonObject = Field(default_factory=dict)
+
+
+class ShopItemCounts(BaseModel):
+    all: int = 0
+    allocated: int = 0
+    available: int = 0
+    catalogue: int = 0
+    shop: int = 0
+    priced: int = 0
+    needs_price: int = 0
+    stale_price: int = 0
+    paused: int = 0
+
+
+class ShopItemPage(BaseModel):
+    items: list[ShopItemRead]
+    limit: int
+    total_count: int = 0
+    counts: ShopItemCounts = Field(default_factory=ShopItemCounts)
+    has_more: bool
+    next_cursor_group: int | None = None
+    next_cursor_sort_order: int | None = None
+    next_cursor_name: str | None = None
+    next_cursor_id: UUID | None = None
 
 
 class ShopSalesSummary(BaseModel):
@@ -76,6 +205,7 @@ class PaymentSplitSummary(BaseModel):
 class ItemSalesSummary(BaseModel):
     item_id: UUID
     item_name: str
+    item_tamil_name: str | None = None
     base_unit: BaseUnit
     quantity_sold: Decimal
     total_amount: Decimal

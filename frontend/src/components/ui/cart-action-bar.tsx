@@ -50,7 +50,7 @@ export function CartActionBar({
   return (
     <View className="absolute bottom-0 left-0 right-0 px-4" style={{ paddingBottom: Math.max(insets.bottom, 12) + 12 }}>
       <View className="w-full max-w-[768px] self-center">
-        <View className="rounded-[32px] border border-border bg-card px-4 pb-4 pt-4 shadow-pos">
+        <View className="rounded-[20px] border border-border bg-card px-4 pb-4 pt-4 shadow-pos">
           <View className="mb-3 flex-row flex-wrap items-center justify-between gap-2">
             <View>
               <Text
