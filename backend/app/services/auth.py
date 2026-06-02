@@ -2,13 +2,21 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models import DailyPrice, Item, ShopItemAllocation, User, UserRole
-from app.schemas.auth import LoginResponse, RegisterRequest, UserSession
+from app.schemas.auth import (
+    LoginResponse,
+    PasswordResetRequest,
+    PasswordResetResponse,
+    RegisterRequest,
+    UserSession,
+    normalize_username,
+)
 
 
 async def _requires_price_setup(db: AsyncSession, shop_id: UUID) -> bool:
@@ -84,8 +92,11 @@ async def build_user_session(db: AsyncSession, user: User) -> UserSession:
 
 
 async def login_user(db: AsyncSession, username: str, password: str) -> LoginResponse:
+    normalized_username = normalize_username(username)
     user = await db.scalar(
-        select(User).options(selectinload(User.shop)).where(User.username == username)
+        select(User)
+        .options(selectinload(User.shop))
+        .where(func.lower(User.username) == normalized_username)
     )
     if user is None or not verify_password(password, user.password_hash):
         raise HTTPException(
@@ -105,6 +116,37 @@ async def login_user(db: AsyncSession, username: str, password: str) -> LoginRes
     return LoginResponse(access_token=token, user=session)
 
 
+async def reset_password_for_dev(
+    db: AsyncSession, payload: PasswordResetRequest
+) -> PasswordResetResponse:
+    if get_settings().production:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Password reset endpoint is not available",
+        )
+
+    result = await db.execute(
+        select(User)
+        .where(User.id == payload.id, func.lower(User.username) == payload.username)
+        .with_for_update()
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.password_hash = get_password_hash(payload.password)
+    await db.flush()
+    await db.commit()
+    await db.refresh(user)
+
+    return PasswordResetResponse(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        is_active=user.is_active,
+    )
+
+
 async def register_admin(db: AsyncSession, payload: RegisterRequest) -> LoginResponse:
     existing_admin = await db.scalar(select(User.id).where(User.role == UserRole.ADMIN))
     if existing_admin is not None:
@@ -113,7 +155,9 @@ async def register_admin(db: AsyncSession, payload: RegisterRequest) -> LoginRes
             detail="Admin registration is already completed",
         )
 
-    existing_user = await db.scalar(select(User.id).where(User.username == payload.username))
+    existing_user = await db.scalar(
+        select(User.id).where(func.lower(User.username) == payload.username)
+    )
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

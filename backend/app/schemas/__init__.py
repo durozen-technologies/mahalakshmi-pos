@@ -17,7 +17,15 @@ from .admin import (
     ShopSalesSummary,
     ShopStatusUpdate,
 )
-from .auth import LoginRequest, LoginResponse, RegisterRequest, TokenPayload, UserSession
+from .auth import (
+    LoginRequest,
+    LoginResponse,
+    PasswordResetRequest,
+    PasswordResetResponse,
+    RegisterRequest,
+    TokenPayload,
+    UserSession,
+)
 from .billing import (
     BillCheckoutCommitRequest,
     BillCheckoutPreviewRead,
@@ -73,6 +81,8 @@ __all__ = [
     "LoginResponse",
     "PaymentRead",
     "PaymentSplitSummary",
+    "PasswordResetRequest",
+    "PasswordResetResponse",
     "RegisterRequest",
     "ReceiptRead",
     "ShopBootstrapResponse",

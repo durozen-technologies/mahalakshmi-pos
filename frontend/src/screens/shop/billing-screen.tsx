@@ -1,10 +1,10 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   ListRenderItem,
   Pressable,
+  RefreshControl,
   Text,
   View,
 } from "react-native";
@@ -19,6 +19,7 @@ import { LoadingState } from "@/components/ui/loading-state";
 import { Screen } from "@/components/ui/screen";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { TextField } from "@/components/ui/text-field";
+import { ShopHeaderActions } from "@/components/shop-header";
 
 import { useShopBootstrap } from "@/hooks/use-shop-bootstrap";
 import {
@@ -33,7 +34,9 @@ import {
   getCartTotal,
   useCartStore,
 } from "@/store/cart-store";
+import { useAuthStore } from "@/store/auth-store";
 import { usePrinterStore } from "@/store/printer-store";
+import { usePriceStore } from "@/store/price-store";
 import { ItemPriceRead, UUID } from "@/types/api";
 
 import { money, toQuantityString } from "@/utils/decimal";
@@ -71,15 +74,6 @@ type CatalogueDropdownProps = {
   onSelect: (key: string) => void;
 };
 
-type BillingRefreshControlProps = {
-  title: string;
-  subtitle: string;
-  actionLabel: string;
-  loadingLabel: string;
-  loading: boolean;
-  onRefresh: () => void;
-};
-
 const UNCATEGORIZED_CATALOGUE_KEY = "uncategorized-catalogue";
 
 function getCatalogueKey(item: ItemPriceRead) {
@@ -95,59 +89,6 @@ function getCatalogueKey(item: ItemPriceRead) {
 
   return UNCATEGORIZED_CATALOGUE_KEY;
 }
-
-const BillingRefreshControl = memo(function BillingRefreshControl({
-  title,
-  subtitle,
-  actionLabel,
-  loadingLabel,
-  loading,
-  onRefresh,
-}: BillingRefreshControlProps) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={actionLabel}
-      accessibilityState={{ busy: loading, disabled: loading }}
-      disabled={loading}
-      onPress={onRefresh}
-      className={cn(
-        "w-full max-w-[820px] self-center rounded-[22px] border border-accentSoft bg-card px-4 py-3 shadow-soft",
-        loading && "opacity-90",
-      )}
-    >
-      <View className="flex-row items-center gap-3">
-        <View className="h-11 w-11 items-center justify-center rounded-[16px] bg-accentSoft">
-          {loading ? (
-            <ActivityIndicator color="#244734" />
-          ) : (
-            <MaterialCommunityIcons name="sync" size={22} color="#244734" />
-          )}
-        </View>
-
-        <View className="min-w-0 flex-1">
-          <Text className="text-[11px] font-semibold uppercase tracking-[1.2px] text-accentDeep">
-            {loading ? loadingLabel : actionLabel}
-          </Text>
-          <Text className="mt-0.5 text-base font-bold text-ink" numberOfLines={1}>
-            {title}
-          </Text>
-          <Text className="mt-0.5 text-xs leading-5 text-muted" numberOfLines={2}>
-            {subtitle}
-          </Text>
-        </View>
-
-        <View className="h-9 w-9 items-center justify-center rounded-full bg-surface">
-          <MaterialCommunityIcons
-            name="chevron-right"
-            size={22}
-            color="#6C7A70"
-          />
-        </View>
-      </View>
-    </Pressable>
-  );
-});
 
 const CatalogueDropdown = memo(function CatalogueDropdown({
   label,
@@ -413,8 +354,11 @@ export function BillingScreen({
 
   const { language, t } = useShopTranslation();
 
+  const clearSession = useAuthStore((state) => state.clearSession);
   const cartItems = useCartStore((state) => state.items);
+  const resetCart = useCartStore((state) => state.resetCart);
   const preferredPrinter = usePrinterStore((state) => state.preferredPrinter);
+  const clearPrices = usePriceStore((state) => state.clear);
 
   const addItem = useCartStore((state) => state.addItem);
 
@@ -431,9 +375,10 @@ export function BillingScreen({
   );
 
   const orderedItems = useMemo(() => {
-    if (!bootstrap) return [];
+    const items = bootstrap?.items;
+    if (!Array.isArray(items)) return [];
 
-    return [...bootstrap.items].sort((a, b) => {
+    return [...items].sort((a, b) => {
       const leftSort = a.sort_order ?? Number.MAX_SAFE_INTEGER;
       const rightSort = b.sort_order ?? Number.MAX_SAFE_INTEGER;
       if (leftSort !== rightSort) {
@@ -441,7 +386,7 @@ export function BillingScreen({
       }
       return a.item_name.localeCompare(b.item_name);
     });
-  }, [bootstrap]);
+  }, [bootstrap?.items]);
 
   const translatedItemNames = useMemo(() => {
     const entries = orderedItems.map(
@@ -604,6 +549,24 @@ export function BillingScreen({
   const handleRefreshBilling = useCallback(() => {
     void refresh();
   }, [refresh]);
+
+  const handleLogout = useCallback(() => {
+    clearSession();
+    resetCart();
+    clearPrices();
+  }, [clearPrices, clearSession, resetCart]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <ShopHeaderActions
+          onLogout={handleLogout}
+          onRefresh={handleRefreshBilling}
+          refreshing={loading}
+        />
+      ),
+    });
+  }, [handleLogout, handleRefreshBilling, loading, navigation]);
 
   const handleToggleCatalogue = useCallback(() => {
     setCatalogueOpen((current) => !current);
@@ -806,19 +769,7 @@ export function BillingScreen({
 
   return (
     <View className="flex-1 bg-cream">
-      <Screen
-        scroll={false}
-        topSlot={
-          <BillingRefreshControl
-            title={t("billing.refreshPricesTitle")}
-            subtitle={t("billing.refreshPricesSubtitle")}
-            actionLabel={t("action.refreshBilling")}
-            loadingLabel={t("billing.refreshingPrices")}
-            loading={loading}
-            onRefresh={handleRefreshBilling}
-          />
-        }
-      >
+      <Screen scroll={false}>
         <FlatList
           style={{ flex: 1 }}
           data={visibleItems}
@@ -834,6 +785,14 @@ export function BillingScreen({
           maxToRenderPerBatch={4}
           updateCellsBatchingPeriod={48}
           windowSize={5}
+          refreshControl={
+            <RefreshControl
+              refreshing={loading}
+              onRefresh={handleRefreshBilling}
+              tintColor="#244734"
+              colors={["#244734"]}
+            />
+          }
           contentContainerStyle={{
             paddingBottom: 180,
           }}

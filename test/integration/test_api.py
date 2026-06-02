@@ -41,6 +41,7 @@ from app.routers.admin import (
     get_shops,
     patch_inventory_item_metadata,
     payment_summary,
+    reset_admin_user_password,
     sales_summary,
     shop_daily_price,
     shop_daily_prices,
@@ -63,11 +64,12 @@ from app.schemas.admin import (
     ShopItemAllocationBulkCreate,
     ShopItemAllocationUpdate,
     ShopStatusUpdate,
+    UserPasswordReset,
 )
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.schemas.billing import (
     BillCheckoutCommitRequest,
-    BillCheckoutRequest,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               BillCheckoutRequest,
     BillItemInput,
     CheckoutPaymentInput,
 )

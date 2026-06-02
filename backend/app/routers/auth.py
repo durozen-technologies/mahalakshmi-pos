@@ -4,8 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_active_user
 from app.db.database import get_db
 from app.models import User
-from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserSession
-from app.services.auth import build_user_session, login_user, register_admin
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    PasswordResetRequest,
+    PasswordResetResponse,
+    RegisterRequest,
+    UserSession,
+)
+from app.services.auth import build_user_session, login_user, register_admin, reset_password_for_dev
 
 router = APIRouter()
 
@@ -18,6 +25,13 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> Lo
 @router.post("/register", response_model=LoginResponse, status_code=201)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     return await register_admin(db, payload)
+
+
+@router.post("/reset-password", response_model=PasswordResetResponse)
+async def reset_password(
+    payload: PasswordResetRequest, db: AsyncSession = Depends(get_db)
+) -> PasswordResetResponse:
+    return await reset_password_for_dev(db, payload)
 
 
 @router.get("/me", response_model=UserSession)

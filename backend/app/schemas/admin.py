@@ -4,9 +4,10 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..models import BaseUnit, UnitType
+from .auth import normalize_username, require_non_blank_password
 from .common import ORMModel
 
 AnalyticsPeriod = Literal["date", "week", "month", "year"]
@@ -19,11 +20,40 @@ class ShopCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=128)
 
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_create_username(cls, username: object) -> str:
+        return normalize_username(username)
+
+    @field_validator("password")
+    @classmethod
+    def validate_create_password(cls, password: str) -> str:
+        return require_non_blank_password(password)
+
 
 class ShopUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     username: str = Field(min_length=3, max_length=50)
     password: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_update_username(cls, username: object) -> str:
+        return normalize_username(username)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def empty_update_password_as_none(cls, password: object) -> object:
+        if isinstance(password, str) and not password.strip():
+            return None
+        return password
+
+    @field_validator("password")
+    @classmethod
+    def validate_update_password(cls, password: str | None) -> str | None:
+        if password is None:
+            return None
+        return require_non_blank_password(password)
 
 
 class ShopStatusUpdate(BaseModel):

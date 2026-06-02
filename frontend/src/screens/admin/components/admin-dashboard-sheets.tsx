@@ -16,6 +16,15 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  Button as TButton,
+  Input,
+  ScrollView as TamaguiScrollView,
+  Spinner,
+  Text as TText,
+  XStack,
+  YStack,
+} from "tamagui";
 import { WebView } from "react-native-webview";
 
 import { buildReceiptHtml } from "@/api/receipts";
@@ -113,6 +122,316 @@ export function ShopEditorSheet({
       setPasswordVisible(false);
     }
   }, [visible]);
+
+  if (isEdit) {
+    return (
+      <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+          style={[styles.centeredModalBackdrop, { backgroundColor: palette.overlay }]}
+        >
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <View style={styles.centeredKeyboardWrap} pointerEvents="box-none">
+            <YStack
+              width="100%"
+              maxWidth={540}
+              maxHeight="86%"
+              borderRadius={24}
+              borderWidth={1}
+              padding={18}
+              gap={16}
+              style={[
+                adminShadow(palette.shadow, 0.16, 18, 24),
+                {
+                  backgroundColor: palette.card,
+                  borderColor: palette.border,
+                },
+              ]}
+            >
+              <XStack alignItems="flex-start" justifyContent="space-between" gap={12}>
+                <YStack flex={1} minWidth={0} gap={5}>
+                  <TText
+                    color={palette.textPrimary}
+                    fontSize={21}
+                    lineHeight={27}
+                    fontWeight="800"
+                  >
+                    Manage Access
+                  </TText>
+                  <TText color={palette.textMuted} fontSize={13} lineHeight={19} fontWeight="600">
+                    Update branch details, change login credentials, or pause this branch account.
+                  </TText>
+                </YStack>
+
+                <TButton
+                  accessibilityRole="button"
+                  accessibilityLabel="Close manage access popup"
+                  width={42}
+                  height={42}
+                  padding={0}
+                  borderRadius={14}
+                  borderWidth={1}
+                  borderColor={palette.border}
+                  backgroundColor={palette.backgroundElevated}
+                  pressStyle={{ scale: 0.97, backgroundColor: palette.surfaceMuted }}
+                  onPress={onClose}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={palette.textPrimary} />
+                </TButton>
+              </XStack>
+
+              <TamaguiScrollView
+                style={styles.centeredDialogScroll}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="interactive"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.centeredDialogScrollContent}
+              >
+                <YStack gap={14}>
+                  <Controller
+                    control={control}
+                    name="name"
+                    render={({ field, fieldState }) => (
+                      <YStack gap={8}>
+                        <TText
+                          color={palette.textMuted}
+                          fontSize={11}
+                          fontWeight="700"
+                          textTransform="uppercase"
+                          letterSpacing={0.9}
+                        >
+                          Shop Name
+                        </TText>
+                        <Input
+                          value={field.value}
+                          onChangeText={field.onChange}
+                          placeholder="Enter branch name"
+                          placeholderTextColor={palette.textMuted as never}
+                          color={palette.textPrimary}
+                          fontSize={15}
+                          fontWeight="700"
+                          minHeight={54}
+                          borderRadius={16}
+                          borderWidth={1}
+                          borderColor={fieldState.error ? palette.danger : palette.border}
+                          backgroundColor={palette.backgroundElevated}
+                          paddingHorizontal={15}
+                          accessibilityLabel="Enter shop name"
+                        />
+                        {fieldState.error ? (
+                          <TText color={palette.danger} fontSize={12} lineHeight={18}>
+                            {fieldState.error.message}
+                          </TText>
+                        ) : null}
+                      </YStack>
+                    )}
+                  />
+
+                  <Controller
+                    control={control}
+                    name="username"
+                    render={({ field, fieldState }) => (
+                      <YStack gap={8}>
+                        <TText
+                          color={palette.textMuted}
+                          fontSize={11}
+                          fontWeight="700"
+                          textTransform="uppercase"
+                          letterSpacing={0.9}
+                        >
+                          Login Username
+                        </TText>
+                        <Input
+                          value={field.value}
+                          onChangeText={field.onChange}
+                          placeholder="Enter login username"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          placeholderTextColor={palette.textMuted as never}
+                          color={palette.textPrimary}
+                          fontSize={15}
+                          fontWeight="700"
+                          minHeight={54}
+                          borderRadius={16}
+                          borderWidth={1}
+                          borderColor={fieldState.error ? palette.danger : palette.border}
+                          backgroundColor={palette.backgroundElevated}
+                          paddingHorizontal={15}
+                          accessibilityLabel="Enter login username"
+                        />
+                        {fieldState.error ? (
+                          <TText color={palette.danger} fontSize={12} lineHeight={18}>
+                            {fieldState.error.message}
+                          </TText>
+                        ) : null}
+                      </YStack>
+                    )}
+                  />
+
+                  <Controller
+                    control={control}
+                    name="password"
+                    render={({ field, fieldState }) => (
+                      <YStack gap={8}>
+                        <TText
+                          color={palette.textMuted}
+                          fontSize={11}
+                          fontWeight="700"
+                          textTransform="uppercase"
+                          letterSpacing={0.9}
+                        >
+                          Reset Password
+                        </TText>
+                        <XStack
+                          alignItems="center"
+                          gap={8}
+                          minHeight={54}
+                          borderRadius={16}
+                          borderWidth={1}
+                          borderColor={fieldState.error ? palette.danger : palette.border}
+                          backgroundColor={palette.backgroundElevated}
+                          paddingHorizontal={15}
+                        >
+                          <Input
+                            flex={1}
+                            unstyled
+                            value={field.value}
+                            onChangeText={field.onChange}
+                            placeholder="Leave blank to keep the current password"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            secureTextEntry={!passwordVisible}
+                            placeholderTextColor={palette.textMuted as never}
+                            color={palette.textPrimary}
+                            fontSize={15}
+                            fontWeight="700"
+                            paddingVertical={14}
+                            accessibilityLabel="Enter login password"
+                          />
+                          <TButton
+                            accessibilityRole="button"
+                            accessibilityLabel={passwordVisible ? "Hide password" : "Show password"}
+                            width={36}
+                            height={36}
+                            padding={0}
+                            borderRadius={12}
+                            backgroundColor="transparent"
+                            pressStyle={{ scale: 0.97, backgroundColor: palette.surfaceMuted }}
+                            onPress={() => setPasswordVisible((current) => !current)}
+                          >
+                            <MaterialCommunityIcons
+                              name={passwordVisible ? "eye-off-outline" : "eye-outline"}
+                              size={20}
+                              color={palette.textMuted}
+                            />
+                          </TButton>
+                        </XStack>
+                        {fieldState.error ? (
+                          <TText color={palette.danger} fontSize={12} lineHeight={18}>
+                            {fieldState.error.message}
+                          </TText>
+                        ) : null}
+                      </YStack>
+                    )}
+                  />
+                </YStack>
+              </TamaguiScrollView>
+
+              <YStack gap={10}>
+                <TButton
+                  minHeight={50}
+                  borderRadius={16}
+                  borderWidth={1}
+                  borderColor={palette.upi}
+                  backgroundColor={palette.upiSoft}
+                  disabled={loading || deleting || statusLoading}
+                  opacity={loading || deleting || statusLoading ? 0.72 : 1}
+                  pressStyle={{ scale: 0.985, backgroundColor: palette.backgroundElevated }}
+                  onPress={onSubmit}
+                >
+                  <XStack alignItems="center" justifyContent="center" gap={8}>
+                    {loading ? (
+                      <Spinner color={palette.upi} />
+                    ) : (
+                      <MaterialCommunityIcons name="content-save-outline" size={18} color={palette.upi} />
+                    )}
+                    <TText color={palette.upi} fontSize={14} fontWeight="800">
+                      {loading ? "Saving..." : "Save Changes"}
+                    </TText>
+                  </XStack>
+                </TButton>
+
+                <XStack gap={10} flexWrap="wrap">
+                  {onToggleActive ? (
+                    <TButton
+                      flex={1}
+                      minWidth={150}
+                      minHeight={48}
+                      borderRadius={16}
+                      borderWidth={1}
+                      borderColor={isActive ? palette.cash : palette.emerald}
+                      backgroundColor={isActive ? palette.cashSoft : palette.emeraldSoft}
+                      disabled={loading || deleting || statusLoading}
+                      opacity={statusLoading ? 0.72 : 1}
+                      pressStyle={{ scale: 0.985, backgroundColor: palette.backgroundElevated }}
+                      onPress={onToggleActive}
+                    >
+                      <XStack alignItems="center" justifyContent="center" gap={8}>
+                        {statusLoading ? (
+                          <Spinner color={isActive ? "#8A5A11" : palette.emeraldDark} />
+                        ) : (
+                          <MaterialCommunityIcons
+                            name={isActive ? "pause-circle-outline" : "check-circle-outline"}
+                            size={18}
+                            color={isActive ? "#8A5A11" : palette.emeraldDark}
+                          />
+                        )}
+                        <TText
+                          color={isActive ? "#8A5A11" : palette.emeraldDark}
+                          fontSize={13}
+                          fontWeight="800"
+                        >
+                          {isActive ? "Pause Access" : "Activate Shop"}
+                        </TText>
+                      </XStack>
+                    </TButton>
+                  ) : null}
+
+                  {onDelete ? (
+                    <TButton
+                      flex={1}
+                      minWidth={150}
+                      minHeight={48}
+                      borderRadius={16}
+                      borderWidth={1}
+                      borderColor={palette.danger}
+                      backgroundColor={palette.dangerSoft}
+                      disabled={loading || deleting || statusLoading}
+                      opacity={deleting ? 0.72 : 1}
+                      pressStyle={{ scale: 0.985, backgroundColor: palette.backgroundElevated }}
+                      onPress={onDelete}
+                    >
+                      <XStack alignItems="center" justifyContent="center" gap={8}>
+                        {deleting ? (
+                          <Spinner color={palette.danger} />
+                        ) : (
+                          <MaterialCommunityIcons name="delete-outline" size={18} color={palette.danger} />
+                        )}
+                        <TText color={palette.danger} fontSize={13} fontWeight="800">
+                          {deleting ? "Deleting..." : "Delete Shop"}
+                        </TText>
+                      </XStack>
+                    </TButton>
+                  ) : null}
+                </XStack>
+              </YStack>
+            </YStack>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  }
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -584,6 +903,24 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: "flex-end",
+  },
+  centeredModalBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+  },
+  centeredKeyboardWrap: {
+    flex: 1,
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  centeredDialogScroll: {
+    flexShrink: 1,
+  },
+  centeredDialogScrollContent: {
+    paddingBottom: 2,
   },
   bottomSheet: {
     maxHeight: "88%",

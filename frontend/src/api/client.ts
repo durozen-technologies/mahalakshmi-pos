@@ -342,6 +342,10 @@ function isAdminItemsCountRequestPath(path: string) {
   return path.endsWith("/counts") || path.includes("/counts?");
 }
 
+function isLoginRequestPath(path: string) {
+  return path === "/api/v1/auth/login" || path.endsWith("/api/v1/auth/login");
+}
+
 function shouldTryConfiguredUploadDirectly(config: RetryableAxiosConfig, candidates: string[]) {
   return isFormDataRequestBody(config.data) && candidates.length === 1 && !lastReachableBaseUrl;
 }
@@ -602,7 +606,7 @@ apiClient.interceptors.request.use(async (config) => {
   }
 
   const token = useAuthStore.getState().token;
-  if (token) {
+  if (token && !isLoginRequestPath(requestPath)) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   if (isUploadRequest) {
@@ -654,7 +658,11 @@ apiClient.interceptors.response.use(
       }
     }
 
-    if (isAxiosError(error) && error.response?.status === 401) {
+    if (
+      isAxiosError(error) &&
+      error.response?.status === 401 &&
+      !isLoginRequestPath(normalizeRequestPath(error.config?.url))
+    ) {
       useAuthStore.getState().clearSession();
       useCartStore.getState().resetCart();
       usePriceStore.getState().clear();

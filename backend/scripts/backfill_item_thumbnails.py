@@ -10,8 +10,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.db.database import close_database_connections, get_session_local
-from app.db.storage import backfill_item_image_thumbnails
+from app.db.database import close_database_connections, get_session_local  # noqa: E402
+from app.db.storage import backfill_item_image_thumbnails  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

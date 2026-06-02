@@ -1997,7 +1997,7 @@ def _get_period_bounds(
 
 
 async def create_shop_account(db: AsyncSession, payload: ShopCreate, actor: User) -> ShopRead:
-    username = payload.username.strip()
+    username = payload.username
     shop_name = payload.name.strip()
 
     if len(shop_name) < 2:
@@ -2009,7 +2009,7 @@ async def create_shop_account(db: AsyncSession, payload: ShopCreate, actor: User
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Username is required"
         )
 
-    existing_user = await db.scalar(select(User.id).where(User.username == username))
+    existing_user = await db.scalar(select(User.id).where(func.lower(User.username) == username))
     if existing_user is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
 
@@ -2048,11 +2048,9 @@ async def update_shop_account(db: AsyncSession, shop_id: UUID, payload: ShopUpda
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
 
-    username = payload.username.strip()
+    username = payload.username
     shop_name = payload.name.strip()
-    new_password = (
-        payload.password.strip() if payload.password and payload.password.strip() else None
-    )
+    new_password = payload.password
 
     has_changes = False
 
@@ -2063,7 +2061,7 @@ async def update_shop_account(db: AsyncSession, shop_id: UUID, payload: ShopUpda
     if shop.owner.username != username:
         # Uniqueness check is only needed when the username actually changes.
         existing = await db.scalar(
-            select(User.id).where(User.username == username, User.id != shop.owner.id)
+            select(User.id).where(func.lower(User.username) == username, User.id != shop.owner.id)
         )
         if existing is not None:
             raise HTTPException(

@@ -63,7 +63,7 @@ export const AdminInventoryTab = memo(function AdminInventoryTab({
           subtitle="Try a different branch or search term."
           actionLabel="Clear Search"
           onAction={() => onChangeSearch("")}
-          icon="food-off-outline"
+          icon="cart-off"
           palette={palette}
         />
       }

@@ -13,6 +13,9 @@ Desktop.ini
 *.swp
 *.swo
 *~
+*.bak
+*.orig
+*.tmp
 .agents
 .agents/
 .codex
@@ -29,6 +32,11 @@ Desktop.ini
 .env.local
 .envrc
 .direnv/
+*.pem
+*.key
+*.p8
+*.p12
+*.mobileprovision
 
 # Logs and local process files
 logs/
@@ -53,16 +61,21 @@ ENV/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.dmypy.json
 .pyre/
+.pytype/
 .hypothesis/
 .nox/
 .tox/
 .cache/
+.uv-cache/
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
 .ipynb_checkpoints/
+*.py,cover
+*.prof
 pip-wheel-metadata/
 build/
 dist/
@@ -90,20 +103,26 @@ backend/.codex/
 backend/.trae
 backend/.trae/
 backend/.python-version
+!backend/.python-version
 backend/.venv/
 backend/__pycache__/
 backend/.pytest_cache/
 backend/.mypy_cache/
+backend/.dmypy.json
 backend/.ruff_cache/
 backend/.pyre/
+backend/.pytype/
 backend/.hypothesis/
 backend/.nox/
 backend/.tox/
 backend/.cache/
+backend/.uv-cache/
 backend/.coverage
 backend/.coverage.*
 backend/coverage.xml
 backend/htmlcov/
+backend/*.py,cover
+backend/*.prof
 backend/build/
 backend/dist/
 backend/wheels/
@@ -133,16 +152,21 @@ WhatsApp Bot/.venv/
 WhatsApp Bot/__pycache__/
 WhatsApp Bot/.pytest_cache/
 WhatsApp Bot/.mypy_cache/
+WhatsApp Bot/.dmypy.json
 WhatsApp Bot/.ruff_cache/
 WhatsApp Bot/.pyre/
+WhatsApp Bot/.pytype/
 WhatsApp Bot/.hypothesis/
 WhatsApp Bot/.nox/
 WhatsApp Bot/.tox/
 WhatsApp Bot/.cache/
+WhatsApp Bot/.uv-cache/
 WhatsApp Bot/.coverage
 WhatsApp Bot/.coverage.*
 WhatsApp Bot/coverage.xml
 WhatsApp Bot/htmlcov/
+WhatsApp Bot/*.py,cover
+WhatsApp Bot/*.prof
 WhatsApp Bot/build/
 WhatsApp Bot/dist/
 WhatsApp Bot/wheels/
@@ -174,17 +198,26 @@ frontend/.vscode/
 frontend/node_modules/
 frontend/.npm/
 frontend/.yarn/
+frontend/.yarn/cache/
+frontend/.yarn/unplugged/
+frontend/.yarn/build-state.yml
+frontend/.yarn/install-state.gz
+frontend/.pnpm-store/
 frontend/.pnp.*
 frontend/.cache/
 frontend/.parcel-cache/
 frontend/.metro-cache/
 frontend/.tamagui/
+frontend/.turbo/
 frontend/.eslintcache
 frontend/*.tsbuildinfo
+frontend/expo-env.d.ts
 frontend/coverage/
 frontend/.nyc_output/
 frontend/dist/
 frontend/web-build/
+frontend/eas-build-local-*/
+frontend/eas-build-local-nodejs/
 frontend/android/
 frontend/ios/
 frontend/*.apk
@@ -198,11 +231,18 @@ frontend/android/local.properties
 frontend/android/build/
 frontend/android/app/build/
 frontend/android/app/.cxx/
+frontend/android/app/release/
+frontend/android/app/*.jks
+frontend/android/app/*.keystore
+frontend/android/app/google-services.json
 frontend/ios/Pods/
 frontend/ios/build/
 frontend/ios/DerivedData/
 frontend/ios/**/*.xcuserstate
 frontend/ios/**/*.xcuserdata/
+frontend/ios/*.mobileprovision
+frontend/ios/*.p12
+frontend/ios/*.cer
 
 # Service runtime data
 caddy/config/*

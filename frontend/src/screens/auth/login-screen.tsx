@@ -166,9 +166,8 @@ export function LoginScreen() {
 
   async function handleLogin() {
     const normalizedUsername = collapseWhitespace(username).trim();
-    const normalizedPassword = password.trim();
 
-    if (!normalizedUsername || !normalizedPassword) {
+    if (!normalizedUsername || !password.trim()) {
       setErrorMessage("Username and password are required.");
       return;
     }
@@ -181,7 +180,7 @@ export function LoginScreen() {
     try {
       const response = await login({
         username: normalizedUsername,
-        password: normalizedPassword,
+        password,
       });
 
       resetCart();
@@ -189,7 +188,6 @@ export function LoginScreen() {
 
       setSession(response.access_token, response.user);
     } catch (error) {
-      console.error(error);
       setErrorMessage(toApiError(error).message);
     } finally {
       setSubmitting(false);
@@ -238,18 +236,18 @@ export function LoginScreen() {
                   <XStack alignItems="center" justifyContent="space-between" gap={16}>
                     <XStack alignItems="center" gap={12} flex={1} minWidth={0}>
                       <Stack
-                        width={68}
-                        height={68}
+                        width={82}
+                        height={82}
                         alignItems="center"
                         justifyContent="center"
-                        borderRadius={14}
+                        borderRadius={18}
                         borderWidth={1}
                         borderColor={C.heroBorder}
                         backgroundColor={C.heroSoft}
                       >
                         <Image
                           source={logoImage}
-                          style={{ width: 42, height: 42 }}
+                          style={{ width: 74, height: 74, borderRadius: 16, overflow: "hidden" }}
                           contentFit="contain"
                         />
                       </Stack>
@@ -287,7 +285,7 @@ export function LoginScreen() {
                     </IconTile>
                   </XStack>
 
-                  <YStack gap={12}>
+                  <YStack gap={12} marginTop={6}>
         
                     <Text
                       style={{
@@ -301,20 +299,6 @@ export function LoginScreen() {
                     </Text>
                   </YStack>
 
-                  <XStack flexWrap="wrap" gap={9}>
-                    <SecurityChip
-                      label="Billing"
-                      icon={<Store size={14} color="#BBF7D0" strokeWidth={2.4} />}
-                    />
-                    <SecurityChip
-                      label="Inventory"
-                      icon={<ShieldCheck size={14} color="#BBF7D0" strokeWidth={2.4} />}
-                    />
-                    <SecurityChip
-                      label="Staff access"
-                      icon={<LockKeyhole size={14} color="#BBF7D0" strokeWidth={2.4} />}
-                    />
-                  </XStack>
                 </YStack>
               </YStack>
 
@@ -535,18 +519,16 @@ export function LoginScreen() {
                   paddingTop={18}
                   paddingHorizontal={12}
                 >
-                  <ShieldCheck size={15} color={C.accentDark} strokeWidth={2.4} />
+                  <Store size={16} color={C.mutedDark} strokeWidth={2.2} />
                   <Text
                     style={{
-                      color: C.muted,
+                      color: C.mutedDark,
                       fontSize: 12,
                       lineHeight: 18,
-                      fontWeight: "700",
-                      textAlign: "center",
-                      flexShrink: 1,
+                      fontWeight: "600",
                     }}
                   >
-                    Authorized staff only. Activity is monitored for billing security.
+                    Powered by Durozen Technologies Pvt Ltd.
                   </Text>
                 </XStack>
               </YStack>

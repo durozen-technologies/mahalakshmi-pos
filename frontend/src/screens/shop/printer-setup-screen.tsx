@@ -768,83 +768,27 @@ export function PrinterSetupScreen({ navigation }: PrinterSetupScreenProps) {
   return (
     <Screen scroll={false}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
-
-        {/* ═══ HERO HEADER ═══════════════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20} paddingTop={16} paddingBottom={28} style={{ backgroundColor: C.dark }}>
-          {/* Top bar */}
-          <XStack alignItems="center" gap={10} marginBottom={20}>
-            <TButton
-              onPress={() => navigation.goBack()}
-              accessibilityRole="button"
-              accessibilityLabel={t("action.backToBilling")}
-              width={36}
-              height={36}
-              minWidth={36}
-              borderRadius={10}
-              padding={0}
-              alignItems="center"
-              justifyContent="center"
-              pressStyle={{ opacity: 0.84, scale: 0.96 }}
-              style={{ backgroundColor: C.darkSurface }}
-            >
-              <SafeIonicon name="arrow-back" size={17} color={C.white} />
-            </TButton>
-            <YStack flex={1} gap={2}>
-              <EyebrowText tone="accent">{t("printer.posPrinter")}</EyebrowText>
-              <TitleText size="lg" tone="inverse">{t("printer.setupTitle")}</TitleText>
-              <BodyText size="sm" tone="inverseMuted" numberOfLines={2}>
-                {t("printer.setupSubtitle")}
-              </BodyText>
-            </YStack>
-            <Stack
-              width={40}
-              height={40}
-              borderRadius={12}
-              alignItems="center"
-              justifyContent="center"
-              style={{ backgroundColor: C.darkSurface }}
-            >
-              <SafeIonicon name="print-outline" size={20} color={C.accent} />
-            </Stack>
-          </XStack>
-
-          {/* Stat grid */}
-          <YStack gap={8}>
-            <XStack gap={8}>
-              <StatTile label={t("common.runtimeSupport")} value={connectionModeValue} ok={printerSupport.supported} />
-              <StatTile
-                label={t("printer.discovery")}
-                value={t("printer.discoveredCount", { count: discoveredDeviceCount })}
-                ok={discoveredDeviceCount > 0}
-              />
-            </XStack>
-            <XStack gap={8}>
-              <StatTile
-                label={t("common.savedPrinter")}
-                value={preferredPrinter?.name ?? t("printer.noPrinterSavedYet")}
-                ok={!!preferredPrinter}
-              />
-              <StatTile
-                label={t("common.printerChannels", { channels: "" })}
-                value={supportedChannels}
-                ok={printerSupport.supported}
-              />
-            </XStack>
-          </YStack>
-        </YStack>
-
-        {/* ═══ PRINTER STATUS CARD (floating) ═════════════════════════════════ */}
-        <YStack paddingHorizontal={20} marginTop={-14}>
-          <Card style={{
-            borderRadius: 16, borderWidth: 1, padding: 16,
-            backgroundColor: preferredPrinter ? C.successBg : C.warningBg,
-            borderColor: preferredPrinter ? C.successBorder : C.warningBorder,
-          }}>
+        {/* ═══ PRINTER STATUS CARD ═══════════════════════════════════════════ */}
+        <YStack paddingHorizontal={20} marginTop={4}>
+          <Card
+            borderRadius={18}
+            borderWidth={1}
+            padding={16}
+            style={{
+              backgroundColor: preferredPrinter ? C.successBg : C.warningBg,
+              borderColor: preferredPrinter ? C.successBorder : C.warningBorder,
+              elevation: 2,
+              shadowColor: "#0F172A",
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.08,
+              shadowRadius: 14,
+            }}
+          >
             <XStack alignItems="flex-start" gap={12}>
               <Stack
-                width={40}
-                height={40}
-                borderRadius={12}
+                width={44}
+                height={44}
+                borderRadius={14}
                 alignItems="center"
                 justifyContent="center"
                 style={{ backgroundColor: preferredPrinter ? "#DCFCE7" : "#FEF3C7" }}
@@ -855,19 +799,62 @@ export function PrinterSetupScreen({ navigation }: PrinterSetupScreenProps) {
                   color={preferredPrinter ? C.successIcon : C.warningIcon}
                 />
               </Stack>
-              <YStack flex={1} gap={3}>
-                <TitleText size="sm">
-                  {preferredPrinter ? (preferredPrinterLabel ?? t("common.savedPrinter")) : t("printer.noPrinterSavedYet")}
-                </TitleText>
-                <BodyText>
+              <YStack flex={1} minWidth={0} gap={7}>
+                <XStack alignItems="flex-start" justifyContent="space-between" gap={10}>
+                  <YStack flex={1} minWidth={0} gap={2}>
+                    <EyebrowText tone={preferredPrinter ? "accent" : "soft"}>{t("common.savedPrinter")}</EyebrowText>
+                    <TitleText size="sm" numberOfLines={1}>
+                      {preferredPrinter ? (preferredPrinterLabel ?? t("common.savedPrinter")) : t("printer.noPrinterSavedYet")}
+                    </TitleText>
+                  </YStack>
+                  {preferredPrinter ? <TransportChip transport={preferredPrinter.transport} size="md" /> : null}
+                </XStack>
+                <BodyText size="sm" numberOfLines={2}>
                   {preferredPrinter
                     ? `${savedPrinterDetail ?? ""}${savedPrinterDetail ? " · " : ""}${t("printer.connectionReadyMessage", { deviceName: preferredPrinter.name, transport: preferredPrinter.transport === "bluetooth" ? bluetoothLabel : usbLabel })}`
                     : t("printer.noPrinterSavedDescription")}
                 </BodyText>
+                <XStack alignItems="center" gap={6}>
+                  <StatusDot tone={preferredPrinter ? "success" : "warning"} />
+                  <Text
+                    style={{
+                      color: preferredPrinter ? C.successIcon : C.warningIcon,
+                      fontSize: 11,
+                      fontWeight: "800",
+                      letterSpacing: 0.8,
+                      textTransform: "uppercase",
+                    }}
+                    numberOfLines={1}
+                  >
+                    {preferredPrinter ? t("common.printerReady") : t("printer.noPrinterSavedYet")}
+                  </Text>
+                </XStack>
               </YStack>
-              {preferredPrinter && <TransportChip transport={preferredPrinter.transport} size="md" />}
             </XStack>
           </Card>
+        </YStack>
+
+        {/* ═══ BLUETOOTH DISCOVERY ═══════════════════════════════════════════ */}
+        <YStack paddingHorizontal={20} marginTop={16}>
+          <DiscoverySection
+            title={t("printer.bluetoothPrinters")}
+            subtitle={t("printer.bluetoothPrintersDescription")}
+            transport="bluetooth"
+            devices={bluetoothDevices}
+            selectedId={preferredPrinter?.id}
+            connectingId={connectingId}
+            loading={loadingBluetooth}
+            emptyTitle={t("printer.noBluetoothPrintersFound")}
+            emptyDescription={t("printer.noBluetoothPrintersFoundDescription")}
+            scanningLabel={t("printer.scanningPrinters")}
+            selectedLabel={t("common.selected")}
+            availableLabel={t("common.available")}
+            connectLabel={t("action.connectPrinter")}
+            reconnectLabel={t("action.reconnectPrinter")}
+            refreshLabel={t("action.refreshBluetoothPrinters")}
+            onRefresh={() => void refreshBluetoothPrinters()}
+            onConnect={(device) => void handleConnect(device)}
+          />
         </YStack>
 
         {/* ═══ ACTION BUTTONS ═════════════════════════════════════════════════ */}
@@ -892,199 +879,6 @@ export function PrinterSetupScreen({ navigation }: PrinterSetupScreenProps) {
             label={t("action.backToBilling")}
             onPress={() => navigation.goBack()}
             variant="secondary"
-          />
-        </YStack>
-
-        {/* ═══ DIVIDER ═══════════════════════════════════════════════════════ */}
-        <YStack marginTop={24} marginBottom={4} paddingHorizontal={20}>
-          <SectionDivider icon="radio-outline" label={t("printer.discovery")} />
-        </YStack>
-
-        {/* ═══ SUPPORT BANNER ════════════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20} marginBottom={16}>
-          <Card style={{
-            flexDirection: "row", alignItems: "center", gap: 10,
-            borderRadius: 12, borderWidth: 1, padding: 12,
-            backgroundColor: printerSupport.supported ? C.successBg : C.warningBg,
-            borderColor: printerSupport.supported ? C.successBorder : C.warningBorder,
-          }}>
-            <SafeIonicon
-              name={printerSupport.supported ? "shield-checkmark" : "shield-outline"}
-              size={18}
-              color={printerSupport.supported ? C.accentDeep : C.warning}
-            />
-            <YStack flex={1} gap={2}>
-              <TitleText size="sm">
-                {printerSupport.supported ? t("common.androidNativeBuild") : t("common.fallbackOnly")}
-              </TitleText>
-              <BodyText size="sm">
-                {printerSupport.supported
-                  ? t("common.printerChannels", { channels: supportedChannels })
-                : printerSupport.reason ?? t("printer.noPrinterSavedDescription")}
-              </BodyText>
-            </YStack>
-          </Card>
-        </YStack>
-
-        {/* ═══ QUICK SETUP GUIDANCE ═══════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20} marginBottom={16}>
-          <Card borderRadius={18} borderWidth={1} padding={16} style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <YStack gap={4} marginBottom={14}>
-              <EyebrowText tone="accent">{t("printer.discoveryTitle")}</EyebrowText>
-              <TitleText>{t("printer.setupGuidanceTitle")}</TitleText>
-              <BodyText>{t("printer.setupGuidanceSubtitle")}</BodyText>
-            </YStack>
-            <YStack gap={14}>
-              {setupSteps.map((step, index) => (
-                <SetupStep
-                  key={step.title}
-                  index={index + 1}
-                  icon={step.icon}
-                  title={step.title}
-                  description={step.description}
-                />
-              ))}
-            </YStack>
-          </Card>
-        </YStack>
-
-        {/* ═══ BLUETOOTH DISCOVERY ═══════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20}>
-          <DiscoverySection
-            title={t("printer.bluetoothPrinters")}
-            subtitle={t("printer.bluetoothPrintersDescription")}
-            transport="bluetooth"
-            devices={bluetoothDevices}
-            selectedId={preferredPrinter?.id}
-            connectingId={connectingId}
-            loading={loadingBluetooth}
-            emptyTitle={t("printer.noBluetoothPrintersFound")}
-            emptyDescription={t("printer.noBluetoothPrintersFoundDescription")}
-            scanningLabel={t("printer.scanningPrinters")}
-            selectedLabel={t("common.selected")}
-            availableLabel={t("common.available")}
-            connectLabel={t("action.connectPrinter")}
-            reconnectLabel={t("action.reconnectPrinter")}
-            refreshLabel={t("action.refreshBluetoothPrinters")}
-            onRefresh={() => void refreshBluetoothPrinters()}
-            onConnect={(device) => void handleConnect(device)}
-          />
-        </YStack>
-
-        {/* ═══ MANUAL BLUETOOTH ═════════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20} marginTop={20}>
-          <Card
-            onPress={() => setManualFormOpen((p) => !p)}
-            accessibilityRole="button"
-            accessibilityLabel={t("printer.manualBluetoothConnect")}
-            accessibilityState={{ expanded: manualFormOpen }}
-            flexDirection="row"
-            alignItems="flex-start"
-            justifyContent="space-between"
-            gap={12}
-            borderRadius={14}
-            borderWidth={1}
-            padding={14}
-            pressStyle={{ opacity: 0.92, scale: 0.99 }}
-            style={{ borderColor: C.border, backgroundColor: C.card }}
-          >
-            <XStack alignItems="flex-start" gap={12} flex={1} minWidth={0}>
-              <Stack
-                width={38}
-                height={38}
-                borderRadius={12}
-                alignItems="center"
-                justifyContent="center"
-                marginTop={1}
-                style={{ backgroundColor: C.manualPurpleBg }}
-              >
-                <SafeIonicon name="create" size={16} color={C.manualPurple} />
-              </Stack>
-              <YStack flex={1} minWidth={0} gap={3}>
-                <TitleText size="sm" numberOfLines={1}>{t("printer.manualBluetoothConnect")}</TitleText>
-                <BodyText size="sm">{t("printer.manualBluetoothConnectDescription")}</BodyText>
-              </YStack>
-            </XStack>
-            <Stack width={32} height={32} borderRadius={10} alignItems="center" justifyContent="center" style={{ backgroundColor: C.surface }}>
-              <SafeIonicon
-                name={manualFormOpen ? "chevron-up" : "chevron-down"}
-                size={18} color={C.muted}
-              />
-            </Stack>
-          </Card>
-
-          {manualFormOpen && (
-            <Card borderRadius={14} borderWidth={1} padding={16} marginTop={8} style={{ borderColor: C.border, backgroundColor: C.surface }}>
-              <YStack gap={14}>
-                <BodyText>{t("printer.enterMacMessage")}</BodyText>
-
-                <YStack gap={7}>
-                  <FieldLabel>{t("printer.printerNameLabel")}</FieldLabel>
-                  <Input
-                    value={manualBluetoothName}
-                    onChangeText={setManualBluetoothName}
-                    placeholder={t("printer.printerNamePlaceholder")}
-                    placeholderTextColor="$gray10"
-                    minHeight={48}
-                    style={{
-                      borderRadius: 12, borderWidth: 1,
-                      borderColor: C.border, backgroundColor: C.card,
-                      paddingHorizontal: 14, paddingVertical: 12,
-                      fontSize: 14, color: C.ink,
-                    }}
-                  />
-                </YStack>
-
-                <YStack gap={7}>
-                  <FieldLabel>{t("printer.macAddressLabel")}</FieldLabel>
-                  <Input
-                    value={manualBluetoothAddress}
-                    onChangeText={setManualBluetoothAddress}
-                    placeholder="AA:BB:CC:DD:EE:FF"
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    placeholderTextColor="$gray10"
-                    minHeight={48}
-                    style={{
-                      borderRadius: 12, borderWidth: 1,
-                      borderColor: C.border, backgroundColor: C.card,
-                      paddingHorizontal: 14, paddingVertical: 12,
-                      fontSize: 14, fontFamily: "monospace", color: C.ink,
-                      letterSpacing: 1,
-                    }}
-                  />
-                </YStack>
-
-                <SetupActionButton
-                  label={t("action.connectBluetoothByAddress")}
-                  onPress={handleManualBluetoothConnect}
-                  loading={connectingId === manualBluetoothConnectId}
-                />
-              </YStack>
-            </Card>
-          )}
-        </YStack>
-
-        {/* ═══ USB DISCOVERY ═════════════════════════════════════════════════ */}
-        <YStack paddingHorizontal={20} marginTop={20}>
-          <DiscoverySection
-            title={t("printer.usbPrinters")}
-            subtitle={t("printer.usbPrintersDescription")}
-            transport="usb"
-            devices={usbDevices}
-            selectedId={preferredPrinter?.id}
-            connectingId={connectingId}
-            loading={loadingUsb}
-            emptyTitle={t("printer.noUsbPrintersFound")}
-            emptyDescription={t("printer.noUsbPrintersFoundDescription")}
-            scanningLabel={t("printer.scanningPrinters")}
-            selectedLabel={t("common.selected")}
-            availableLabel={t("common.available")}
-            connectLabel={t("action.connectPrinter")}
-            reconnectLabel={t("action.reconnectPrinter")}
-            refreshLabel={t("action.refreshUsbPrinters")}
-            onRefresh={() => void refreshUsbPrinters()}
-            onConnect={(device) => void handleConnect(device)}
           />
         </YStack>
 

@@ -70,15 +70,26 @@ import {
   type ToastTone,
 } from "./admin-dashboard-utils";
 
+const usernameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3, "Login username is required")
+  .max(50, "Username is too long")
+  .regex(/^[a-z0-9._-]+$/, "Use only letters, numbers, dots, hyphens, or underscores");
+
 const createShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
-  username: z.string().min(3, "Login username is required").max(50, "Username is too long"),
-  password: z.string().min(8, "Password must be at least 8 characters").max(128, "Password is too long"),
+  username: usernameSchema,
+  password: z
+    .string()
+    .max(128, "Password is too long")
+    .refine((value) => value.trim().length >= 8, "Password must be at least 8 characters"),
 });
 
 const editShopSchema = z.object({
   name: z.string().min(2, "Shop name is required"),
-  username: z.string().min(3, "Login username is required").max(50, "Username is too long"),
+  username: usernameSchema,
   password: z
     .string()
     .max(128, "Password is too long")
@@ -347,7 +358,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
     try {
       await createBranch({
         name: values.name.trim(),
-        username: values.username.trim(),
+        username: values.username,
         password: values.password,
       });
       createForm.reset();
@@ -369,8 +380,8 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
     try {
       await updateBranch(selectedManagedShop, {
         name: values.name.trim(),
-        username: values.username.trim(),
-        password: values.password.trim() ? values.password.trim() : null,
+        username: values.username,
+        password: values.password.trim() ? values.password : null,
       });
       closeManageShopSheet();
       showToast("success", `${values.name.trim()} updated successfully.`);
@@ -800,7 +811,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
           ]}
         >
           <MaterialCommunityIcons name="cash-edit" size={18} color="#FFFFFF" />
-          <Text style={styles.fabLabel}>Price Setup</Text>
+          <Text style={styles.fabLabel}>Update Price </Text>
         </Pressable>
       ) : null}
 

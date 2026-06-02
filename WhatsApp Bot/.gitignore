@@ -11,6 +11,9 @@
 .codex/
 .trae
 .trae/
+.git.backup/
+.vscode/
+.idea/
 
 # Python versioning / virtualenvs
 .python-version
@@ -25,17 +28,22 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .mypy_cache/
+.dmypy.json
 .ruff_cache/
 .pyre/
+.pytype/
 .hypothesis/
 .nox/
 .tox/
 .cache/
+.uv-cache/
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
 .ipynb_checkpoints/
+*.py,cover
+*.prof
 
 # Packaging/build outputs
 build/
@@ -52,3 +60,6 @@ pip-wheel-metadata/
 *.log
 *.pid
 *.pid.lock
+*.bak
+*.orig
+*.tmp

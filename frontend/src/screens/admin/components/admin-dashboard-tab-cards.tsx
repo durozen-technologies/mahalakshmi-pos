@@ -37,7 +37,7 @@ export const InventoryItemCard = memo(function InventoryItemCard({
       ]}
     >
       <View style={[styles.itemIconWrap, { backgroundColor: palette.emeraldSoft }]}>
-        <MaterialCommunityIcons name="food-drumstick-outline" size={18} color={palette.emerald} />
+        <MaterialCommunityIcons name="cart-outline" size={18} color={palette.emerald} />
       </View>
       <View style={styles.itemContent}>
         <View style={styles.itemHeader}>
