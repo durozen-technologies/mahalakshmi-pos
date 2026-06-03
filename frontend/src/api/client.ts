@@ -332,9 +332,9 @@ function normalizeRequestPath(value: unknown) {
 function isAdminItemsRequestPath(path: string) {
   return (
     path.startsWith("/api/v1/admin/items") ||
+    path.startsWith("/api/v1/admin/item-categories") ||
     /\/api\/v1\/admin\/shops\/[^/]+\/(selected-items|item-import-candidates|items\/[^/]+|prices\/bootstrap)/.test(path) ||
-    path === "/api/v1/admin/shops" ||
-    path === "/api/v1/admin/item-categories"
+    path === "/api/v1/admin/shops"
   );
 }
 

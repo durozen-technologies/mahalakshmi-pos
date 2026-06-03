@@ -6,13 +6,15 @@ import {
   StatusBar,
   Platform,
   Easing,
+  Image,
+  Text,
 } from "react-native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import { ShopHeaderActions, ShopHeaderTitle } from "@/components/shop-header";
-import { LoadingState } from "@/components/ui/loading-state";
 import { appTheme } from "@/constants/theme";
 import { useAuthHydration } from "@/hooks/use-auth-hydration";
+import { useShopBootstrap } from "@/hooks/use-shop-bootstrap";
 import { ShopTranslationKey } from "@/hooks/use-shop-translation";
 import { AppStackParamList } from "@/navigation/types";
 import { useAuthStore } from "@/store/auth-store";
@@ -20,6 +22,7 @@ import { useCartStore } from "@/store/cart-store";
 import { usePriceStore } from "@/store/price-store";
 
 const Stack = createNativeStackNavigator<AppStackParamList>();
+const LOGO_IMAGE = require("../../assets/Logo.png");
 
 // ── Design Tokens (extracted from your existing #F7F1E8) ─────────────
 const COLORS = {
@@ -41,6 +44,24 @@ const screenOptions = {
   headerTitleStyle: { color: COLORS.textPrimary, fontWeight: "700" as const },
   contentStyle: { backgroundColor: COLORS.background },
 };
+const HEADER_HIDDEN_OPTIONS = { headerShown: false } as const;
+const AUTH_STACK_SCREEN_OPTIONS = {
+  ...screenOptions,
+  animation: "fade" as const,
+  animationDuration: 350,
+};
+const ADMIN_STACK_SCREEN_OPTIONS = {
+  ...screenOptions,
+  animation: "slide_from_right" as const,
+  animationDuration: 250,
+};
+const SHOP_STACK_SCREEN_OPTIONS = {
+  ...screenOptions,
+  animation: "slide_from_right" as const,
+  animationDuration: 250,
+  gestureEnabled: true,
+  fullScreenGestureEnabled: true,
+};
 
 // ── Lazy loaders (unchanged) ─────────────────────────────────────────
 const getLoginScreen = () => require("@/screens/auth/login-screen").LoginScreen;
@@ -50,8 +71,12 @@ const getAdminItemsCatalogueScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminItemsCatalogueScreen;
 const getAdminShopItemsScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminShopItemsScreen;
+const getAdminShopItemsOrderScreen = () =>
+  require("@/screens/admin/admin-shop-items-order-screen").AdminShopItemsOrderScreen;
 const getAdminItemPricesScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminItemPricesScreen;
+const getAdminItemCategoriesScreen = () =>
+  require("@/screens/admin/admin-item-categories-screen").AdminItemCategoriesScreen;
 const getAdminItemEditorScreen = () =>
   require("@/screens/admin/admin-item-editor-screen").AdminItemEditorScreen;
 const getBillingScreen = () =>
@@ -77,8 +102,10 @@ function useSessionReset() {
 // ── Animated Header Title (fade + slide in) ──────────────────────────
 const AnimatedHeaderTitle = React.memo(function AnimatedHeaderTitle({
   titleKey,
+  shopName,
 }: {
   titleKey: ShopTranslationKey;
+  shopName?: string | null;
 }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-6)).current;
@@ -102,7 +129,7 @@ const AnimatedHeaderTitle = React.memo(function AnimatedHeaderTitle({
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <ShopHeaderTitle titleKey={titleKey} />
+      <ShopHeaderTitle titleKey={titleKey} shopName={shopName} />
     </Animated.View>
   );
 });
@@ -137,26 +164,88 @@ const AnimatedHeaderActions = React.memo(function AnimatedHeaderActions({
   );
 });
 
-// ── Enhanced Loading State with skeleton preview ─────────────────────
-function HydrationScreen() {
+// ── App startup loading state ────────────────────────────────────────
+function HydrationScreen({
+  label = "Restoring secure session...",
+}: {
+  label?: string;
+}) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const skeletonFade = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(14)).current;
+  const logoScale = useRef(new Animated.Value(0.94)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+  const rotate = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 420,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }),
+      Animated.spring(translateY, {
+        toValue: 0,
+        damping: 16,
+        stiffness: 90,
+        mass: 0.8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        damping: 14,
+        stiffness: 80,
+        mass: 0.8,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
-    // Staggered skeleton appearance
-    Animated.timing(skeletonFade, {
-      toValue: 1,
-      duration: 400,
-      delay: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim, skeletonFade]);
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 1200,
+          useNativeDriver: true,
+          easing: Easing.inOut(Easing.cubic),
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 1200,
+          useNativeDriver: true,
+          easing: Easing.inOut(Easing.cubic),
+        }),
+      ]),
+    );
+    const rotateLoop = Animated.loop(
+      Animated.timing(rotate, {
+        toValue: 1,
+        duration: 1600,
+        useNativeDriver: true,
+        easing: Easing.linear,
+      }),
+    );
+
+    pulseLoop.start();
+    rotateLoop.start();
+
+    return () => {
+      pulseLoop.stop();
+      rotateLoop.stop();
+    };
+  }, [fadeAnim, logoScale, pulse, rotate, translateY]);
+
+  const ringRotation = rotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+  const pulseScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1.08],
+  });
+  const pulseOpacity = pulse.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0.32, 0.55, 0.32],
+  });
 
   return (
     <View style={styles.hydrationContainer}>
@@ -164,19 +253,44 @@ function HydrationScreen() {
         barStyle="dark-content"
         backgroundColor={COLORS.background}
       />
-      <Animated.View style={[styles.loadingWrapper, { opacity: fadeAnim }]}>
-        <LoadingState fullscreen label="Restoring secure session..." />
-      </Animated.View>
-
-      {/* Skeleton preview for perceived performance */}
-      <Animated.View style={[styles.skeletonWrapper, { opacity: skeletonFade }]}>
-        <View style={styles.skeletonHeader} />
-        <View style={styles.skeletonCard} />
-        <View style={styles.skeletonCard} />
-        <View style={styles.skeletonRow}>
-          <View style={[styles.skeletonButton, { flex: 2 }]} />
-          <View style={[styles.skeletonButton, { flex: 1, marginLeft: 12 }]} />
+      <Animated.View
+        style={[
+          styles.loadingWrapper,
+          {
+            opacity: fadeAnim,
+            transform: [{ translateY }, { scale: logoScale }],
+          },
+        ]}
+      >
+        <View style={styles.logoStage}>
+          <Animated.View
+            style={[
+              styles.logoPulseRing,
+              {
+                opacity: pulseOpacity,
+                transform: [{ scale: pulseScale }],
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.logoRing,
+              {
+                transform: [{ rotate: ringRotation }],
+              },
+            ]}
+          />
+          <View style={styles.logoTile}>
+            <Image
+              source={LOGO_IMAGE}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
+          </View>
         </View>
+
+        <Text style={styles.loadingTitle}>SMB Billing</Text>
+        <Text style={styles.loadingLabel}>{label}</Text>
       </Animated.View>
     </View>
   );
@@ -187,16 +301,12 @@ function AuthStack() {
   return (
     <Stack.Navigator
       initialRouteName="Login"
-      screenOptions={{
-        ...screenOptions,
-        animation: "fade",
-        animationDuration: 350,
-      }}
+      screenOptions={AUTH_STACK_SCREEN_OPTIONS}
     >
       <Stack.Screen
         name="Login"
         getComponent={getLoginScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
       />
     </Stack.Navigator>
   );
@@ -207,36 +317,42 @@ function AdminStack() {
   return (
     <Stack.Navigator
       initialRouteName="AdminDashboard"
-      screenOptions={{
-        ...screenOptions,
-        animation: "slide_from_right",
-        animationDuration: 250,
-      }}
+      screenOptions={ADMIN_STACK_SCREEN_OPTIONS}
     >
       <Stack.Screen
         name="AdminDashboard"
         getComponent={getAdminDashboardScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
         name="AdminItemsCatalogue"
         getComponent={getAdminItemsCatalogueScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
         name="AdminShopItems"
         getComponent={getAdminShopItemsScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminShopItemsOrder"
+        getComponent={getAdminShopItemsOrderScreen}
+        options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
         name="AdminItemPrices"
         getComponent={getAdminItemPricesScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminItemCategories"
+        getComponent={getAdminItemCategoriesScreen}
+        options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
         name="AdminItemEditor"
         getComponent={getAdminItemEditorScreen}
-        options={{ headerShown: false }}
+        options={HEADER_HIDDEN_OPTIONS}
       />
     </Stack.Navigator>
   );
@@ -245,19 +361,21 @@ function AdminStack() {
 // ── Shop Stack (billing, checkout, printer) ──────────────────────────
 function ShopStack() {
   const logout = useSessionReset();
+  const { bootstrap } = useShopBootstrap();
+  const shopName = bootstrap?.shop_name ?? null;
 
   // Memoized renderers to prevent unnecessary re-renders
   const renderBillingHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.billing" />,
-    []
+    () => <AnimatedHeaderTitle titleKey="header.billing" shopName={shopName} />,
+    [shopName]
   );
   const renderCheckoutHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.checkout" />,
-    []
+    () => <AnimatedHeaderTitle titleKey="header.checkout" shopName={shopName} />,
+    [shopName]
   );
   const renderPrinterHeaderTitle = useCallback(
-    () => <AnimatedHeaderTitle titleKey="header.printerSetup" />,
-    []
+    () => <AnimatedHeaderTitle titleKey="header.printerSetup" shopName={shopName} />,
+    [shopName]
   );
   const renderHeaderActions = useCallback(
     () => <AnimatedHeaderActions onLogout={logout} />,
@@ -267,13 +385,7 @@ function ShopStack() {
   return (
     <Stack.Navigator
       initialRouteName="Billing"
-      screenOptions={{
-        ...screenOptions,
-        animation: "slide_from_right",
-        animationDuration: 250,
-        gestureEnabled: true,
-        fullScreenGestureEnabled: true,
-      }}
+      screenOptions={SHOP_STACK_SCREEN_OPTIONS}
     >
       <Stack.Screen
         name="Billing"
@@ -322,7 +434,7 @@ export function AppNavigator() {
     }
   }, [token, user]);
 
-  // Early return: hydration loading
+  // Early return: auth loading
   if (!hydrated) {
     return <HydrationScreen />;
   }
@@ -348,38 +460,67 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 32,
+    paddingHorizontal: 28,
   },
   loadingWrapper: {
-    marginBottom: 32,
-  },
-  skeletonWrapper: {
     width: "100%",
-    maxWidth: 360,
-    gap: 12,
+    maxWidth: 340,
+    alignItems: "center",
   },
-  skeletonHeader: {
-    height: 28,
-    width: 140,
-    backgroundColor: COLORS.border,
-    borderRadius: 6,
-    marginBottom: 8,
-    alignSelf: "center",
+  logoStage: {
+    width: 206,
+    height: 206,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  skeletonCard: {
-    height: 80,
-    backgroundColor: COLORS.border,
-    borderRadius: 12,
-    opacity: 0.6,
+  logoPulseRing: {
+    position: "absolute",
+    width: 188,
+    height: 188,
+    borderRadius: 94,
+    borderWidth: 1,
+    borderColor: "rgba(255, 48, 48, 0.32)",
   },
-  skeletonRow: {
-    flexDirection: "row",
+  logoRing: {
+    position: "absolute",
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    borderWidth: 2,
+    borderColor: "rgba(36, 71, 52, 0.12)",
+    borderTopColor: "#FF3030",
+    borderRightColor: "#FF3030",
+  },
+  logoTile: {
+    width: 154,
+    height: 154,
+    borderRadius: 8,
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.16,
+    shadowRadius: 28,
+    elevation: 8,
+  },
+  logoImage: {
+    width: 218,
+    height: 218,
+  },
+  loadingTitle: {
+    marginTop: 18,
+    color: COLORS.textPrimary,
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: 0,
+  },
+  loadingLabel: {
     marginTop: 8,
-  },
-  skeletonButton: {
-    height: 48,
-    backgroundColor: COLORS.border,
-    borderRadius: 10,
-    opacity: 0.5,
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0,
   },
 });

@@ -13,7 +13,9 @@ export type AppStackParamList = {
   AdminDashboard: undefined;
   AdminItemsCatalogue: undefined;
   AdminShopItems: { shopId?: UUID } | undefined;
+  AdminShopItemsOrder: { shopId: UUID; shopName?: string };
   AdminItemPrices: { shopId?: UUID } | undefined;
+  AdminItemCategories: undefined;
   AdminItemEditor: {
     mode: AdminItemEditorMode;
     workspace: AdminItemWorkspace;
@@ -30,7 +32,9 @@ export type LoginScreenProps = NativeStackScreenProps<AppStackParamList, "Login"
 export type AdminDashboardScreenProps = NativeStackScreenProps<AppStackParamList, "AdminDashboard">;
 export type AdminItemsCatalogueScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemsCatalogue">;
 export type AdminShopItemsScreenProps = NativeStackScreenProps<AppStackParamList, "AdminShopItems">;
+export type AdminShopItemsOrderScreenProps = NativeStackScreenProps<AppStackParamList, "AdminShopItemsOrder">;
 export type AdminItemPricesScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemPrices">;
+export type AdminItemCategoriesScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemCategories">;
 export type AdminItemEditorScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemEditor">;
 export type BillingScreenProps = NativeStackScreenProps<AppStackParamList, "Billing">;
 export type CheckoutScreenProps = NativeStackScreenProps<AppStackParamList, "Checkout">;

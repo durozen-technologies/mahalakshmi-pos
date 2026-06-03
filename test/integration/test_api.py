@@ -20,6 +20,7 @@ from app.routers.admin import (
     bills,
     create_admin_item_category,
     create_inventory_item,
+    create_shop_inventory_item,
     create_shop,
     deallocate_shop_catalogue_item,
     delete_admin_item_category,
@@ -41,13 +42,14 @@ from app.routers.admin import (
     get_shops,
     patch_inventory_item_metadata,
     payment_summary,
-    reset_admin_user_password,
     sales_summary,
     shop_daily_price,
     shop_daily_prices,
     shop_daily_prices_partial,
     shop_prices_bootstrap,
+    update_admin_item_category,
     update_inventory_item,
+    update_selected_shop_items_display_order,
     update_shop_catalogue_item_allocation,
     update_shop_status,
 )
@@ -57,14 +59,15 @@ from app.routers.health import health_check
 from app.routers.shop import bootstrap, checkout, preview_checkout, save_daily_prices, today_prices
 from app.schemas.admin import (
     ItemCategoryCreate,
+    ItemCategoryUpdate,
     ItemMetadataUpdate,
     ItemScope,
     PriceStatus,
     ShopCreate,
     ShopItemAllocationBulkCreate,
     ShopItemAllocationUpdate,
+    ShopSelectedItemsOrderUpdate,
     ShopStatusUpdate,
-    UserPasswordReset,
 )
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.schemas.billing import (
@@ -360,6 +363,236 @@ class BackendApiIntegrationTests(BackendTestCase):
                     limit=10,
                 )
                 self.assertEqual([item.name for item in active_candidates.items], ["Quail"])
+
+        self.run_async(scenario())
+
+    def test_selected_shop_items_filter_by_category(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                poultry = await create_admin_item_category(ItemCategoryCreate(name="Order Poultry"), db)
+                seafood = await create_admin_item_category(ItemCategoryCreate(name="Order Seafood"), db)
+
+                chicken = await create_inventory_item(
+                    name="Filter Chicken",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வடிகட்டி கோழி",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=10,
+                    category_id=poultry.id,
+                    image=None,
+                )
+                prawn = await create_inventory_item(
+                    name="Filter Prawn",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வடிகட்டி இறால்",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=20,
+                    category_id=seafood.id,
+                    image=None,
+                )
+                loose = await create_inventory_item(
+                    name="Filter Loose",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வடிகட்டி பொது",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=30,
+                    image=None,
+                )
+                shop_only = await create_shop_inventory_item(
+                    name="Filter Shop Only",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வடிகட்டி கடை",
+                    shop=current_shop,
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=40,
+                    category_id=poultry.id,
+                    image=None,
+                )
+                await allocate_shop_catalogue_items(
+                    ShopItemAllocationBulkCreate(
+                        item_ids=[chicken.id, prawn.id, loose.id]
+                    ),
+                    current_shop,
+                    db,
+                )
+
+                poultry_rows = await get_selected_shop_item_rows(
+                    current_shop,
+                    db,
+                    limit=10,
+                    category_id=poultry.id,
+                )
+                self.assertEqual(
+                    {item.id for item in poultry_rows.items},
+                    {chicken.id, shop_only.id},
+                )
+                poultry_counts = await get_selected_shop_item_counts(
+                    current_shop,
+                    db,
+                    category_id=poultry.id,
+                )
+                self.assertEqual(poultry_counts.all, 2)
+                self.assertEqual(poultry_counts.catalogue, 1)
+                self.assertEqual(poultry_counts.shop, 1)
+
+                seafood_page = await get_selected_shop_items(
+                    current_shop,
+                    db,
+                    limit=10,
+                    category_id=seafood.id,
+                )
+                self.assertEqual([item.id for item in seafood_page.items], [prawn.id])
+
+                uncategorized_page = await get_selected_shop_items(
+                    current_shop,
+                    db,
+                    limit=10,
+                    uncategorized=True,
+                )
+                self.assertEqual([item.id for item in uncategorized_page.items], [loose.id])
+
+                with self.assertRaises(HTTPException) as conflict_context:
+                    await get_selected_shop_items(
+                        current_shop,
+                        db,
+                        limit=10,
+                        category_id=poultry.id,
+                        uncategorized=True,
+                    )
+                self.assertEqual(conflict_context.exception.status_code, 422)
+
+        self.run_async(scenario())
+
+    def test_selected_shop_item_order_updates_billing_order(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        _other_actor, other_shop = self.run_async(
+            self.harness.create_shop_user(username="ml2")
+        )
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                other_current_shop = session.scalar(select(Shop).where(Shop.id == other_shop.id))
+
+                first = await create_inventory_item(
+                    name="Order First",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வரிசை ஒன்று",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=10,
+                    image=None,
+                )
+                second = await create_inventory_item(
+                    name="Order Second",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வரிசை இரண்டு",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=20,
+                    image=None,
+                )
+                shop_only = await create_shop_inventory_item(
+                    name="Order Shop Only",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வரிசை கடை",
+                    shop=current_shop,
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=30,
+                    image=None,
+                )
+                foreign_item = await create_shop_inventory_item(
+                    name="Order Foreign",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வரிசை வேறு",
+                    shop=other_current_shop,
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    sort_order=40,
+                    image=None,
+                )
+                await allocate_shop_catalogue_items(
+                    ShopItemAllocationBulkCreate(item_ids=[first.id, second.id]),
+                    current_shop,
+                    db,
+                )
+
+                item_order = [shop_only.id, second.id, first.id]
+                result = await update_selected_shop_items_display_order(
+                    ShopSelectedItemsOrderUpdate(item_ids=item_order),
+                    current_shop,
+                    db,
+                )
+                self.assertEqual(result.item_ids, item_order)
+
+                selected_page = await get_selected_shop_items(current_shop, db, limit=10)
+                self.assertEqual([item.id for item in selected_page.items], item_order)
+                self.assertEqual([item.sort_order for item in selected_page.items], [10, 20, 30])
+
+                admin_bootstrap = await shop_prices_bootstrap(current_shop, db)
+                self.assertEqual(
+                    [item.item_id for item in admin_bootstrap.items],
+                    item_order,
+                )
+                shop_bootstrap = await bootstrap(current_shop, db)
+                self.assertEqual(
+                    [item.item_id for item in shop_bootstrap.items],
+                    item_order,
+                )
+
+                with self.assertRaises(HTTPException) as duplicate_context:
+                    await update_selected_shop_items_display_order(
+                        ShopSelectedItemsOrderUpdate(
+                            item_ids=[shop_only.id, second.id, second.id]
+                        ),
+                        current_shop,
+                        db,
+                    )
+                self.assertEqual(duplicate_context.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as missing_context:
+                    await update_selected_shop_items_display_order(
+                        ShopSelectedItemsOrderUpdate(item_ids=[shop_only.id, second.id]),
+                        current_shop,
+                        db,
+                    )
+                self.assertEqual(missing_context.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as foreign_context:
+                    await update_selected_shop_items_display_order(
+                        ShopSelectedItemsOrderUpdate(
+                            item_ids=[shop_only.id, second.id, foreign_item.id]
+                        ),
+                        current_shop,
+                        db,
+                    )
+                self.assertEqual(foreign_context.exception.status_code, 422)
 
         self.run_async(scenario())
 
@@ -723,6 +956,73 @@ class BackendApiIntegrationTests(BackendTestCase):
                 cleared_item = session.scalar(select(Item).where(Item.id == created_item.id))
                 self.assertIsNone(cleared_item.category_id)
                 self.assertIsNone(cleared_item.category)
+
+        self.run_async(scenario())
+
+    def test_item_category_rename_updates_assigned_items(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+
+                created_category = await create_admin_item_category(
+                    ItemCategoryCreate(name="Fresh Cuts"), db
+                )
+                created_item = await create_inventory_item(
+                    name="Rename Category Trial",
+                    unit_type=UnitType.WEIGHT,
+                    base_unit=BaseUnit.KG,
+                    tamil_name="வகை பெயர் சோதனை",
+                    db=db,
+                    is_active=True,
+                    custom_attributes="{}",
+                    category_id=created_category.id,
+                    image=None,
+                )
+
+                renamed_category = await update_admin_item_category(
+                    created_category.id,
+                    ItemCategoryUpdate(name="Premium Cuts"),
+                    db,
+                )
+                self.assertEqual(renamed_category.name, "Premium Cuts")
+
+                listed_categories = await get_item_categories(db)
+                listed_category = next(category for category in listed_categories if category.id == created_category.id)
+                self.assertEqual(listed_category.name, "Premium Cuts")
+
+                detail = await get_catalogue_item_detail(created_item.id, db)
+                self.assertEqual(detail.category_id, created_category.id)
+                self.assertEqual(detail.category, "Premium Cuts")
+
+        self.run_async(scenario())
+
+    def test_item_category_rename_rejects_duplicate_and_missing_category(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+
+                first_category = await create_admin_item_category(
+                    ItemCategoryCreate(name="Seafood"), db
+                )
+                second_category = await create_admin_item_category(
+                    ItemCategoryCreate(name="Poultry"), db
+                )
+
+                with self.assertRaises(HTTPException) as duplicate_context:
+                    await update_admin_item_category(
+                        second_category.id,
+                        ItemCategoryUpdate(name=first_category.name.lower()),
+                        db,
+                    )
+                self.assertEqual(duplicate_context.exception.status_code, 409)
+
+                with self.assertRaises(HTTPException) as missing_context:
+                    await update_admin_item_category(
+                        uuid4(),
+                        ItemCategoryUpdate(name="Missing Category"),
+                        db,
+                    )
+                self.assertEqual(missing_context.exception.status_code, 404)
 
         self.run_async(scenario())
 

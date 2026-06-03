@@ -6,12 +6,14 @@ import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, useColorSchem
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { YStack } from "tamagui";
 
-import type { FetchShopItemsParams } from "@/api/admin";
+import { fetchItemCategories, type FetchShopItemsParams } from "@/api/admin";
+import { isApiRequestCanceled, toApiError } from "@/api/client";
 import { useApiConnection } from "@/hooks/use-api-connection";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useAdminItemsStore } from "@/store/admin-items-store";
 import type {
   DailyPriceCreate,
+  ItemCategoryRead,
   ItemPriceRead,
   ShopItemRead,
   UUID,
@@ -41,7 +43,9 @@ import {
   PriceGrid,
   type RowAction,
   ShopPicker,
+  ShopItemsCategoryToolbar,
   ShopItemsInlineTabs,
+  type CategoryFilterOption,
   type ShopItemsTab,
   StatsStrip,
   WorkspaceTabs,
@@ -61,11 +65,22 @@ type ItemsRouteProps =
   | AdminShopItemsScreenProps
   | AdminItemPricesScreenProps;
 
-function buildSelectedShopItemQuery(search: string): FetchShopItemsParams {
-  return {
+const ALL_CATEGORY_FILTER_KEY = "all";
+const UNCATEGORIZED_CATEGORY_FILTER_KEY = "uncategorized";
+
+function buildSelectedShopItemQuery(search: string, categoryKey: string): FetchShopItemsParams {
+  const query: FetchShopItemsParams = {
     q: search.trim() || undefined,
     limit: 50,
   };
+
+  if (categoryKey === UNCATEGORIZED_CATEGORY_FILTER_KEY) {
+    query.uncategorized = true;
+  } else if (categoryKey !== ALL_CATEGORY_FILTER_KEY) {
+    query.category_id = categoryKey;
+  }
+
+  return query;
 }
 
 function buildCatalogueItemQuery(search: string): FetchShopItemsParams {
@@ -96,6 +111,9 @@ function AdminItemsRoute({
   const debouncedImportSearch = useDebouncedValue(importSearch.trim(), 300);
   const [shopItemsTab, setShopItemsTab] = useState<ShopItemsTab>("selected");
   const [selectedImportIds, setSelectedImportIds] = useState<Set<UUID>>(() => new Set());
+  const [itemCategories, setItemCategories] = useState<ItemCategoryRead[]>([]);
+  const [itemCategoriesLoading, setItemCategoriesLoading] = useState(false);
+  const [categoryFilterKey, setCategoryFilterKey] = useState(ALL_CATEGORY_FILTER_KEY);
   const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
   const toastAnimation = useMemo(() => new Animated.Value(0), []);
   const isCatalogueWorkspace = workspace === AdminItemWorkspace.Catalogue;
@@ -124,6 +142,18 @@ function AdminItemsRoute({
     () => [...availableCatalogueState.importingIds].sort().join("|"),
     [availableCatalogueState.importingIds],
   );
+  const categoryFilterOptions = useMemo<CategoryFilterOption[]>(
+    () => [
+      { key: ALL_CATEGORY_FILTER_KEY, label: "All categories" },
+      ...itemCategories.map((category) => ({ key: category.id, label: category.name })),
+      { key: UNCATEGORIZED_CATEGORY_FILTER_KEY, label: "Uncategorized" },
+    ],
+    [itemCategories],
+  );
+  const selectedShopItemQuery = useMemo(
+    () => buildSelectedShopItemQuery(debouncedSearch, categoryFilterKey),
+    [categoryFilterKey, debouncedSearch],
+  );
   const showToast = useCallback((tone: ToastTone, message: string) => {
     setToast({ tone, message });
   }, []);
@@ -141,6 +171,36 @@ function AdminItemsRoute({
     const timer = setTimeout(() => setToast(null), 2600);
     return () => clearTimeout(timer);
   }, [toast, toastAnimation]);
+
+  useEffect(() => {
+    if (!isFocused || !isShopItemsWorkspace) {
+      return;
+    }
+    const controller = new AbortController();
+    setItemCategoriesLoading(true);
+    void fetchItemCategories({ signal: controller.signal })
+      .then((nextCategories) => {
+        setItemCategories(nextCategories);
+      })
+      .catch((error) => {
+        if (!isApiRequestCanceled(error)) {
+          showToast("error", toApiError(error).message || "Unable to load categories.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setItemCategoriesLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [isFocused, isShopItemsWorkspace, showToast]);
+
+  useEffect(() => {
+    if (categoryFilterOptions.some((option) => option.key === categoryFilterKey)) {
+      return;
+    }
+    setCategoryFilterKey(ALL_CATEGORY_FILTER_KEY);
+  }, [categoryFilterKey, categoryFilterOptions]);
 
   useEffect(() => {
     if (!isFocused) {
@@ -196,10 +256,10 @@ function AdminItemsRoute({
     if (!isFocused || workspace !== AdminItemWorkspace.Shop || !selectedShopId) {
       return;
     }
-    void shopItemsState.load(buildSelectedShopItemQuery(debouncedSearch)).catch((error) => {
+    void shopItemsState.load(selectedShopItemQuery).catch((error) => {
       showToast("error", error instanceof Error ? error.message : "Unable to load shop items.");
     });
-  }, [debouncedSearch, isFocused, selectedShopId, shopItemsState.load, showToast, workspace]);
+  }, [isFocused, selectedShopId, selectedShopItemQuery, shopItemsState.load, showToast, workspace]);
 
   useEffect(() => {
     if (!isFocused || workspace !== AdminItemWorkspace.Shop || !selectedShopId || shopItemsTab !== "available") {
@@ -243,6 +303,7 @@ function AdminItemsRoute({
     setSelectedImportIds(new Set());
     setImportSearch("");
     setShopItemsTab("selected");
+    setCategoryFilterKey(ALL_CATEGORY_FILTER_KEY);
   }, [selectedShopId]);
 
   const selectShop = useCallback((shopId: UUID) => {
@@ -278,6 +339,18 @@ function AdminItemsRoute({
   const navigatePrices = useCallback(() => {
     navigation.navigate("AdminItemPrices", { shopId: selectedShopId ?? undefined });
   }, [navigation, selectedShopId]);
+
+  const navigateArrangeOrder = useCallback(() => {
+    if (!selectedShopId) {
+      triggerHaptic();
+      showToast("error", "Select a shop before arranging items.");
+      return;
+    }
+    navigation.navigate("AdminShopItemsOrder", {
+      shopId: selectedShopId,
+      shopName: selectedShop?.name,
+    });
+  }, [navigation, selectedShop?.name, selectedShopId, showToast]);
 
   const confirmDelete = useCallback((item: ShopItemRead) => {
     if (workspace !== AdminItemWorkspace.Catalogue && item.scope === ItemScope.Global) {
@@ -703,6 +776,15 @@ function AdminItemsRoute({
               availableCount={null}
               palette={palette}
               onChangeTab={setShopItemsTab}
+            />
+            <ShopItemsCategoryToolbar
+              options={categoryFilterOptions}
+              selectedKey={categoryFilterKey}
+              loading={itemCategoriesLoading}
+              palette={palette}
+              onSelectCategory={setCategoryFilterKey}
+              onArrangeOrder={navigateArrangeOrder}
+              arrangeDisabled={!selectedShopId}
             />
             <StatsStrip counts={shopItemsState.counts} totalCount={shopItemsState.totalCount} palette={palette} />
             <FilterBar

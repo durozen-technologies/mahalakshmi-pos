@@ -35,6 +35,7 @@ from app.schemas.admin import (
     AnalyticsPeriod,
     ItemCategoryCreate,
     ItemCategoryRead,
+    ItemCategoryUpdate,
     ItemCreate,
     ItemMetadataUpdate,
     ItemRead,
@@ -52,6 +53,8 @@ from app.schemas.admin import (
     ShopItemRead,
     ShopRead,
     ShopSalesSummary,
+    ShopSelectedItemsOrderRead,
+    ShopSelectedItemsOrderUpdate,
     ShopStatusUpdate,
     ShopUpdate,
 )
@@ -97,7 +100,9 @@ from app.services.admin import (
     set_shop_active_state,
     update_catalogue_item_allocation,
     update_item,
+    update_item_category,
     update_item_metadata,
+    update_selected_shop_items_order,
     update_shop_account,
 )
 from app.services.pricing import (
@@ -157,6 +162,14 @@ ItemPriceStatusParam = Annotated[
 ItemActiveParam = Annotated[
     bool | None,
     Query(description="When set, filter to active or paused item rows."),
+]
+ItemCategoryIdParam = Annotated[
+    UUID | None,
+    Query(description="Filter selected shop items to one category ID."),
+]
+ItemUncategorizedParam = Annotated[
+    bool | None,
+    Query(description="When true, filter selected shop items without a category."),
 ]
 ItemCursorGroupParam = Annotated[
     int | None,
@@ -319,6 +332,21 @@ async def create_admin_item_category(
     return await create_item_category(db, payload)
 
 
+@router.patch(
+    "/item-categories/{category_id}",
+    response_model=ItemCategoryRead,
+    response_model_exclude_unset=True,
+    summary="Update Item Category",
+)
+async def update_admin_item_category(
+    category_id: UUID,
+    payload: ItemCategoryUpdate,
+    db: DBSession,
+) -> ItemCategoryRead:
+    """Rename a category and refresh assigned item category labels."""
+    return await update_item_category(db, category_id, payload)
+
+
 @router.delete(
     "/item-categories/{category_id}",
     status_code=204,
@@ -441,6 +469,8 @@ async def get_selected_shop_items(
     db: DBSession,
     q: ItemSearchParam = None,
     limit: ItemsLimitParam = 100,
+    category_id: ItemCategoryIdParam = None,
+    uncategorized: ItemUncategorizedParam = None,
     cursor_sort_order: ItemCursorSortOrderParam = None,
     cursor_name: ItemCursorNameParam = None,
     cursor_id: ItemCursorIdParam = None,
@@ -451,6 +481,8 @@ async def get_selected_shop_items(
         shop,
         q=q,
         limit=limit,
+        category_id=category_id,
+        uncategorized=uncategorized,
         cursor_sort_order=cursor_sort_order,
         cursor_name=cursor_name,
         cursor_id=cursor_id,
@@ -468,6 +500,8 @@ async def get_selected_shop_item_rows(
     db: DBSession,
     q: ItemSearchParam = None,
     limit: ItemsLimitParam = 100,
+    category_id: ItemCategoryIdParam = None,
+    uncategorized: ItemUncategorizedParam = None,
     cursor_sort_order: ItemCursorSortOrderParam = None,
     cursor_name: ItemCursorNameParam = None,
     cursor_id: ItemCursorIdParam = None,
@@ -478,6 +512,8 @@ async def get_selected_shop_item_rows(
         shop,
         q=q,
         limit=limit,
+        category_id=category_id,
+        uncategorized=uncategorized,
         cursor_sort_order=cursor_sort_order,
         cursor_name=cursor_name,
         cursor_id=cursor_id,
@@ -494,9 +530,32 @@ async def get_selected_shop_item_counts(
     shop: ShopDep,
     db: DBSession,
     q: ItemSearchParam = None,
+    category_id: ItemCategoryIdParam = None,
+    uncategorized: ItemUncategorizedParam = None,
 ) -> ShopItemCounts:
     """Return exact selected shop item counts for background UI badges."""
-    return await count_selected_shop_items(db, shop, q=q)
+    return await count_selected_shop_items(
+        db,
+        shop,
+        q=q,
+        category_id=category_id,
+        uncategorized=uncategorized,
+    )
+
+
+@router.put(
+    "/shops/{shop_id}/selected-items/order",
+    response_model=ShopSelectedItemsOrderRead,
+    response_model_exclude_unset=True,
+    summary="Update Selected Shop Item Order",
+)
+async def update_selected_shop_items_display_order(
+    payload: ShopSelectedItemsOrderUpdate,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopSelectedItemsOrderRead:
+    """Persist the full per-shop selected item order used by billing."""
+    return await update_selected_shop_items_order(db, shop, payload.item_ids)
 
 
 @router.get(

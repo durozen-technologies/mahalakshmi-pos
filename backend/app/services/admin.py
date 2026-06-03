@@ -39,6 +39,7 @@ from app.schemas.admin import (
     AnalyticsPeriod,
     ItemCategoryCreate,
     ItemCategoryRead,
+    ItemCategoryUpdate,
     ItemCreate,
     ItemMetadataUpdate,
     ItemRead,
@@ -55,6 +56,7 @@ from app.schemas.admin import (
     ShopItemRead,
     ShopRead,
     ShopSalesSummary,
+    ShopSelectedItemsOrderRead,
     ShopUpdate,
 )
 from app.schemas.billing import BillLineRead, BillRead, PaymentRead, ReceiptRead
@@ -260,6 +262,40 @@ async def create_item_category(
     category = ItemCategory(name=category_name)
     db.add(category)
     await db.flush()
+    await db.commit()
+    return ItemCategoryRead.model_validate(category)
+
+
+async def update_item_category(
+    db: AsyncSession, category_id: UUID, payload: ItemCategoryUpdate
+) -> ItemCategoryRead:
+    category_name = _normalize_category_name(payload.name)
+    category = await db.scalar(select(ItemCategory).where(ItemCategory.id == category_id).with_for_update())
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    if category.name == category_name:
+        return ItemCategoryRead.model_validate(category)
+
+    category_key = category_name.lower()
+    if category.name.lower() != category_key:
+        existing = await db.scalar(
+            select(ItemCategory.id)
+            .where(func.lower(ItemCategory.name) == category_key)
+            .limit(1)
+        )
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category already exists")
+
+    category.name = category_name
+    await db.execute(
+        Item.__table__.update()
+        .where(
+            Item.category_id == category_id,
+            or_(Item.category.is_(None), Item.category != category_name),
+        )
+        .values(category=category_name)
+    )
     await db.commit()
     return ItemCategoryRead.model_validate(category)
 
@@ -974,7 +1010,19 @@ def _selected_shop_items_source(shop: Shop):
     return union_all(shop_owned, allocated_catalogue).subquery()
 
 
-def _filter_selected_shop_source(source, q: str | None):
+def _filter_selected_shop_source(
+    source,
+    q: str | None,
+    *,
+    category_id: UUID | None = None,
+    uncategorized: bool | None = None,
+):
+    if category_id is not None and uncategorized:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="category_id and uncategorized cannot be used together",
+        )
+
     query = select(source)
     search = q.strip() if q else ""
     if search:
@@ -991,6 +1039,10 @@ def _filter_selected_shop_source(source, q: str | None):
                 ),
             )
         )
+    if category_id is not None:
+        query = query.where(source.c.category_id == category_id)
+    elif uncategorized:
+        query = query.where(source.c.category_id.is_(None))
     return query
 
 
@@ -1000,6 +1052,8 @@ async def list_selected_shop_item_rows(
     *,
     q: str | None = None,
     limit: int = 100,
+    category_id: UUID | None = None,
+    uncategorized: bool | None = None,
     cursor_sort_order: int | None = None,
     cursor_name: str | None = None,
     cursor_id: UUID | None = None,
@@ -1007,7 +1061,12 @@ async def list_selected_shop_item_rows(
     source = _selected_shop_items_source(shop)
     sort_order_expr = func.coalesce(source.c.allocation_sort_order, source.c.sort_order)
     sort_name_expr = func.lower(func.coalesce(source.c.allocation_display_name, source.c.name))
-    query = _filter_selected_shop_source(source, q)
+    query = _filter_selected_shop_source(
+        source,
+        q,
+        category_id=category_id,
+        uncategorized=uncategorized,
+    )
 
     cursor_condition = _cursor_filter(
         sort_order_expr,
@@ -1058,9 +1117,16 @@ async def count_selected_shop_items(
     shop: Shop,
     *,
     q: str | None = None,
+    category_id: UUID | None = None,
+    uncategorized: bool | None = None,
 ) -> ShopItemCounts:
     source = _selected_shop_items_source(shop)
-    count_source = _filter_selected_shop_source(source, q).subquery()
+    count_source = _filter_selected_shop_source(
+        source,
+        q,
+        category_id=category_id,
+        uncategorized=uncategorized,
+    ).subquery()
     count_row = (
         await db.execute(
             select(
@@ -1092,6 +1158,8 @@ async def list_selected_shop_items(
     *,
     q: str | None = None,
     limit: int = 100,
+    category_id: UUID | None = None,
+    uncategorized: bool | None = None,
     cursor_sort_order: int | None = None,
     cursor_name: str | None = None,
     cursor_id: UUID | None = None,
@@ -1101,11 +1169,19 @@ async def list_selected_shop_items(
         shop,
         q=q,
         limit=limit,
+        category_id=category_id,
+        uncategorized=uncategorized,
         cursor_sort_order=cursor_sort_order,
         cursor_name=cursor_name,
         cursor_id=cursor_id,
     )
-    counts = await count_selected_shop_items(db, shop, q=q)
+    counts = await count_selected_shop_items(
+        db,
+        shop,
+        q=q,
+        category_id=category_id,
+        uncategorized=uncategorized,
+    )
     return ShopItemPage(
         items=rows_page.items,
         limit=rows_page.limit,
@@ -1116,6 +1192,91 @@ async def list_selected_shop_items(
         next_cursor_name=rows_page.next_cursor_name,
         next_cursor_id=rows_page.next_cursor_id,
     )
+
+
+async def update_selected_shop_items_order(
+    db: AsyncSession,
+    shop: Shop,
+    item_ids: list[UUID],
+) -> ShopSelectedItemsOrderRead:
+    ordered_item_ids = list(item_ids)
+    unique_item_ids = set(ordered_item_ids)
+    if len(unique_item_ids) != len(ordered_item_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Order payload contains duplicate items",
+        )
+
+    shop_items = (
+        await db.scalars(
+            select(Item)
+            .where(Item.shop_id == shop.id)
+            .with_for_update()
+        )
+    ).all()
+    allocation_rows = (
+        await db.scalars(
+            select(ShopItemAllocation)
+            .join(Item, Item.id == ShopItemAllocation.item_id)
+            .where(
+                ShopItemAllocation.shop_id == shop.id,
+                Item.shop_id.is_(None),
+            )
+            .with_for_update()
+        )
+    ).all()
+
+    shop_items_by_id = {item.id: item for item in shop_items}
+    allocations_by_item_id = {allocation.item_id: allocation for allocation in allocation_rows}
+    selected_item_ids = set(shop_items_by_id) | set(allocations_by_item_id)
+    missing_item_ids = selected_item_ids - unique_item_ids
+    unknown_item_ids = unique_item_ids - selected_item_ids
+    if missing_item_ids or unknown_item_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Order payload must include every selected shop item exactly once",
+        )
+
+    for index, item_id in enumerate(ordered_item_ids, start=1):
+        sort_order = index * 10
+        shop_item = shop_items_by_id.get(item_id)
+        if shop_item is not None:
+            if shop_item.sort_order != sort_order:
+                previous_state = _json_safe_item_state(shop_item)
+                shop_item.sort_order = sort_order
+                _record_item_event(
+                    db,
+                    item_id=shop_item.id,
+                    shop_id=shop.id,
+                    event_type="item.order_updated",
+                    before=previous_state,
+                    after=_json_safe_item_state(shop_item),
+                )
+            continue
+
+        allocation = allocations_by_item_id[item_id]
+        if allocation.sort_order != sort_order:
+            before = {
+                "shop_id": str(shop.id),
+                "item_id": str(item_id),
+                "sort_order": allocation.sort_order,
+            }
+            allocation.sort_order = sort_order
+            _record_item_event(
+                db,
+                item_id=item_id,
+                shop_id=shop.id,
+                event_type="allocation.order_updated",
+                before=before,
+                after={
+                    "shop_id": str(shop.id),
+                    "item_id": str(item_id),
+                    "sort_order": allocation.sort_order,
+                },
+            )
+
+    await db.commit()
+    return ShopSelectedItemsOrderRead(item_ids=ordered_item_ids)
 
 
 def _shop_item_import_candidates_query(shop: Shop, q: str | None = None):

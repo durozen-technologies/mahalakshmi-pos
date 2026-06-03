@@ -12,6 +12,7 @@ import {
   DailyPriceUpdate,
   ItemCategoryCreate,
   ItemCategoryRead,
+  ItemCategoryUpdate,
   ItemImageRead,
   ItemMetadataUpdate,
   ItemRead,
@@ -27,6 +28,8 @@ import {
   ShopItemCounts,
   ShopItemPage,
   ShopItemRead,
+  ShopSelectedItemsOrderRead,
+  ShopSelectedItemsOrderUpdate,
   ShopRead,
   ShopSalesSummary,
   ShopStatusUpdate,
@@ -158,6 +161,11 @@ export async function createItemCategory(payload: ItemCategoryCreate) {
   return data;
 }
 
+export async function updateItemCategory(categoryId: UUID, payload: ItemCategoryUpdate) {
+  const { data } = await apiClient.patch<ItemCategoryRead>(`/api/v1/admin/item-categories/${categoryId}`, payload);
+  return data;
+}
+
 export async function deleteItemCategory(categoryId: UUID) {
   await apiClient.delete(`/api/v1/admin/item-categories/${categoryId}`);
 }
@@ -188,6 +196,8 @@ export type FetchShopItemsParams = {
   priced?: boolean;
   price_status?: PriceStatus;
   active?: boolean;
+  category_id?: UUID | null;
+  uncategorized?: boolean | null;
   limit?: number;
   cursor_group?: number | null;
   cursor_sort_order?: number | null;
@@ -199,6 +209,8 @@ function itemRowParams(params?: FetchShopItemsParams) {
   return {
     q: params?.q || undefined,
     active: params?.active,
+    category_id: params?.category_id ?? undefined,
+    uncategorized: params?.uncategorized ?? undefined,
     limit: params?.limit ?? 50,
     cursor_sort_order: params?.cursor_sort_order ?? undefined,
     cursor_name: params?.cursor_name ?? undefined,
@@ -244,7 +256,14 @@ export async function fetchSelectedShopItemCounts(
 ) {
   const { data } = await apiClient.get<ShopItemCounts>(
     `/api/v1/admin/shops/${shopId}/selected-items/counts`,
-    { params: { q: params?.q || undefined }, signal: options.signal },
+    {
+      params: {
+        q: params?.q || undefined,
+        category_id: params?.category_id ?? undefined,
+        uncategorized: params?.uncategorized ?? undefined,
+      },
+      signal: options.signal,
+    },
   );
   return data;
 }
@@ -253,12 +272,25 @@ export async function fetchSelectedShopItemsPage(shopId: UUID, params?: FetchSho
   const { data } = await apiClient.get<ShopItemPage>(`/api/v1/admin/shops/${shopId}/selected-items`, {
     params: {
       q: params?.q || undefined,
+      category_id: params?.category_id ?? undefined,
+      uncategorized: params?.uncategorized ?? undefined,
       limit: params?.limit ?? 100,
       cursor_sort_order: params?.cursor_sort_order ?? undefined,
       cursor_name: params?.cursor_name ?? undefined,
       cursor_id: params?.cursor_id ?? undefined,
     },
   });
+  return data;
+}
+
+export async function updateSelectedShopItemsOrder(
+  shopId: UUID,
+  payload: ShopSelectedItemsOrderUpdate,
+) {
+  const { data } = await apiClient.put<ShopSelectedItemsOrderRead>(
+    `/api/v1/admin/shops/${shopId}/selected-items/order`,
+    payload,
+  );
   return data;
 }
 

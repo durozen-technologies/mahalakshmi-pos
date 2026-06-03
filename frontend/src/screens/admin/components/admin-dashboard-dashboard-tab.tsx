@@ -168,9 +168,6 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
               <Text style={{ color: palette.textPrimary, fontSize: 20, lineHeight: 25, fontWeight: "900" }}>
                 Performance Snapshot
               </Text>
-              <Text numberOfLines={2} style={{ color: palette.textMuted, fontSize: 12, lineHeight: 18 }}>
-                {subtitle}
-              </Text>
             </YStack>
 
             <XStack flexWrap="wrap" gap={10}>

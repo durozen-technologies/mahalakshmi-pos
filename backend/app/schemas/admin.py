@@ -72,6 +72,10 @@ class ItemCategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
+class ItemCategoryUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 class ItemCategoryRead(ORMModel):
     id: UUID
     name: str
@@ -204,6 +208,14 @@ class ShopItemAllocationBulkRead(BaseModel):
     item_ids: list[UUID]
     allocated_count: int = 0
     already_allocated_count: int = 0
+
+
+class ShopSelectedItemsOrderUpdate(BaseModel):
+    item_ids: list[UUID]
+
+
+class ShopSelectedItemsOrderRead(BaseModel):
+    item_ids: list[UUID]
 
 
 class ShopItemCounts(BaseModel):

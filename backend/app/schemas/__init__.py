@@ -4,6 +4,7 @@ from .admin import (
     AnalyticsPeriod,
     ItemCategoryCreate,
     ItemCategoryRead,
+    ItemCategoryUpdate,
     ItemCreate,
     ItemMetadataUpdate,
     ItemRead,
@@ -15,6 +16,8 @@ from .admin import (
     ShopItemRead,
     ShopRead,
     ShopSalesSummary,
+    ShopSelectedItemsOrderRead,
+    ShopSelectedItemsOrderUpdate,
     ShopStatusUpdate,
 )
 from .auth import (
@@ -72,6 +75,7 @@ __all__ = [
     "DailyPriceRead",
     "ItemCategoryCreate",
     "ItemCategoryRead",
+    "ItemCategoryUpdate",
     "ItemCreate",
     "ItemMetadataUpdate",
     "ItemImageRead",
@@ -89,6 +93,8 @@ __all__ = [
     "ShopCreate",
     "ShopItemPage",
     "ShopItemRead",
+    "ShopSelectedItemsOrderRead",
+    "ShopSelectedItemsOrderUpdate",
     "ShopRead",
     "ShopSalesSummary",
     "ShopStatusUpdate",

@@ -23,6 +23,7 @@ const expoPublicApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   readEnvFileValue("EXPO_PUBLIC_API_BASE_URL");
 const logoPath = "./assets/Logo.png";
+const splashBackgroundColor = "#F7F1E8";
 
 const config = {
   name: "Meat Billing POS",
@@ -32,6 +33,11 @@ const config = {
   scheme: "meatbillingpos",
   userInterfaceStyle: "light",
   icon: logoPath,
+  splash: {
+    image: logoPath,
+    resizeMode: "contain",
+    backgroundColor: splashBackgroundColor,
+  },
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.anonymous.meatbillingpos",
@@ -40,6 +46,11 @@ const config = {
     adaptiveIcon: {
       foregroundImage: logoPath,
       backgroundColor: "#ffffff",
+    },
+    splash: {
+      image: logoPath,
+      resizeMode: "contain",
+      backgroundColor: splashBackgroundColor,
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
@@ -56,6 +67,15 @@ const config = {
   web: {},
   plugins: [
     "expo-secure-store",
+    [
+      "expo-splash-screen",
+      {
+        image: logoPath,
+        imageWidth: 180,
+        resizeMode: "contain",
+        backgroundColor: splashBackgroundColor,
+      },
+    ],
     [
       "expo-image-picker",
       {

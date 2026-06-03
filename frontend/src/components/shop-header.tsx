@@ -62,10 +62,27 @@ export const ShopHeaderActions = memo(function ShopHeaderActions({
 
 type ShopHeaderTitleProps = {
   titleKey: ShopTranslationKey;
+  shopName?: string | null;
 };
 
-export const ShopHeaderTitle = memo(function ShopHeaderTitle({ titleKey }: ShopHeaderTitleProps) {
+export const ShopHeaderTitle = memo(function ShopHeaderTitle({ titleKey, shopName }: ShopHeaderTitleProps) {
   const { t } = useShopTranslation();
+  const displayShopName = shopName?.trim();
 
-  return <Text className="text-base font-bold text-ink">{t(titleKey)}</Text>;
+  return (
+    <View className="min-w-0">
+      {displayShopName ? (
+        <>
+          <Text className="max-w-[220px] text-xl font-extrabold leading-7 text-ink" numberOfLines={1}>
+            {displayShopName}
+          </Text>
+          <Text className="text-[11px] font-semibold leading-4 text-muted" numberOfLines={1}>
+            {t(titleKey)}
+          </Text>
+        </>
+      ) : (
+        <Text className="text-lg font-extrabold leading-6 text-ink">{t(titleKey)}</Text>
+      )}
+    </View>
+  );
 });

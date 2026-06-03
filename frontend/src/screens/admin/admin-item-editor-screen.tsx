@@ -1,10 +1,11 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useFocusEffect } from "@react-navigation/native";
 import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from "react-native";
+import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button as TButton, Input, Spinner, XStack, YStack } from "tamagui";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
@@ -12,12 +13,10 @@ import { z } from "zod";
 
 import {
   createItem,
-  createItemCategory,
   createItemWithImageFile,
   createShopItem,
   createShopItemWithImageFile,
   deleteItemImage,
-  deleteItemCategory,
   fetchCatalogueItem,
   fetchItemCategories,
   fetchShopItem,
@@ -393,7 +392,6 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
   const [removeImageRequested, setRemoveImageRequested] = useState(false);
   const [categories, setCategories] = useState<ItemCategoryRead[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState("");
   const [loading, setLoading] = useState(!isCreate && !initialItem);
   const [saving, setSaving] = useState(false);
   const [itemError, setItemError] = useState<string | null>(null);
@@ -408,6 +406,7 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
     control,
     handleSubmit,
     reset,
+    getValues,
     setValue,
     watch,
     formState: { errors, isDirty, isValid },
@@ -421,6 +420,7 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
   const isActive = watch("isActive");
   const watchedAttributes = watch("attributes");
   const selectedCategoryId = watch("categoryId");
+  const selectedCategoryName = watch("category");
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
 
@@ -433,6 +433,12 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
     try {
       const nextCategories = await fetchItemCategories({ signal });
       setCategories(nextCategories);
+      const currentCategoryId = getValues("categoryId").trim();
+      if (currentCategoryId) {
+        const currentCategory = nextCategories.find((category) => category.id === currentCategoryId);
+        setValue("categoryId", currentCategory?.id ?? "", { shouldDirty: false, shouldValidate: true });
+        setValue("category", currentCategory?.name ?? "", { shouldDirty: false, shouldValidate: true });
+      }
       setCategoryError(null);
     } catch (requestError) {
       if (isApiRequestCanceled(requestError)) {
@@ -444,18 +450,18 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
         setCategoriesLoading(false);
       }
     }
-  }, []);
+  }, [getValues, setValue]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     if (isCustomize) {
       setCategoryError(null);
       setCategoriesLoading(false);
-      return;
+      return undefined;
     }
     const controller = new AbortController();
     void loadCategories(controller.signal);
     return () => controller.abort();
-  }, [isCustomize, loadCategories]);
+  }, [isCustomize, loadCategories]));
 
   useEffect(() => {
     if (isCreate || !itemId) {
@@ -646,58 +652,6 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
       },
     ]);
   }, [hasStoredImage, imageDraft, item?.name, itemId, removeImageRequested]);
-
-  const addCategory = useCallback(async () => {
-    const categoryName = categoryDraft.trim();
-    if (!categoryName) {
-      triggerHaptic();
-      setCategoryError("Enter a category name.");
-      return;
-    }
-    setCategoriesLoading(true);
-    setCategoryError(null);
-    try {
-      const createdCategory = await createItemCategory({ name: categoryName });
-      setCategories((current) => [...current, createdCategory].sort((left, right) => left.name.localeCompare(right.name)));
-      setCategoryDraft("");
-      setValue("categoryId", createdCategory.id, { shouldDirty: true, shouldValidate: true });
-      setValue("category", createdCategory.name, { shouldDirty: true, shouldValidate: true });
-    } catch (requestError) {
-      triggerHaptic();
-      setCategoryError(getRequestErrorMessage(requestError, "Unable to create category."));
-    } finally {
-      setCategoriesLoading(false);
-    }
-  }, [categoryDraft, setValue]);
-
-  const removeCategory = useCallback(async (category: ItemCategoryRead) => {
-    Alert.alert("Delete category", `Delete ${category.name}? Items using it will become uncategorized.`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          void (async () => {
-            setCategoriesLoading(true);
-            setCategoryError(null);
-            try {
-              await deleteItemCategory(category.id);
-              setCategories((current) => current.filter((candidate) => candidate.id !== category.id));
-              if (selectedCategoryId === category.id) {
-                setValue("categoryId", "", { shouldDirty: true, shouldValidate: true });
-                setValue("category", "", { shouldDirty: true, shouldValidate: true });
-              }
-            } catch (requestError) {
-              triggerHaptic();
-              setCategoryError(getRequestErrorMessage(requestError, "Unable to delete category."));
-            } finally {
-              setCategoriesLoading(false);
-            }
-          })();
-        },
-      },
-    ]);
-  }, [selectedCategoryId, setValue]);
 
   const saveImageOnlyChange = useCallback(async () => {
     if (!itemId || !hasImageChange || savingRef.current) {
@@ -1025,18 +979,16 @@ export function AdminItemEditorScreen({ navigation, route }: AdminItemEditorScre
               <CategoryManager
                 categories={categories}
                 selectedCategoryId={selectedCategoryId}
-                draftName={categoryDraft}
+                selectedCategoryName={selectedCategoryName}
                 loading={categoriesLoading}
                 errorMessage={categoryError}
                 palette={palette}
-                onChangeDraftName={setCategoryDraft}
                 onRetry={() => void loadCategories()}
                 onSelect={(category) => {
                   setValue("categoryId", category?.id ?? "", { shouldDirty: true, shouldValidate: true });
                   setValue("category", category?.name ?? "", { shouldDirty: true, shouldValidate: true });
                 }}
-                onAdd={() => void addCategory()}
-                onDelete={removeCategory}
+                onManage={() => navigation.navigate("AdminItemCategories")}
               />
             </>
           ) : null}
@@ -1106,38 +1058,74 @@ function EditorField({
 function CategoryManager({
   categories,
   selectedCategoryId,
-  draftName,
+  selectedCategoryName,
   loading,
   errorMessage,
   palette,
-  onChangeDraftName,
   onRetry,
   onSelect,
-  onAdd,
-  onDelete,
+  onManage,
 }: {
   categories: ItemCategoryRead[];
   selectedCategoryId: UUID | "";
-  draftName: string;
+  selectedCategoryName: string;
   loading: boolean;
   errorMessage: string | null;
   palette: ThemePalette;
-  onChangeDraftName: (value: string) => void;
   onRetry: () => void;
   onSelect: (category: ItemCategoryRead | null) => void;
-  onAdd: () => void;
-  onDelete: (category: ItemCategoryRead) => void;
+  onManage: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selectedCategory = useMemo(
+    () => categories.find((category) => category.id === selectedCategoryId) ?? null,
+    [categories, selectedCategoryId],
+  );
+  const fallbackCategoryName = selectedCategoryName.trim();
+  const selectedLabel = selectedCategoryId
+    ? selectedCategory?.name ?? (fallbackCategoryName || "Selected category")
+    : "No category";
+  const filteredCategories = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return categories;
+    }
+    return categories.filter((category) => category.name.toLowerCase().includes(normalized));
+  }, [categories, query]);
+
+  const chooseCategory = useCallback((category: ItemCategoryRead | null) => {
+    onSelect(category);
+    setOpen(false);
+  }, [onSelect]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+    }
+  }, [open]);
+
   return (
     <View style={[styles.categoryPanel, { borderColor: palette.border, backgroundColor: palette.card }]}>
       <XStack alignItems="center" justifyContent="space-between" gap={10}>
         <YStack flex={1} minWidth={0}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Category</Text>
           <Text style={[styles.sectionHint, { color: palette.textMuted }]}>
-            Create the catalogue groups users need, then choose one for this item.
+            Choose a catalogue group for this item.
           </Text>
         </YStack>
-        {loading ? <Spinner color={palette.emerald} size="small" /> : null}
+        <XStack alignItems="center" gap={4}>
+          {loading ? <Spinner color={palette.emerald} size="small" /> : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Manage categories"
+            onPress={onManage}
+            style={[styles.categoryManageButton, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}
+            hitSlop={8}
+          >
+            <MaterialCommunityIcons name="cog-outline" size={18} color={palette.textPrimary} />
+          </Pressable>
+        </XStack>
       </XStack>
 
       {errorMessage ? (
@@ -1150,78 +1138,136 @@ function CategoryManager({
         </View>
       ) : null}
 
-      <XStack gap={8} alignItems="center">
-        <Input
-          value={draftName}
-          placeholder="New category"
-          placeholderTextColor={palette.textMuted as never}
-          onChangeText={onChangeDraftName}
-          flex={1}
-          minHeight={42}
-          borderRadius={10}
-          borderWidth={1}
-          borderColor={palette.border}
-          backgroundColor={palette.surfaceMuted}
-          color={palette.textPrimary}
-          fontSize={14}
-          fontWeight="800"
-        />
-        <EditorButton label="Add" icon="plus" onPress={onAdd} palette={palette} disabled={loading} />
-      </XStack>
-
-      <XStack gap={8} flexWrap="wrap">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ selected: selectedCategoryId === "" }}
-          onPress={() => onSelect(null)}
-          style={[
-            styles.categoryChip,
-            {
-              borderColor: selectedCategoryId === "" ? palette.emerald : palette.border,
-              backgroundColor: selectedCategoryId === "" ? palette.emeraldSoft : palette.surfaceMuted,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              styles.categoryChipText,
-              { color: selectedCategoryId === "" ? palette.emeraldDark : palette.textPrimary },
-            ]}
-          >
-            None
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Select category"
+        onPress={() => setOpen(true)}
+        style={[styles.categorySelect, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}
+      >
+        <View style={styles.categorySelectTextWrap}>
+          <Text style={[styles.fieldLabel, { color: palette.textMuted }]}>Selected category</Text>
+          <Text numberOfLines={1} style={[styles.categorySelectText, { color: palette.textPrimary }]}>
+            {selectedLabel}
           </Text>
-        </Pressable>
-        {categories.map((category) => {
-          const selected = selectedCategoryId === category.id;
-          return (
-            <View
-              key={category.id}
-              style={[
-                styles.categoryChip,
-                {
-                  borderColor: selected ? palette.emerald : palette.border,
-                  backgroundColor: selected ? palette.emeraldSoft : palette.surfaceMuted,
-                },
-              ]}
-            >
-              <Pressable accessibilityRole="button" onPress={() => onSelect(category)} style={styles.categoryChipLabel}>
-                <Text
-                  style={[
-                    styles.categoryChipText,
-                    { color: selected ? palette.emeraldDark : palette.textPrimary },
-                  ]}
-                >
-                  {category.name}
-                </Text>
+        </View>
+        <MaterialCommunityIcons name="chevron-down" size={22} color={palette.textMuted} />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={[styles.modalOverlay, { backgroundColor: palette.overlay }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+          <View style={[styles.categorySheet, { backgroundColor: palette.card, borderColor: palette.border }]}>
+            <XStack alignItems="center" justifyContent="space-between" gap={10}>
+              <YStack flex={1} minWidth={0}>
+                <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>Select category</Text>
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Choose one category for this item.</Text>
+              </YStack>
+              <Pressable accessibilityRole="button" onPress={() => setOpen(false)} style={styles.sheetIconButton}>
+                <MaterialCommunityIcons name="close" size={20} color={palette.textPrimary} />
               </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => onDelete(category)} hitSlop={8}>
-                <MaterialCommunityIcons name="close" size={15} color={palette.danger} />
-              </Pressable>
-            </View>
-          );
-        })}
-      </XStack>
+            </XStack>
+
+            <Input
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search categories"
+              placeholderTextColor={palette.textMuted as never}
+              minHeight={44}
+              borderRadius={10}
+              borderWidth={1}
+              borderColor={palette.border}
+              backgroundColor={palette.surfaceMuted}
+              color={palette.textPrimary}
+              fontSize={14}
+              fontWeight="700"
+            />
+
+            {errorMessage ? (
+              <View style={[styles.errorBox, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
+                <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
+                <Pressable accessibilityRole="button" onPress={onRetry} hitSlop={10}>
+                  <Text style={[styles.errorAction, { color: palette.danger }]}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {loading ? (
+              <View style={styles.categoryPickerLoading}>
+                <Spinner color={palette.emerald} size="small" />
+                <Text style={[styles.sectionHint, { color: palette.textMuted }]}>Loading categories...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredCategories}
+                keyExtractor={(category) => category.id}
+                style={{ maxHeight: 360 }}
+                keyboardShouldPersistTaps="handled"
+                ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+                ListHeaderComponent={
+                  <CategoryOption
+                    label="No category"
+                    icon="close-circle-outline"
+                    selected={selectedCategoryId === ""}
+                    palette={palette}
+                    onPress={() => chooseCategory(null)}
+                  />
+                }
+                ListEmptyComponent={
+                  <View style={[styles.categoryEmpty, { backgroundColor: palette.surfaceMuted }]}>
+                    <Text style={[styles.sectionHint, { color: palette.textMuted }]}>No categories found.</Text>
+                  </View>
+                }
+                renderItem={({ item }) => (
+                  <CategoryOption
+                    label={item.name}
+                    icon="shape-outline"
+                    selected={selectedCategoryId === item.id}
+                    palette={palette}
+                    onPress={() => chooseCategory(item)}
+                  />
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
+  );
+}
+
+function CategoryOption({
+  label,
+  icon,
+  selected,
+  palette,
+  onPress,
+}: {
+  label: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  selected: boolean;
+  palette: ThemePalette;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[
+        styles.categoryOption,
+        {
+          borderColor: selected ? palette.emerald : palette.border,
+          backgroundColor: selected ? palette.emeraldSoft : palette.surfaceMuted,
+        },
+      ]}
+    >
+      <MaterialCommunityIcons name={icon} size={18} color={selected ? palette.emeraldDark : palette.textMuted} />
+      <Text numberOfLines={1} style={[styles.categoryOptionText, { color: palette.textPrimary }]}>
+        {label}
+      </Text>
+      {selected ? <MaterialCommunityIcons name="check" size={18} color={palette.emeraldDark} /> : null}
+    </Pressable>
   );
 }
 
@@ -1535,24 +1581,88 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 12,
   },
-  categoryChip: {
-    minHeight: 34,
-    maxWidth: "100%",
+  categoryManageButton: {
+    width: 42,
+    height: 42,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    flexDirection: "row",
+    borderRadius: 12,
     alignItems: "center",
-    gap: 6,
-  },
-  categoryChipLabel: {
-    minHeight: 32,
     justifyContent: "center",
   },
-  categoryChipText: {
-    fontSize: 12,
-    lineHeight: 16,
+  categorySelect: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  categorySelectTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  categorySelectText: {
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: "900",
+  },
+  modalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  categorySheet: {
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "82%",
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 14,
+    gap: 12,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "900",
+  },
+  sheetIconButton: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  categoryPickerLoading: {
+    minHeight: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  categoryOption: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  categoryOptionText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "900",
+  },
+  categoryEmpty: {
+    minHeight: 72,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+    marginTop: 6,
   },
   attributesPanel: {
     borderWidth: 1,

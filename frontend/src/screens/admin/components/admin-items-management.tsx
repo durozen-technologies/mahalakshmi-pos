@@ -42,6 +42,10 @@ export type RowAction = {
 };
 
 export type ShopItemsTab = "selected" | "available";
+export type CategoryFilterOption = {
+  key: string;
+  label: string;
+};
 
 function buttonColors(palette: ThemePalette, tone: "primary" | "neutral" | "danger" = "neutral", active = false) {
   if (tone === "danger") {
@@ -543,6 +547,99 @@ export function ImportCatalogueToolbar({
   );
 }
 
+export function ShopItemsCategoryToolbar({
+  options,
+  selectedKey,
+  loading,
+  palette,
+  onSelectCategory,
+  onArrangeOrder,
+  arrangeDisabled,
+}: {
+  options: CategoryFilterOption[];
+  selectedKey: string;
+  loading: boolean;
+  palette: ThemePalette;
+  onSelectCategory: (key: string) => void;
+  onArrangeOrder: () => void;
+  arrangeDisabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedOption = options.find((option) => option.key === selectedKey) ?? options[0];
+
+  return (
+    <YStack gap={8}>
+      <XStack gap={8} alignItems="center">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Filter shop items by category"
+          accessibilityState={{ expanded: open }}
+          onPress={() => setOpen((current) => !current)}
+          style={[styles.categoryFilterButton, { borderColor: palette.border, backgroundColor: palette.card }]}
+        >
+          <MaterialCommunityIcons name="tag-outline" size={17} color={palette.textMuted} />
+          <View style={styles.categoryFilterText}>
+            <Text style={[styles.eyebrow, { color: palette.textMuted }]}>Category</Text>
+            <Text numberOfLines={1} style={[styles.categoryFilterLabel, { color: palette.textPrimary }]}>
+              {loading ? "Loading..." : selectedOption?.label ?? "All categories"}
+            </Text>
+          </View>
+          <MaterialCommunityIcons name={open ? "chevron-up" : "chevron-down"} size={20} color={palette.textMuted} />
+        </Pressable>
+        <ActionButton
+          label="Arrange order"
+          icon="sort-ascending"
+          palette={palette}
+          tone="primary"
+          disabled={arrangeDisabled}
+          onPress={onArrangeOrder}
+        />
+      </XStack>
+
+      {open ? (
+        <View style={[styles.categoryMenu, { borderColor: palette.border, backgroundColor: palette.card }]}>
+          <ScrollView
+            style={styles.categoryMenuScroll}
+            contentContainerStyle={styles.categoryMenuContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {options.map((option) => {
+              const selected = option.key === selectedKey;
+              return (
+                <Pressable
+                  key={option.key}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    onSelectCategory(option.key);
+                    setOpen(false);
+                  }}
+                  style={[
+                    styles.categoryMenuOption,
+                    {
+                      borderColor: selected ? palette.emerald : palette.border,
+                      backgroundColor: selected ? palette.emeraldSoft : palette.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={selected ? "tag-check-outline" : "tag-outline"}
+                    size={17}
+                    color={selected ? palette.emeraldDark : palette.textMuted}
+                  />
+                  <Text numberOfLines={1} style={[styles.categoryMenuText, { color: palette.textPrimary }]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+    </YStack>
+  );
+}
+
 export function StatsStrip({
   counts,
   totalCount,
@@ -1026,7 +1123,7 @@ export function PriceGrid({
                 onPress={() => onSaveEdited(priceState.dirtyEntries)}
               />
               <ActionButton
-                label="Complete today"
+                label="Save"
                 icon="calendar-check-outline"
                 palette={palette}
                 tone="neutral"
@@ -1305,6 +1402,55 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   importSelectionText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "900",
+  },
+  categoryFilterButton: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 46,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 11,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  categoryFilterText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  categoryFilterLabel: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+  },
+  categoryMenu: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 8,
+  },
+  categoryMenuScroll: {
+    flexGrow: 0,
+    maxHeight: 230,
+  },
+  categoryMenuContent: {
+    gap: 7,
+  },
+  categoryMenuOption: {
+    minHeight: 42,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  categoryMenuText: {
     flex: 1,
     minWidth: 0,
     fontSize: 13,

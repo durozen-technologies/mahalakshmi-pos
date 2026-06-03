@@ -71,6 +71,10 @@ export interface ItemCategoryCreate {
   name: string;
 }
 
+export interface ItemCategoryUpdate {
+  name: string;
+}
+
 export interface ItemRead {
   id: UUID;
   shop_id?: UUID | null;
@@ -127,6 +131,14 @@ export interface ShopItemAllocationBulkRead {
   item_ids: UUID[];
   allocated_count: number;
   already_allocated_count: number;
+}
+
+export interface ShopSelectedItemsOrderUpdate {
+  item_ids: UUID[];
+}
+
+export interface ShopSelectedItemsOrderRead {
+  item_ids: UUID[];
 }
 
 export interface ShopItemRead extends ItemRead {
