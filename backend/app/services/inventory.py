@@ -1,0 +1,1108 @@
+from decimal import Decimal
+from uuid import UUID
+
+from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.db.storage import (
+    build_inventory_item_image_path,
+    build_inventory_item_image_thumb_path,
+    delete_item_image_storage,
+    save_inventory_item_image_upload,
+)
+from app.db.storage import (
+    delete_inventory_item_image as delete_inventory_item_image_storage,
+)
+from app.models import (
+    BaseUnit,
+    InventoryCategory,
+    InventoryItem,
+    InventoryItemCategory,
+    InventoryMovement,
+    InventoryMovementType,
+    Shop,
+    ShopInventoryAllocation,
+)
+from app.schemas.inventory import (
+    InventoryAddRequest,
+    InventoryCategoryCreate,
+    InventoryCategoryRead,
+    InventoryCategoryUpdate,
+    InventoryCategoryUsageRead,
+    InventoryItemCreate,
+    InventoryItemImageRead,
+    InventoryItemRead,
+    InventoryItemStockRead,
+    InventoryItemUpdate,
+    InventoryMovementCreateResult,
+    InventoryMovementPage,
+    InventoryMovementRead,
+    InventoryMovementSplitCreateResult,
+    InventorySummaryRead,
+    InventoryUseRequest,
+    InventoryUseSplitRequest,
+    ShopInventoryAllocationBulkRead,
+)
+
+ZERO = Decimal("0")
+THREE_DECIMALS = Decimal("0.001")
+
+
+def _normalize_inventory_category_name(raw_name: str) -> str:
+    category_name = raw_name.strip()
+    if not category_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory category name is required",
+        )
+    return category_name
+
+
+def _normalize_inventory_item_name(raw_name: str) -> str:
+    item_name = raw_name.strip()
+    if len(item_name) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory item name is required",
+        )
+    return item_name
+
+
+def _normalize_tamil_inventory_item_name(raw_name: str) -> str:
+    item_name = raw_name.strip()
+    if not item_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Tamil inventory item name is required",
+        )
+    return item_name
+
+
+def _normalize_quantity(unit: BaseUnit, quantity: Decimal) -> Decimal:
+    normalized = quantity.quantize(THREE_DECIMALS)
+    if normalized <= ZERO:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory quantity must be greater than zero",
+        )
+    if unit == BaseUnit.UNIT and normalized != normalized.to_integral_value():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Unit inventory quantities must be whole numbers",
+        )
+    return normalized
+
+
+def _normalize_nonnegative_quantity(unit: BaseUnit, quantity: Decimal) -> Decimal:
+    normalized = quantity.quantize(THREE_DECIMALS)
+    if normalized < ZERO:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory quantity cannot be negative",
+        )
+    if unit == BaseUnit.UNIT and normalized != normalized.to_integral_value():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Unit inventory quantities must be whole numbers",
+        )
+    return normalized
+
+
+def _category_to_read(category: InventoryCategory) -> InventoryCategoryRead:
+    return InventoryCategoryRead.model_validate(category)
+
+
+def _item_categories(item: InventoryItem) -> list[InventoryCategory]:
+    links = item.__dict__.get("category_links") or []
+    categories = [link.category for link in links if link.category is not None]
+    return sorted(categories, key=lambda category: (category.name.lower(), str(category.id)))
+
+
+def _inventory_item_to_read(item: InventoryItem) -> InventoryItemRead:
+    categories = _item_categories(item)
+    return _inventory_item_to_read_with_categories(item, categories)
+
+
+def _inventory_item_to_read_with_categories(
+    item: InventoryItem,
+    categories: list[InventoryCategory],
+) -> InventoryItemRead:
+    sorted_categories = sorted(categories, key=lambda category: (category.name.lower(), str(category.id)))
+    return InventoryItemRead(
+        id=item.id,
+        name=item.name,
+        tamil_name=item.tamil_name,
+        unit_type=item.unit_type,
+        base_unit=item.base_unit,
+        sort_order=item.sort_order,
+        is_active=item.is_active,
+        category_ids=[category.id for category in sorted_categories],
+        categories=[_category_to_read(category) for category in sorted_categories],
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+        image_path=build_inventory_item_image_path(
+            item.id, item.image_object_key, item.image_content_type
+        ),
+        image_thumb_path=build_inventory_item_image_thumb_path(
+            item.id,
+            item.image_thumbnail_object_key,
+            item.image_thumbnail_content_type,
+            original_object_key=item.image_object_key,
+        ),
+        image_content_type=item.image_content_type,
+    )
+
+
+def _inventory_item_row_to_read(
+    row,
+    categories_by_item_id: dict[UUID, list[InventoryCategoryRead]],
+) -> InventoryItemRead:
+    categories = categories_by_item_id.get(row.id, [])
+    return InventoryItemRead(
+        id=row.id,
+        name=row.name,
+        tamil_name=row.tamil_name,
+        unit_type=row.unit_type,
+        base_unit=row.base_unit,
+        sort_order=row.sort_order,
+        is_active=row.is_active,
+        category_ids=[category.id for category in categories],
+        categories=categories,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        image_path=build_inventory_item_image_path(
+            row.id, row.image_object_key, row.image_content_type
+        ),
+        image_thumb_path=build_inventory_item_image_thumb_path(
+            row.id,
+            row.image_thumbnail_object_key,
+            row.image_thumbnail_content_type,
+            original_object_key=row.image_object_key,
+        ),
+        image_content_type=row.image_content_type,
+    )
+
+
+async def _ensure_unique_inventory_item_name(
+    db: AsyncSession,
+    item_name: str,
+    *,
+    exclude_item_id: UUID | None = None,
+) -> None:
+    filters = [func.lower(InventoryItem.name) == item_name.lower()]
+    if exclude_item_id is not None:
+        filters.append(InventoryItem.id != exclude_item_id)
+    existing_item = await db.scalar(select(InventoryItem.id).where(*filters).limit(1))
+    if existing_item is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory item name already exists",
+        )
+
+
+async def list_inventory_categories(db: AsyncSession) -> list[InventoryCategoryRead]:
+    rows = await db.scalars(
+        select(InventoryCategory).order_by(func.lower(InventoryCategory.name), InventoryCategory.id)
+    )
+    return [_category_to_read(category) for category in rows.all()]
+
+
+async def create_inventory_category(
+    db: AsyncSession,
+    payload: InventoryCategoryCreate,
+) -> InventoryCategoryRead:
+    category_name = _normalize_inventory_category_name(payload.name)
+    existing = await db.scalar(
+        select(InventoryCategory.id).where(func.lower(InventoryCategory.name) == category_name.lower())
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory category already exists",
+    )
+    category = InventoryCategory(name=category_name)
+    db.add(category)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory category already exists",
+        ) from None
+    return _category_to_read(category)
+
+
+async def update_inventory_category(
+    db: AsyncSession,
+    category_id: UUID,
+    payload: InventoryCategoryUpdate,
+) -> InventoryCategoryRead:
+    category_name = _normalize_inventory_category_name(payload.name)
+    category = await db.scalar(
+        select(InventoryCategory).where(InventoryCategory.id == category_id).with_for_update()
+    )
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory category not found")
+    if category.name == category_name:
+        return _category_to_read(category)
+    existing = await db.scalar(
+        select(InventoryCategory.id)
+        .where(
+            func.lower(InventoryCategory.name) == category_name.lower(),
+            InventoryCategory.id != category_id,
+        )
+        .limit(1)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory category already exists",
+        )
+    category.name = category_name
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory category already exists",
+        ) from None
+    return _category_to_read(category)
+
+
+async def delete_inventory_category(db: AsyncSession, category_id: UUID) -> None:
+    category = await db.scalar(
+        select(InventoryCategory).where(InventoryCategory.id == category_id).with_for_update()
+    )
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory category not found")
+    has_item_links = await db.scalar(
+        select(InventoryItemCategory.id)
+        .where(InventoryItemCategory.category_id == category_id)
+        .limit(1)
+    )
+    if has_item_links is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete an inventory category linked to inventory items",
+        )
+    has_movements = await db.scalar(
+        select(InventoryMovement.id).where(InventoryMovement.category_id == category_id).limit(1)
+    )
+    if has_movements is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete an inventory category with movement history",
+        )
+    await db.delete(category)
+    await db.commit()
+
+
+async def _resolve_inventory_categories(
+    db: AsyncSession,
+    category_ids: list[UUID],
+) -> list[InventoryCategory]:
+    unique_category_ids = list(dict.fromkeys(category_ids))
+    if not unique_category_ids:
+        return []
+    categories = (
+        await db.scalars(
+            select(InventoryCategory).where(InventoryCategory.id.in_(unique_category_ids))
+        )
+    ).all()
+    categories_by_id = {category.id: category for category in categories}
+    missing_category_ids = [category_id for category_id in unique_category_ids if category_id not in categories_by_id]
+    if missing_category_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory category not found",
+        )
+    return [categories_by_id[category_id] for category_id in unique_category_ids]
+
+
+async def list_inventory_items(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    active: bool | None = None,
+) -> list[InventoryItemRead]:
+    query = select(
+        InventoryItem.id,
+        InventoryItem.name,
+        InventoryItem.tamil_name,
+        InventoryItem.unit_type,
+        InventoryItem.base_unit,
+        InventoryItem.sort_order,
+        InventoryItem.is_active,
+        InventoryItem.created_at,
+        InventoryItem.updated_at,
+        InventoryItem.image_object_key,
+        InventoryItem.image_content_type,
+        InventoryItem.image_thumbnail_object_key,
+        InventoryItem.image_thumbnail_content_type,
+    )
+    search = q.strip() if q else ""
+    if search:
+        like_search = f"%{search.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(InventoryItem.name).like(like_search),
+                func.lower(InventoryItem.tamil_name).like(like_search),
+            )
+        )
+    if active is not None:
+        query = query.where(InventoryItem.is_active.is_(active))
+    rows = (
+        await db.execute(
+            query.order_by(
+                InventoryItem.sort_order,
+                func.lower(InventoryItem.name),
+                InventoryItem.id,
+            )
+        )
+    ).all()
+    if not rows:
+        return []
+
+    item_ids = [row.id for row in rows]
+    category_rows = (
+        await db.execute(
+            select(
+                InventoryItemCategory.inventory_item_id.label("inventory_item_id"),
+                InventoryCategory.id.label("category_id"),
+                InventoryCategory.name.label("category_name"),
+                InventoryCategory.created_at.label("category_created_at"),
+                InventoryCategory.updated_at.label("category_updated_at"),
+            )
+            .join(InventoryCategory, InventoryCategory.id == InventoryItemCategory.category_id)
+            .where(InventoryItemCategory.inventory_item_id.in_(item_ids))
+            .order_by(
+                InventoryItemCategory.inventory_item_id,
+                func.lower(InventoryCategory.name),
+                InventoryCategory.id,
+            )
+        )
+    ).all()
+    categories_by_item_id: dict[UUID, list[InventoryCategoryRead]] = {}
+    for category_row in category_rows:
+        categories_by_item_id.setdefault(category_row.inventory_item_id, []).append(
+            InventoryCategoryRead(
+                id=category_row.category_id,
+                name=category_row.category_name,
+                created_at=category_row.category_created_at,
+                updated_at=category_row.category_updated_at,
+            )
+        )
+    return [_inventory_item_row_to_read(row, categories_by_item_id) for row in rows]
+
+
+async def get_inventory_item(db: AsyncSession, item_id: UUID) -> InventoryItemRead:
+    item = await db.scalar(
+        select(InventoryItem)
+        .where(InventoryItem.id == item_id)
+        .options(selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category))
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    return _inventory_item_to_read(item)
+
+
+async def create_inventory_item(
+    db: AsyncSession,
+    payload: InventoryItemCreate,
+    image: UploadFile | None = None,
+) -> InventoryItemRead:
+    item_name = _normalize_inventory_item_name(payload.name)
+    tamil_name = _normalize_tamil_inventory_item_name(payload.tamil_name)
+    await _ensure_unique_inventory_item_name(db, item_name)
+    categories = await _resolve_inventory_categories(db, payload.category_ids)
+
+    item = InventoryItem(
+        name=item_name,
+        tamil_name=tamil_name,
+        unit_type=payload.unit_type,
+        base_unit=payload.base_unit,
+        sort_order=payload.sort_order,
+        is_active=payload.is_active,
+    )
+    uploaded_image_object_key: str | None = None
+    uploaded_thumbnail_object_key: str | None = None
+    try:
+        db.add(item)
+        await db.flush()
+        for category in categories:
+            db.add(InventoryItemCategory(inventory_item_id=item.id, category_id=category.id))
+        if image is not None:
+            await save_inventory_item_image_upload(db, item, image, commit=False)
+            uploaded_image_object_key = item.image_object_key
+            uploaded_thumbnail_object_key = item.image_thumbnail_object_key
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        await delete_item_image_storage(uploaded_image_object_key, uploaded_thumbnail_object_key)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory item name already exists",
+        ) from None
+    except Exception:
+        await db.rollback()
+        await delete_item_image_storage(uploaded_image_object_key, uploaded_thumbnail_object_key)
+        raise
+    return await get_inventory_item(db, item.id)
+
+
+async def update_inventory_item(
+    db: AsyncSession,
+    item_id: UUID,
+    payload: InventoryItemUpdate,
+    image: UploadFile | None = None,
+    *,
+    remove_image: bool = False,
+) -> InventoryItemRead:
+    item = await db.scalar(
+        select(InventoryItem)
+        .where(InventoryItem.id == item_id)
+        .options(selectinload(InventoryItem.category_links))
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    item_name = _normalize_inventory_item_name(payload.name)
+    tamil_name = _normalize_tamil_inventory_item_name(payload.tamil_name)
+    if item.name.lower() != item_name.lower():
+        await _ensure_unique_inventory_item_name(db, item_name, exclude_item_id=item_id)
+    categories = await _resolve_inventory_categories(db, payload.category_ids)
+    next_category_ids = {category.id for category in categories}
+    removed_category_ids = {
+        link.category_id for link in item.category_links if link.category_id not in next_category_ids
+    }
+    if removed_category_ids:
+        has_usage_history = await db.scalar(
+            select(InventoryMovement.id)
+            .where(
+                InventoryMovement.inventory_item_id == item.id,
+                InventoryMovement.category_id.in_(removed_category_ids),
+                InventoryMovement.movement_type == InventoryMovementType.USE,
+            )
+            .limit(1)
+        )
+        if has_usage_history is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot remove an inventory item category with usage history",
+            )
+
+    previous_image_object_key = item.image_object_key
+    previous_thumbnail_object_key = item.image_thumbnail_object_key
+    uploaded_image_object_key: str | None = None
+    uploaded_thumbnail_object_key: str | None = None
+    should_remove_image = remove_image and image is None and bool(
+        item.image_object_key or item.image_thumbnail_object_key
+    )
+
+    try:
+        item.name = item_name
+        item.tamil_name = tamil_name
+        item.unit_type = payload.unit_type
+        item.base_unit = payload.base_unit
+        item.sort_order = payload.sort_order
+        item.is_active = payload.is_active
+        if should_remove_image:
+            item.image_object_key = None
+            item.image_content_type = None
+            item.image_thumbnail_object_key = None
+            item.image_thumbnail_content_type = None
+        for link in list(item.category_links):
+            await db.delete(link)
+        await db.flush()
+        for category in categories:
+            db.add(InventoryItemCategory(inventory_item_id=item.id, category_id=category.id))
+        if image is not None:
+            await save_inventory_item_image_upload(db, item, image, commit=False)
+            uploaded_image_object_key = item.image_object_key
+            uploaded_thumbnail_object_key = item.image_thumbnail_object_key
+        await db.commit()
+        await db.refresh(item)
+        if (
+            (image is not None or should_remove_image)
+            and previous_image_object_key
+            and previous_image_object_key != item.image_object_key
+        ):
+            await delete_item_image_storage(previous_image_object_key)
+        if (
+            (image is not None or should_remove_image)
+            and previous_thumbnail_object_key
+            and previous_thumbnail_object_key != item.image_thumbnail_object_key
+        ):
+            await delete_item_image_storage(previous_thumbnail_object_key)
+    except IntegrityError:
+        await db.rollback()
+        if uploaded_image_object_key and uploaded_image_object_key != previous_image_object_key:
+            await delete_item_image_storage(uploaded_image_object_key)
+        if (
+            uploaded_thumbnail_object_key
+            and uploaded_thumbnail_object_key != previous_thumbnail_object_key
+        ):
+            await delete_item_image_storage(uploaded_thumbnail_object_key)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory item name already exists",
+        ) from None
+    except Exception:
+        await db.rollback()
+        if uploaded_image_object_key and uploaded_image_object_key != previous_image_object_key:
+            await delete_item_image_storage(uploaded_image_object_key)
+        if (
+            uploaded_thumbnail_object_key
+            and uploaded_thumbnail_object_key != previous_thumbnail_object_key
+        ):
+            await delete_item_image_storage(uploaded_thumbnail_object_key)
+        raise
+    return _inventory_item_to_read_with_categories(item, categories)
+
+
+async def upload_inventory_item_image(
+    db: AsyncSession,
+    item_id: UUID,
+    image: UploadFile,
+) -> InventoryItemImageRead:
+    item = await db.scalar(select(InventoryItem).where(InventoryItem.id == item_id).with_for_update())
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    return await save_inventory_item_image_upload(db, item, image)
+
+
+async def remove_inventory_item_image(
+    db: AsyncSession,
+    item_id: UUID,
+) -> InventoryItemImageRead:
+    return await delete_inventory_item_image_storage(db, item_id)
+
+
+async def delete_inventory_item(db: AsyncSession, item_id: UUID) -> None:
+    item = await db.scalar(
+        select(InventoryItem).where(InventoryItem.id == item_id).with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    has_allocation = await db.scalar(
+        select(ShopInventoryAllocation.id)
+        .where(ShopInventoryAllocation.inventory_item_id == item_id)
+        .limit(1)
+    )
+    has_movement = await db.scalar(
+        select(InventoryMovement.id).where(InventoryMovement.inventory_item_id == item_id).limit(1)
+    )
+    if has_allocation is not None or has_movement is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete an inventory item with shop allocation or movement history",
+        )
+    image_object_key = item.image_object_key
+    thumbnail_object_key = item.image_thumbnail_object_key
+    await db.delete(item)
+    await db.commit()
+    await delete_item_image_storage(image_object_key, thumbnail_object_key)
+
+
+async def _movement_totals(
+    db: AsyncSession,
+    shop_id: UUID,
+    item_ids: list[UUID],
+) -> tuple[dict[UUID, Decimal], dict[UUID, Decimal], dict[tuple[UUID, UUID], Decimal]]:
+    if not item_ids:
+        return {}, {}, {}
+    rows = (
+        await db.execute(
+            select(
+                InventoryMovement.inventory_item_id,
+                InventoryMovement.movement_type,
+                func.coalesce(func.sum(InventoryMovement.quantity), 0).label("quantity"),
+            )
+            .where(
+                InventoryMovement.shop_id == shop_id,
+                InventoryMovement.inventory_item_id.in_(item_ids),
+            )
+            .group_by(InventoryMovement.inventory_item_id, InventoryMovement.movement_type)
+        )
+    ).all()
+    added: dict[UUID, Decimal] = {}
+    used: dict[UUID, Decimal] = {}
+    for row in rows:
+        if row.movement_type == InventoryMovementType.ADD:
+            added[row.inventory_item_id] = row.quantity or ZERO
+        else:
+            used[row.inventory_item_id] = row.quantity or ZERO
+
+    category_rows = (
+        await db.execute(
+            select(
+                InventoryMovement.inventory_item_id,
+                InventoryMovement.category_id,
+                func.coalesce(func.sum(InventoryMovement.quantity), 0).label("quantity"),
+            )
+            .where(
+                InventoryMovement.shop_id == shop_id,
+                InventoryMovement.inventory_item_id.in_(item_ids),
+                InventoryMovement.movement_type == InventoryMovementType.USE,
+                InventoryMovement.category_id.is_not(None),
+            )
+            .group_by(InventoryMovement.inventory_item_id, InventoryMovement.category_id)
+        )
+    ).all()
+    category_used = {
+        (row.inventory_item_id, row.category_id): row.quantity or ZERO for row in category_rows
+    }
+    return added, used, category_used
+
+
+def _stock_item_from_inventory_item(
+    item: InventoryItem,
+    *,
+    allocation: ShopInventoryAllocation | None,
+    added_quantity: Decimal,
+    used_quantity: Decimal,
+    category_used: dict[tuple[UUID, UUID], Decimal],
+) -> InventoryItemStockRead:
+    base = _inventory_item_to_read(item)
+    available_quantity = added_quantity - used_quantity
+    category_usage = [
+        InventoryCategoryUsageRead(
+            category_id=category.id,
+            category_name=category.name,
+            available_quantity=available_quantity,
+            used_quantity=category_used.get((item.id, category.id), ZERO),
+        )
+        for category in base.categories
+    ]
+    return InventoryItemStockRead(
+        **base.model_dump(),
+        allocated=allocation is not None,
+        allocation_active=bool(allocation and allocation.is_active and item.is_active),
+        allocation_sort_order=allocation.sort_order if allocation is not None else item.sort_order,
+        available_quantity=available_quantity,
+        added_quantity=added_quantity,
+        used_quantity=used_quantity,
+        category_usage=category_usage,
+    )
+
+
+async def get_inventory_summary(
+    db: AsyncSession,
+    shop: Shop,
+    *,
+    include_unallocated: bool = False,
+    active_allocations_only: bool = False,
+) -> InventorySummaryRead:
+    allocation_query = select(ShopInventoryAllocation).where(
+        ShopInventoryAllocation.shop_id == shop.id
+    )
+    allocations = (await db.scalars(allocation_query)).all()
+    allocations_by_item_id = {allocation.inventory_item_id: allocation for allocation in allocations}
+    scoped_item_ids = list(allocations_by_item_id)
+
+    if active_allocations_only:
+        scoped_item_ids = [
+            allocation.inventory_item_id for allocation in allocations if allocation.is_active
+        ]
+
+    if not include_unallocated and not scoped_item_ids:
+        return InventorySummaryRead(
+            shop_id=shop.id,
+            shop_name=shop.name,
+            items=[],
+            categories=[],
+        )
+
+    item_query = select(InventoryItem).options(
+        selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category)
+    )
+
+    if include_unallocated:
+        pass
+    else:
+        item_query = item_query.where(InventoryItem.id.in_(scoped_item_ids))
+    if active_allocations_only:
+        item_query = item_query.where(InventoryItem.is_active.is_(True))
+
+    items = (
+        await db.scalars(
+            item_query.order_by(InventoryItem.sort_order, func.lower(InventoryItem.name), InventoryItem.id)
+        )
+    ).all()
+    item_ids = [item.id for item in items]
+    added, used, category_used = await _movement_totals(db, shop.id, item_ids)
+    stock_items = [
+        _stock_item_from_inventory_item(
+            item,
+            allocation=allocations_by_item_id.get(item.id),
+            added_quantity=added.get(item.id, ZERO),
+            used_quantity=used.get(item.id, ZERO),
+            category_used=category_used,
+        )
+        for item in items
+    ]
+    stock_items.sort(
+        key=lambda item: (
+            0 if item.allocated else 1,
+            item.allocation_sort_order,
+            item.name.lower(),
+            str(item.id),
+        )
+    )
+
+    category_totals: dict[UUID, InventoryCategoryUsageRead] = {}
+    for stock_item in stock_items:
+        if active_allocations_only and not stock_item.allocation_active:
+            continue
+        if not include_unallocated and not stock_item.allocated:
+            continue
+        for category in stock_item.category_usage:
+            existing = category_totals.get(category.category_id)
+            if existing is None:
+                category_totals[category.category_id] = InventoryCategoryUsageRead(
+                    category_id=category.category_id,
+                    category_name=category.category_name,
+                    available_quantity=category.available_quantity,
+                    used_quantity=category.used_quantity,
+                )
+            else:
+                existing.available_quantity += category.available_quantity
+                existing.used_quantity += category.used_quantity
+
+    return InventorySummaryRead(
+        shop_id=shop.id,
+        shop_name=shop.name,
+        items=stock_items,
+        categories=sorted(
+            category_totals.values(),
+            key=lambda category: (category.category_name.lower(), str(category.category_id)),
+        ),
+    )
+
+
+async def allocate_shop_inventory_items(
+    db: AsyncSession,
+    shop: Shop,
+    item_ids: list[UUID],
+) -> ShopInventoryAllocationBulkRead:
+    unique_item_ids = list(dict.fromkeys(item_ids))
+    items = (await db.scalars(select(InventoryItem).where(InventoryItem.id.in_(unique_item_ids)))).all()
+    items_by_id = {item.id: item for item in items}
+    for item_id in unique_item_ids:
+        item = items_by_id.get(item_id)
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+        if not item.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Inactive inventory items cannot be allocated to a shop",
+            )
+    existing_item_ids = set(
+        (
+            await db.scalars(
+                select(ShopInventoryAllocation.inventory_item_id).where(
+                    ShopInventoryAllocation.shop_id == shop.id,
+                    ShopInventoryAllocation.inventory_item_id.in_(unique_item_ids),
+                )
+            )
+        ).all()
+    )
+    new_item_ids = [item_id for item_id in unique_item_ids if item_id not in existing_item_ids]
+    allocated_count = len(new_item_ids)
+    for item_id in new_item_ids:
+        db.add(ShopInventoryAllocation(shop_id=shop.id, inventory_item_id=item_id))
+    if new_item_ids:
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Inventory allocation already exists",
+            ) from None
+    return ShopInventoryAllocationBulkRead(
+        item_ids=unique_item_ids,
+        allocated_count=allocated_count,
+        already_allocated_count=len(unique_item_ids) - allocated_count,
+    )
+
+
+async def update_shop_inventory_allocation(
+    db: AsyncSession,
+    shop: Shop,
+    item_id: UUID,
+    *,
+    is_active: bool | None = None,
+    sort_order: int | None = None,
+) -> None:
+    allocation = await db.scalar(
+        select(ShopInventoryAllocation)
+        .where(
+            ShopInventoryAllocation.shop_id == shop.id,
+            ShopInventoryAllocation.inventory_item_id == item_id,
+        )
+        .with_for_update()
+    )
+    if allocation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory allocation not found")
+    if is_active is not None:
+        allocation.is_active = is_active
+    if sort_order is not None:
+        allocation.sort_order = sort_order
+    await db.commit()
+
+
+async def _get_allocated_inventory_item_for_shop(
+    db: AsyncSession,
+    shop: Shop,
+    item_id: UUID,
+) -> InventoryItem:
+    allocation = await db.scalar(
+        select(ShopInventoryAllocation)
+        .where(
+            ShopInventoryAllocation.shop_id == shop.id,
+            ShopInventoryAllocation.inventory_item_id == item_id,
+        )
+        .with_for_update()
+    )
+    if allocation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item is not allocated to this shop",
+        )
+    if not allocation.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory allocation is inactive",
+        )
+    item = await db.scalar(
+        select(InventoryItem)
+        .where(InventoryItem.id == item_id)
+        .options(selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category))
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    if not item.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory item is inactive",
+        )
+    return item
+
+
+async def _available_quantity_for_item(db: AsyncSession, shop_id: UUID, item_id: UUID) -> Decimal:
+    added, used, _ = await _movement_totals(db, shop_id, [item_id])
+    return added.get(item_id, ZERO) - used.get(item_id, ZERO)
+
+
+def _movement_to_read(movement: InventoryMovement) -> InventoryMovementRead:
+    item = movement.item
+    category = movement.category
+    shop = movement.shop
+    return InventoryMovementRead(
+        id=movement.id,
+        shop_id=movement.shop_id,
+        shop_name=shop.name if shop is not None else None,
+        inventory_item_id=movement.inventory_item_id,
+        inventory_item_name=item.name if item is not None else "",
+        inventory_item_tamil_name=item.tamil_name if item is not None else None,
+        category_id=movement.category_id,
+        category_name=category.name if category is not None else None,
+        movement_type=movement.movement_type,
+        quantity=movement.quantity,
+        unit=item.base_unit if item is not None else BaseUnit.KG,
+        created_at=movement.created_at,
+    )
+
+
+async def list_inventory_movements(
+    db: AsyncSession,
+    *,
+    shop_id: UUID | None = None,
+    item_id: UUID | None = None,
+    category_id: UUID | None = None,
+    limit: int = 100,
+) -> InventoryMovementPage:
+    query = select(InventoryMovement).options(
+        selectinload(InventoryMovement.shop),
+        selectinload(InventoryMovement.item),
+        selectinload(InventoryMovement.category),
+    )
+    if shop_id is not None:
+        query = query.where(InventoryMovement.shop_id == shop_id)
+    if item_id is not None:
+        query = query.where(InventoryMovement.inventory_item_id == item_id)
+    if category_id is not None:
+        query = query.where(InventoryMovement.category_id == category_id)
+    rows = (
+        await db.scalars(
+            query.order_by(InventoryMovement.created_at.desc(), InventoryMovement.id.desc()).limit(limit + 1)
+        )
+    ).all()
+    page_rows = rows[:limit]
+    return InventoryMovementPage(
+        items=[_movement_to_read(movement) for movement in page_rows],
+        limit=limit,
+        has_more=len(rows) > limit,
+    )
+
+
+async def add_shop_inventory_stock(
+    db: AsyncSession,
+    shop: Shop,
+    item_id: UUID,
+    payload: InventoryAddRequest,
+) -> InventoryMovementCreateResult:
+    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    quantity = _normalize_quantity(item.base_unit, payload.quantity)
+    movement = InventoryMovement(
+        shop_id=shop.id,
+        inventory_item_id=item.id,
+        movement_type=InventoryMovementType.ADD,
+        quantity=quantity,
+    )
+    db.add(movement)
+    await db.commit()
+    await db.refresh(movement)
+    movement = await db.scalar(
+        select(InventoryMovement)
+        .where(InventoryMovement.id == movement.id)
+        .options(
+            selectinload(InventoryMovement.shop),
+            selectinload(InventoryMovement.item),
+            selectinload(InventoryMovement.category),
+        )
+    )
+    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+    stock_item = next(item for item in summary.items if item.id == item_id)
+    return InventoryMovementCreateResult(
+        movement=_movement_to_read(movement),
+        item=stock_item,
+        summary=summary,
+    )
+
+
+async def use_shop_inventory_stock(
+    db: AsyncSession,
+    shop: Shop,
+    item_id: UUID,
+    payload: InventoryUseRequest,
+) -> InventoryMovementCreateResult:
+    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    quantity = _normalize_quantity(item.base_unit, payload.quantity)
+    category_ids = {link.category_id for link in item.category_links}
+    if payload.category_id not in category_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory category is not linked to this item",
+        )
+    available_quantity = await _available_quantity_for_item(db, shop.id, item.id)
+    if quantity > available_quantity:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory use exceeds available item quantity",
+        )
+    movement = InventoryMovement(
+        shop_id=shop.id,
+        inventory_item_id=item.id,
+        category_id=payload.category_id,
+        movement_type=InventoryMovementType.USE,
+        quantity=quantity,
+    )
+    db.add(movement)
+    await db.commit()
+    await db.refresh(movement)
+    movement = await db.scalar(
+        select(InventoryMovement)
+        .where(InventoryMovement.id == movement.id)
+        .options(
+            selectinload(InventoryMovement.shop),
+            selectinload(InventoryMovement.item),
+            selectinload(InventoryMovement.category),
+        )
+    )
+    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+    stock_item = next(item for item in summary.items if item.id == item_id)
+    return InventoryMovementCreateResult(
+        movement=_movement_to_read(movement),
+        item=stock_item,
+        summary=summary,
+    )
+
+
+async def use_shop_inventory_stock_split(
+    db: AsyncSession,
+    shop: Shop,
+    item_id: UUID,
+    payload: InventoryUseSplitRequest,
+) -> InventoryMovementSplitCreateResult:
+    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    total_quantity = _normalize_quantity(item.base_unit, payload.total_quantity)
+    linked_category_ids = {link.category_id for link in item.category_links}
+    split_quantities: dict[UUID, Decimal] = {}
+    for line in payload.categories:
+        if line.category_id not in linked_category_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Inventory category is not linked to this item",
+            )
+        quantity = _normalize_nonnegative_quantity(item.base_unit, line.quantity)
+        split_quantities[line.category_id] = split_quantities.get(line.category_id, ZERO) + quantity
+
+    split_quantities = {
+        category_id: quantity for category_id, quantity in split_quantities.items() if quantity > ZERO
+    }
+    split_total = sum(split_quantities.values(), ZERO).quantize(THREE_DECIMALS)
+    if not split_quantities or split_total != total_quantity:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Category split total must match the inventory use quantity",
+        )
+
+    available_quantity = await _available_quantity_for_item(db, shop.id, item.id)
+    if total_quantity > available_quantity:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inventory use exceeds available item quantity",
+        )
+
+    movements = [
+        InventoryMovement(
+            shop_id=shop.id,
+            inventory_item_id=item.id,
+            category_id=category_id,
+            movement_type=InventoryMovementType.USE,
+            quantity=quantity,
+        )
+        for category_id, quantity in split_quantities.items()
+    ]
+    for movement in movements:
+        db.add(movement)
+    await db.flush()
+    movement_ids = [movement.id for movement in movements]
+    await db.commit()
+    saved_movements = (
+        await db.scalars(
+            select(InventoryMovement)
+            .where(InventoryMovement.id.in_(movement_ids))
+            .options(
+                selectinload(InventoryMovement.shop),
+                selectinload(InventoryMovement.item),
+                selectinload(InventoryMovement.category),
+            )
+            .order_by(InventoryMovement.created_at, InventoryMovement.id)
+        )
+    ).all()
+    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+    stock_item = next(item for item in summary.items if item.id == item_id)
+    return InventoryMovementSplitCreateResult(
+        movements=[_movement_to_read(movement) for movement in saved_movements],
+        item=stock_item,
+        summary=summary,
+    )

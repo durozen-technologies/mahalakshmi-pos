@@ -550,6 +550,10 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
       navigation.navigate("AdminItemsCatalogue");
       return;
     }
+    if (key === "inventory") {
+      navigation.navigate("AdminInventory");
+      return;
+    }
     setActiveNav(key as AdminNavTab);
   }, [navigation]);
 
@@ -758,7 +762,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
         />
       ) : null}
 
-      {activeNav === "inventory" ? (
+      {activeNav === "sales" ? (
         <AdminInventoryTab
           dashboardError={dashboardError}
           hasShops={shops.length > 0}

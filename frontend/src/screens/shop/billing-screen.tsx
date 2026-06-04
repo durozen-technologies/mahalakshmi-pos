@@ -693,6 +693,28 @@ export function BillingScreen({
 
         <Card className="mt-2">
           <View className="flex-row items-start gap-3">
+            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-accentSoft">
+              <MaterialCommunityIcons name="warehouse" size={21} color="#244734" />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm font-bold text-ink">
+                {t("inventory.title")}
+              </Text>
+              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
+                {t("inventory.billingEntryDescription")}
+              </Text>
+              <Button
+                label={t("action.manageInventory")}
+                onPress={() => navigation.navigate("InventoryManagement")}
+                variant="secondary"
+                className="mt-4 self-start"
+              />
+            </View>
+          </View>
+        </Card>
+
+        <Card className="mt-2">
+          <View className="flex-row items-start gap-3">
             <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-surface">
               <MaterialCommunityIcons
                 name={preferredPrinter ? "printer-check" : "printer-alert"}

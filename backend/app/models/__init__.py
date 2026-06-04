@@ -2,7 +2,14 @@ from ..db.database import Base
 from .base import BaseModelMixin
 from .bill import Bill, BillItem, BillStatus, MonthlyBillSequence
 from .daily_price import DailyPrice
-from .enums import BaseUnit, UnitType, UserRole
+from .enums import BaseUnit, InventoryMovementType, UnitType, UserRole
+from .inventory import (
+    InventoryCategory,
+    InventoryItem,
+    InventoryItemCategory,
+    InventoryMovement,
+    ShopInventoryAllocation,
+)
 from .item import Item
 from .item_category import ItemCategory
 from .item_change_event import ItemChangeEvent
@@ -26,6 +33,11 @@ __all__ = [
     "BillItem",
     "BillStatus",
     "DailyPrice",
+    "InventoryCategory",
+    "InventoryItem",
+    "InventoryItemCategory",
+    "InventoryMovement",
+    "InventoryMovementType",
     "Item",
     "ItemCategory",
     "ItemChangeEvent",
@@ -33,6 +45,7 @@ __all__ = [
     "Payment",
     "Receipt",
     "Shop",
+    "ShopInventoryAllocation",
     "ShopItemAllocation",
     "UnitType",
     "User",

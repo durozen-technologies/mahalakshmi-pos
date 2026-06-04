@@ -6,10 +6,18 @@ import {
   AdminBillPage,
   AnalyticsPeriod,
   AdminDashboardBootstrap,
+  BaseUnit,
   BillRead,
   DailyPriceCreate,
   DailyPriceRead,
   DailyPriceUpdate,
+  InventoryCategoryCreate,
+  InventoryCategoryRead,
+  InventoryCategoryUpdate,
+  InventoryItemImageRead,
+  InventoryItemRead,
+  InventoryMovementPage,
+  InventorySummaryRead,
   ItemCategoryCreate,
   ItemCategoryRead,
   ItemCategoryUpdate,
@@ -22,6 +30,9 @@ import {
   PriceStatus,
   ShopBootstrapResponse,
   ShopCreate,
+  ShopInventoryAllocationBulkCreate,
+  ShopInventoryAllocationBulkRead,
+  ShopInventoryAllocationUpdate,
   ShopItemAllocationBulkCreate,
   ShopItemAllocationBulkRead,
   ShopItemAllocationUpdate,
@@ -34,6 +45,7 @@ import {
   ShopSalesSummary,
   ShopStatusUpdate,
   ShopUpdate,
+  UnitType,
   UUID,
 } from "@/types/api";
 
@@ -43,6 +55,15 @@ export type ItemImageUploadFile = {
   type: string;
 };
 export type ItemMultipartFields = Record<string, string>;
+export type InventoryItemMetadataPayload = {
+  name: string;
+  tamil_name: string;
+  unit_type: UnitType;
+  base_unit: BaseUnit;
+  is_active: boolean;
+  sort_order: number;
+  category_ids: UUID[];
+};
 
 function parseUploadResponseBody(body: string) {
   if (!body.trim()) {
@@ -168,6 +189,30 @@ export async function updateItemCategory(categoryId: UUID, payload: ItemCategory
 
 export async function deleteItemCategory(categoryId: UUID) {
   await apiClient.delete(`/api/v1/admin/item-categories/${categoryId}`);
+}
+
+export async function fetchInventoryCategories(options: ApiRequestOptions = {}) {
+  const { data } = await apiClient.get<InventoryCategoryRead[]>("/api/v1/admin/inventory/categories", {
+    signal: options.signal,
+  });
+  return data;
+}
+
+export async function createInventoryCategory(payload: InventoryCategoryCreate) {
+  const { data } = await apiClient.post<InventoryCategoryRead>("/api/v1/admin/inventory/categories", payload);
+  return data;
+}
+
+export async function updateInventoryCategory(categoryId: UUID, payload: InventoryCategoryUpdate) {
+  const { data } = await apiClient.patch<InventoryCategoryRead>(
+    `/api/v1/admin/inventory/categories/${categoryId}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteInventoryCategory(categoryId: UUID) {
+  await apiClient.delete(`/api/v1/admin/inventory/categories/${categoryId}`);
 }
 
 export async function updateShop(shopId: UUID, payload: ShopUpdate) {
@@ -378,6 +423,27 @@ export async function fetchCatalogueItem(itemId: UUID, options: ApiRequestOption
   return data;
 }
 
+export async function fetchInventoryItems(
+  params?: { q?: string; active?: boolean | null },
+  options: ApiRequestOptions = {},
+) {
+  const { data } = await apiClient.get<InventoryItemRead[]>("/api/v1/admin/inventory/items", {
+    params: {
+      q: params?.q || undefined,
+      active: params?.active ?? undefined,
+    },
+    signal: options.signal,
+  });
+  return data;
+}
+
+export async function fetchInventoryItem(itemId: UUID, options: ApiRequestOptions = {}) {
+  const { data } = await apiClient.get<InventoryItemRead>(`/api/v1/admin/inventory/items/${itemId}`, {
+    signal: options.signal,
+  });
+  return data;
+}
+
 export async function fetchShopItem(shopId: UUID, itemId: UUID, options: ApiRequestOptions = {}) {
   const { data } = await apiClient.get<ShopItemRead>(`/api/v1/admin/shops/${shopId}/items/${itemId}`, {
     signal: options.signal,
@@ -457,6 +523,11 @@ export async function createItemWithImageFile(payload: ItemMultipartFields, file
   return uploadItemMultipartFile<ItemRead>("/api/v1/admin/items", file, "POST", payload);
 }
 
+export async function createInventoryItemMetadata(payload: InventoryItemMetadataPayload) {
+  const { data } = await apiClient.post<InventoryItemRead>("/api/v1/admin/inventory/items/metadata", payload);
+  return data;
+}
+
 export async function updateItem(itemId: UUID, payload: FormData) {
   const { data } = await apiClient.patch<ItemRead>(`/api/v1/admin/items/${itemId}`, payload);
   return data;
@@ -466,6 +537,29 @@ export async function updateItemWithImageFile(itemId: UUID, payload: ItemMultipa
   return uploadItemMultipartFile<ItemRead>(`/api/v1/admin/items/${itemId}`, file, "PATCH", payload);
 }
 
+export async function updateInventoryItemMetadata(itemId: UUID, payload: InventoryItemMetadataPayload) {
+  const { data } = await apiClient.patch<InventoryItemRead>(
+    `/api/v1/admin/inventory/items/${itemId}/metadata`,
+    payload,
+  );
+  return data;
+}
+
+export async function replaceInventoryItemImageFile(itemId: UUID, file: ItemImageUploadFile) {
+  return uploadItemMultipartFile<InventoryItemImageRead>(
+    `/api/v1/admin/inventory/items/${itemId}/image`,
+    file,
+    "PUT",
+  );
+}
+
+export async function deleteInventoryItemImage(itemId: UUID) {
+  const { data } = await apiClient.delete<InventoryItemImageRead>(
+    `/api/v1/admin/inventory/items/${itemId}/image`,
+  );
+  return data;
+}
+
 export async function updateItemMetadata(itemId: UUID, payload: ItemMetadataUpdate) {
   const { data } = await apiClient.patch<ItemRead>(`/api/v1/admin/items/${itemId}/metadata`, payload);
   return data;
@@ -473,6 +567,10 @@ export async function updateItemMetadata(itemId: UUID, payload: ItemMetadataUpda
 
 export async function deleteItem(itemId: UUID) {
   await apiClient.delete(`/api/v1/admin/items/${itemId}`);
+}
+
+export async function deleteInventoryItem(itemId: UUID) {
+  await apiClient.delete(`/api/v1/admin/inventory/items/${itemId}`);
 }
 
 export async function createShopItem(shopId: UUID, payload: FormData) {
@@ -554,6 +652,55 @@ export async function updateShopItemAllocation(shopId: UUID, itemId: UUID, paylo
     `/api/v1/admin/shops/${shopId}/item-allocations/${itemId}`,
     payload,
   );
+  return data;
+}
+
+export async function fetchShopInventoryAllocations(shopId: UUID, options: ApiRequestOptions = {}) {
+  const { data } = await apiClient.get<InventorySummaryRead>(
+    `/api/v1/admin/shops/${shopId}/inventory-allocations`,
+    { signal: options.signal },
+  );
+  return data;
+}
+
+export async function allocateShopInventoryItems(shopId: UUID, itemIds: UUID[]) {
+  const payload: ShopInventoryAllocationBulkCreate = { item_ids: itemIds };
+  const { data } = await apiClient.post<ShopInventoryAllocationBulkRead>(
+    `/api/v1/admin/shops/${shopId}/inventory-allocations`,
+    payload,
+  );
+  return data;
+}
+
+export async function updateShopInventoryAllocation(shopId: UUID, payload: ShopInventoryAllocationUpdate) {
+  const { data } = await apiClient.patch<InventorySummaryRead>(
+    `/api/v1/admin/shops/${shopId}/inventory-allocations`,
+    payload,
+  );
+  return data;
+}
+
+export async function fetchAdminInventorySummary(shopId: UUID, options: ApiRequestOptions = {}) {
+  const { data } = await apiClient.get<InventorySummaryRead>("/api/v1/admin/inventory/summary", {
+    params: { shop_id: shopId },
+    signal: options.signal,
+  });
+  return data;
+}
+
+export async function fetchAdminInventoryMovements(
+  params?: { shop_id?: UUID | null; item_id?: UUID | null; category_id?: UUID | null; limit?: number },
+  options: ApiRequestOptions = {},
+) {
+  const { data } = await apiClient.get<InventoryMovementPage>("/api/v1/admin/inventory/movements", {
+    params: {
+      shop_id: params?.shop_id ?? undefined,
+      item_id: params?.item_id ?? undefined,
+      category_id: params?.category_id ?? undefined,
+      limit: params?.limit ?? 100,
+    },
+    signal: options.signal,
+  });
   return data;
 }
 

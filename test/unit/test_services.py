@@ -23,10 +23,34 @@ from app.schemas.billing import (
     BillItemInput,
     CheckoutPaymentInput,
 )
+from app.schemas.inventory import (
+    InventoryAddRequest,
+    InventoryCategoryCreate,
+    InventoryItemCreate,
+    InventoryItemUpdate,
+    InventoryUseRequest,
+    InventoryUseSplitLine,
+    InventoryUseSplitRequest,
+)
 from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry
 from app.services.admin import create_shop_account
 from app.services.auth import register_admin
 from app.services.billing import create_bill, preview_bill
+from app.services.inventory import (
+    add_shop_inventory_stock,
+    allocate_shop_inventory_items,
+    create_inventory_category,
+    create_inventory_item as create_inventory_management_item,
+    delete_inventory_category,
+    delete_inventory_item as delete_inventory_management_item,
+    get_inventory_summary,
+    list_inventory_items,
+    list_inventory_movements,
+    update_inventory_item as update_inventory_management_item,
+    update_shop_inventory_allocation,
+    use_shop_inventory_stock,
+    use_shop_inventory_stock_split,
+)
 from app.services.pricing import create_daily_prices, create_global_daily_prices, get_global_bootstrap
 
 
@@ -160,6 +184,448 @@ class ServiceUnitTests(BackendTestCase):
                 item_storage.settings.rustfs_public_base_url,
                 item_storage.settings.rustfs_bucket_name,
             ) = original_values
+
+    def test_inventory_management_ledger_rules(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category_a = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="A1")
+                )
+                category_b = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="A2")
+                )
+                with self.assertRaises(HTTPException) as duplicate_ctx:
+                    await create_inventory_category(db, InventoryCategoryCreate(name="a1"))
+                self.assertEqual(duplicate_ctx.exception.status_code, 409)
+
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Inventory A",
+                        tamil_name="சரக்கு ஏ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category_a.id, category_b.id],
+                    ),
+                )
+                listed_items = await list_inventory_items(db, q="inventory")
+                listed_item = next(row for row in listed_items if row.id == item.id)
+                self.assertEqual(listed_item.category_ids, [category_a.id, category_b.id])
+                self.assertEqual(
+                    [category.name for category in listed_item.categories],
+                    ["A1", "A2"],
+                )
+
+                with self.assertRaises(HTTPException) as linked_category_delete_ctx:
+                    await delete_inventory_category(db, category_b.id)
+                self.assertEqual(linked_category_delete_ctx.exception.status_code, 409)
+
+                unallocated_item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Unallocated",
+                        tamil_name="ஒதுக்காதது",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category_a.id],
+                    ),
+                )
+
+                with self.assertRaises(HTTPException) as unallocated_ctx:
+                    await add_shop_inventory_stock(
+                        db,
+                        current_shop,
+                        unallocated_item.id,
+                        InventoryAddRequest(quantity=Decimal("1")),
+                    )
+                self.assertEqual(unallocated_ctx.exception.status_code, 404)
+
+                allocation = await allocate_shop_inventory_items(db, current_shop, [item.id])
+                self.assertEqual(allocation.allocated_count, 1)
+                self.assertEqual(allocation.already_allocated_count, 0)
+
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("10")),
+                )
+                await use_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryUseRequest(category_id=category_a.id, quantity=Decimal("3")),
+                )
+
+                summary = await get_inventory_summary(db, current_shop)
+                stock_item = next(row for row in summary.items if row.id == item.id)
+                self.assertEqual(stock_item.available_quantity, Decimal("7.000"))
+                self.assertEqual(stock_item.added_quantity, Decimal("10.000"))
+                self.assertEqual(stock_item.used_quantity, Decimal("3.000"))
+                usage_by_category = {
+                    usage.category_id: usage for usage in stock_item.category_usage
+                }
+                self.assertEqual(
+                    usage_by_category[category_a.id].used_quantity,
+                    Decimal("3.000"),
+                )
+                self.assertEqual(
+                    usage_by_category[category_b.id].used_quantity,
+                    Decimal("0"),
+                )
+                self.assertEqual(
+                    usage_by_category[category_a.id].available_quantity,
+                    Decimal("7.000"),
+                )
+                self.assertEqual(
+                    usage_by_category[category_b.id].available_quantity,
+                    Decimal("7.000"),
+                )
+
+                with self.assertRaises(HTTPException) as unlink_used_category_ctx:
+                    await update_inventory_management_item(
+                        db,
+                        item.id,
+                        InventoryItemUpdate(
+                            name=item.name,
+                            tamil_name=item.tamil_name,
+                            unit_type=item.unit_type,
+                            base_unit=item.base_unit,
+                            category_ids=[category_b.id],
+                        ),
+                    )
+                self.assertEqual(unlink_used_category_ctx.exception.status_code, 409)
+
+                item = await update_inventory_management_item(
+                    db,
+                    item.id,
+                    InventoryItemUpdate(
+                        name=item.name,
+                        tamil_name=item.tamil_name,
+                        unit_type=item.unit_type,
+                        base_unit=item.base_unit,
+                        category_ids=[category_a.id],
+                    ),
+                )
+                self.assertEqual(item.category_ids, [category_a.id])
+                await delete_inventory_category(db, category_b.id)
+
+                category_c = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="A3")
+                )
+                with self.assertRaises(HTTPException) as wrong_category_ctx:
+                    await use_shop_inventory_stock(
+                        db,
+                        current_shop,
+                        item.id,
+                        InventoryUseRequest(category_id=category_c.id, quantity=Decimal("1")),
+                    )
+                self.assertEqual(wrong_category_ctx.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as overuse_ctx:
+                    await use_shop_inventory_stock(
+                        db,
+                        current_shop,
+                        item.id,
+                        InventoryUseRequest(category_id=category_a.id, quantity=Decimal("8")),
+                    )
+                self.assertEqual(overuse_ctx.exception.status_code, 409)
+
+                with self.assertRaises(HTTPException) as delete_ctx:
+                    await delete_inventory_management_item(db, item.id)
+                self.assertEqual(delete_ctx.exception.status_code, 409)
+
+        self.run_async(scenario())
+
+    def test_inventory_unit_items_require_whole_quantities(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Crates")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Egg Tray",
+                        tamil_name="முட்டை தட்டு",
+                        unit_type=UnitType.COUNT,
+                        base_unit=BaseUnit.UNIT,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [item.id])
+                with self.assertRaises(HTTPException) as quantity_ctx:
+                    await add_shop_inventory_stock(
+                        db,
+                        current_shop,
+                        item.id,
+                        InventoryAddRequest(quantity=Decimal("1.5")),
+                    )
+                self.assertEqual(quantity_ctx.exception.status_code, 422)
+
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("2")),
+                )
+                await use_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryUseRequest(category_id=category.id, quantity=Decimal("1")),
+                )
+                summary = await get_inventory_summary(db, current_shop)
+                stock_item = next(row for row in summary.items if row.id == item.id)
+                self.assertEqual(stock_item.available_quantity, Decimal("1.000"))
+
+        self.run_async(scenario())
+
+    def test_inventory_use_split_requires_matching_category_total(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category_a = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Kitchen")
+                )
+                category_b = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Counter")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Split Stock",
+                        tamil_name="பிரிப்பு சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category_a.id, category_b.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [item.id])
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("10")),
+                )
+
+                with self.assertRaises(HTTPException) as mismatch_ctx:
+                    await use_shop_inventory_stock_split(
+                        db,
+                        current_shop,
+                        item.id,
+                        InventoryUseSplitRequest(
+                            total_quantity=Decimal("5"),
+                            categories=[
+                                InventoryUseSplitLine(
+                                    category_id=category_a.id,
+                                    quantity=Decimal("2"),
+                                ),
+                                InventoryUseSplitLine(
+                                    category_id=category_b.id,
+                                    quantity=Decimal("2"),
+                                ),
+                            ],
+                        ),
+                    )
+                self.assertEqual(mismatch_ctx.exception.status_code, 422)
+
+                result = await use_shop_inventory_stock_split(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryUseSplitRequest(
+                        total_quantity=Decimal("5"),
+                        categories=[
+                            InventoryUseSplitLine(
+                                category_id=category_a.id,
+                                quantity=Decimal("2"),
+                            ),
+                            InventoryUseSplitLine(
+                                category_id=category_b.id,
+                                quantity=Decimal("3"),
+                            ),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(len(result.movements), 2)
+                stock_item = next(row for row in result.summary.items if row.id == item.id)
+                self.assertEqual(stock_item.available_quantity, Decimal("5.000"))
+                self.assertEqual(stock_item.used_quantity, Decimal("5.000"))
+                usage_by_category = {
+                    usage.category_id: usage for usage in stock_item.category_usage
+                }
+                self.assertEqual(
+                    usage_by_category[category_a.id].used_quantity,
+                    Decimal("2.000"),
+                )
+                self.assertEqual(
+                    usage_by_category[category_b.id].used_quantity,
+                    Decimal("3.000"),
+                )
+
+        self.run_async(scenario())
+
+    def test_inventory_stock_is_isolated_by_branch(self) -> None:
+        _actor_a, branch_a = self.run_async(
+            self.harness.create_shop_user(username="branch-a", shop_name="Branch A")
+        )
+        _actor_b, branch_b = self.run_async(
+            self.harness.create_shop_user(username="branch-b", shop_name="Branch B")
+        )
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_branch_a = session.scalar(select(Shop).where(Shop.id == branch_a.id))
+                current_branch_b = session.scalar(select(Shop).where(Shop.id == branch_b.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Branch Usage")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Branch Shared Stock",
+                        tamil_name="கிளை சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+
+                await allocate_shop_inventory_items(db, current_branch_a, [item.id])
+                await allocate_shop_inventory_items(db, current_branch_b, [item.id])
+                await add_shop_inventory_stock(
+                    db,
+                    current_branch_a,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("10")),
+                )
+                await use_shop_inventory_stock(
+                    db,
+                    current_branch_a,
+                    item.id,
+                    InventoryUseRequest(category_id=category.id, quantity=Decimal("3")),
+                )
+
+                branch_a_summary = await get_inventory_summary(
+                    db, current_branch_a, active_allocations_only=True
+                )
+                branch_b_summary = await get_inventory_summary(
+                    db, current_branch_b, active_allocations_only=True
+                )
+                branch_a_item = next(row for row in branch_a_summary.items if row.id == item.id)
+                branch_b_item = next(row for row in branch_b_summary.items if row.id == item.id)
+                self.assertEqual(branch_a_summary.shop_id, branch_a.id)
+                self.assertEqual(branch_b_summary.shop_id, branch_b.id)
+                self.assertEqual(branch_a_item.available_quantity, Decimal("7.000"))
+                self.assertEqual(branch_a_item.used_quantity, Decimal("3.000"))
+                self.assertEqual(branch_b_item.available_quantity, Decimal("0"))
+                self.assertEqual(branch_b_item.used_quantity, Decimal("0"))
+
+                with self.assertRaises(HTTPException) as branch_b_use_ctx:
+                    await use_shop_inventory_stock(
+                        db,
+                        current_branch_b,
+                        item.id,
+                        InventoryUseRequest(category_id=category.id, quantity=Decimal("1")),
+                    )
+                self.assertEqual(branch_b_use_ctx.exception.status_code, 409)
+
+                branch_a_movements = await list_inventory_movements(
+                    db, shop_id=current_branch_a.id
+                )
+                branch_b_movements = await list_inventory_movements(
+                    db, shop_id=current_branch_b.id
+                )
+                self.assertEqual(len(branch_a_movements.items), 2)
+                self.assertTrue(
+                    all(movement.shop_id == branch_a.id for movement in branch_a_movements.items)
+                )
+                self.assertEqual(branch_b_movements.items, [])
+
+                await update_shop_inventory_allocation(
+                    db, current_branch_b, item.id, is_active=False
+                )
+                paused_branch_summary = await get_inventory_summary(
+                    db, current_branch_b, active_allocations_only=True
+                )
+                self.assertEqual(paused_branch_summary.items, [])
+                with self.assertRaises(HTTPException) as paused_add_ctx:
+                    await add_shop_inventory_stock(
+                        db,
+                        current_branch_b,
+                        item.id,
+                        InventoryAddRequest(quantity=Decimal("1")),
+                    )
+                self.assertEqual(paused_add_ctx.exception.status_code, 422)
+
+        self.run_async(scenario())
+
+    def test_inventory_items_can_be_saved_without_categories(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="No Category Stock",
+                        tamil_name="வகையில்லா சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                    ),
+                )
+                self.assertEqual(item.category_ids, [])
+                self.assertEqual(item.categories, [])
+
+                listed_item = next(
+                    row for row in await list_inventory_items(db, q="No Category") if row.id == item.id
+                )
+                self.assertEqual(listed_item.category_ids, [])
+                self.assertEqual(listed_item.categories, [])
+
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Optional Category")
+                )
+                item = await update_inventory_management_item(
+                    db,
+                    item.id,
+                    InventoryItemUpdate(
+                        name=item.name,
+                        tamil_name=item.tamil_name,
+                        unit_type=item.unit_type,
+                        base_unit=item.base_unit,
+                        category_ids=[category.id],
+                    ),
+                )
+                self.assertEqual(item.category_ids, [category.id])
+
+                item = await update_inventory_management_item(
+                    db,
+                    item.id,
+                    InventoryItemUpdate(
+                        name=item.name,
+                        tamil_name=item.tamil_name,
+                        unit_type=item.unit_type,
+                        base_unit=item.base_unit,
+                        category_ids=[],
+                    ),
+                )
+                self.assertEqual(item.category_ids, [])
+
+        self.run_async(scenario())
 
     def test_missing_thumbnail_metadata_is_cleared_and_regenerated(self) -> None:
         self.run_async(self.harness.create_catalogue_items(("Chicken",)))

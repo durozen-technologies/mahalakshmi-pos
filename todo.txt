@@ -196,3 +196,42 @@ Include both English and Tamil entries in `frontend/src/locales/shop-translation
   - refresh preserves valid selection or resets invalid selection,
   - Tamil language mode still displays item Tamil names.
 
+-----------------------------------------------------------------------------------------------------------------------------------
+
+I this application, I want to add Inventry Management in it.
+
+I Admin add a new Icon in Admin navbar to navigate to a new page: Inventry
+- In Admin Inventry, the admin can add inventry_items to the shop.
+- Inventry_item consists of Inventry_Item_Image, Inventry_item_name, Inventry_item_tamilName, inventry_item kg / unit, save button to save the inventry_items.
+- Admin create  the inventry_items for the shop, so the the shop can only use the admin created inventry_items.
+- In the inventry_item page, there should be dropdown to select the Inventry_item_category and . Since the will be multiple categories selected for the particular item. 
+
+In Shop, add a ui (button or something) Manage Inventry Items to navigate into a page, to Manage the inventry_items allocated by the admin for the shop.
+- In the shop, Show a display Total Availablity of inventry_items per categories wise.
+- Show a display Total Used of inventry_items per categories wise.
+- There is button to add kg/unit to the inventry_item, not Inventry_item_category wise.
+- There is button to use kg/unit   not to  be use inventry_item, use by Inventry_item_category wise.
+
+Example: If there a Items -> A
+Let say there is Inventry_item_category for A is A1, A2.
+If shop use want to add:
+  - They can only add to A, not to sub categories of A1, A2.
+  - So, implicityly A = A1 + A2, sum of sub categories is equal to inventry_item.
+
+If the shop want use the inventry_item by the categories such as Inventry_item_category.
+  - Shop (User) can able to use the inventry_item by kg / unit wise, only by Inventry_item_category not by inventry_item wise.
+  - So if they used A1 or A2, implicityly amount of A will be reduced.
+  
+
+Let us take senario:
+- Admin, created a inventry_item in the page, with Inventry_Item_Image, Inventry_item_name, Inventry_item_tamilName, kg/ unit and selected the  multiple categories, they can only select the Inventry_item_category not able to Manage the inventry_item_management, if if they want hit the button to navigate  to inventry_item_management page, to Manage inventry_item_management.
+- The Admin, can move to Inventry_item_category Management page,to add , remove ,remane the category of the inventry_item.
+- The shop(user) hit button or something to inventry_item_management and navigate.
+- The Shop(user) can see the total Available inventry_items by the Inventry_item_category wise.
+- The Shop(user) can see the total Used inventry_items by the Inventry_item_category wise.
+- There is button to add kg/unit to the inventry_item, not Inventry_item_category wise.
+- There is button to use kg/unit   not to  be use inventry_item, use by Inventry_item_category wise.
+- All the update can seen by admin, all details, the shop used and Available.
+
+
+Note: Don't collapse with other freature items, and other stuffs, Do it a standard alone feature.

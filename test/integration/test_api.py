@@ -19,10 +19,13 @@ from app.routers.admin import (
     bill_detail,
     bills,
     create_admin_item_category,
+    create_admin_inventory_category,
+    create_admin_inventory_item_metadata,
     create_inventory_item,
     create_shop_inventory_item,
     create_shop,
     deallocate_shop_catalogue_item,
+    delete_admin_inventory_item_image,
     delete_admin_item_category,
     delete_inventory_item,
     delete_inventory_item_image,
@@ -41,6 +44,7 @@ from app.routers.admin import (
     get_shop_items,
     get_shops,
     patch_inventory_item_metadata,
+    patch_admin_inventory_item_metadata,
     payment_summary,
     sales_summary,
     shop_daily_price,
@@ -75,6 +79,11 @@ from app.schemas.billing import (
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                BillCheckoutRequest,
     BillItemInput,
     CheckoutPaymentInput,
+)
+from app.schemas.inventory import (
+    InventoryCategoryCreate as InventoryCategoryCreatePayload,
+    InventoryItemCreate as InventoryItemCreatePayload,
+    InventoryItemUpdate as InventoryItemUpdatePayload,
 )
 from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry, DailyPriceUpdate
 
@@ -921,6 +930,66 @@ class BackendApiIntegrationTests(BackendTestCase):
                     )
                     self.assertEqual(not_modified.status_code, 304)
                     self.assertEqual(not_modified.headers["etag"], '"thumb-etag"')
+
+        self.run_async(scenario())
+
+    def test_inventory_metadata_and_image_routes_are_split(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                category = await create_admin_inventory_category(
+                    InventoryCategoryCreatePayload(name="Cold Storage"),
+                    db,
+                )
+                created_item = await create_admin_inventory_item_metadata(
+                    InventoryItemCreatePayload(
+                        name="Freezer Pack",
+                        tamil_name="குளிர் பொதி",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=5,
+                        category_ids=[],
+                    ),
+                    db,
+                )
+
+                self.assertEqual(created_item.name, "Freezer Pack")
+                self.assertEqual(created_item.category_ids, [])
+                self.assertEqual(created_item.sort_order, 5)
+                self.assertIsNone(created_item.image_path)
+
+                updated_item = await patch_admin_inventory_item_metadata(
+                    created_item.id,
+                    InventoryItemUpdatePayload(
+                        name="Freezer Pack Large",
+                        tamil_name="பெரிய குளிர் பொதி",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=created_item.sort_order,
+                        category_ids=[category.id],
+                    ),
+                    db,
+                )
+                self.assertEqual(updated_item.name, "Freezer Pack Large")
+                self.assertEqual(updated_item.image_path, created_item.image_path)
+
+                with self.assertRaises(HTTPException) as duplicate_context:
+                    await create_admin_inventory_item_metadata(
+                        InventoryItemCreatePayload(
+                            name="freezer pack large",
+                            tamil_name="நகல் குளிர் பொதி",
+                            unit_type=UnitType.WEIGHT,
+                            base_unit=BaseUnit.KG,
+                            category_ids=[category.id],
+                        ),
+                        db,
+                    )
+                self.assertEqual(duplicate_context.exception.status_code, 409)
+
+                image_result = await delete_admin_inventory_item_image(updated_item.id, db)
+                self.assertEqual(image_result.inventory_item_id, updated_item.id)
+                self.assertIsNone(image_result.image_path)
+                self.assertIsNone(image_result.image_content_type)
 
         self.run_async(scenario())
 

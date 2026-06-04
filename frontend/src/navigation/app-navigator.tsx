@@ -77,12 +77,18 @@ const getAdminItemPricesScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminItemPricesScreen;
 const getAdminItemCategoriesScreen = () =>
   require("@/screens/admin/admin-item-categories-screen").AdminItemCategoriesScreen;
+const getAdminInventoryScreen = () =>
+  require("@/screens/admin/admin-inventory-screen").AdminInventoryScreen;
+const getAdminInventoryItemEditorScreen = () =>
+  require("@/screens/admin/admin-inventory-item-editor-screen").AdminInventoryItemEditorScreen;
 const getAdminItemEditorScreen = () =>
   require("@/screens/admin/admin-item-editor-screen").AdminItemEditorScreen;
 const getBillingScreen = () =>
   require("@/screens/shop/billing-screen").BillingScreen;
 const getCheckoutScreen = () =>
   require("@/screens/shop/checkout-screen").CheckoutScreen;
+const getInventoryManagementScreen = () =>
+  require("@/screens/shop/inventory-management-screen").InventoryManagementScreen;
 const getPrinterSetupScreen = () =>
   require("@/screens/shop/printer-setup-screen").PrinterSetupScreen;
 
@@ -350,6 +356,16 @@ function AdminStack() {
         options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
+        name="AdminInventory"
+        getComponent={getAdminInventoryScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminInventoryItemEditor"
+        getComponent={getAdminInventoryItemEditorScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
         name="AdminItemEditor"
         getComponent={getAdminItemEditorScreen}
         options={HEADER_HIDDEN_OPTIONS}
@@ -375,6 +391,10 @@ function ShopStack() {
   );
   const renderPrinterHeaderTitle = useCallback(
     () => <AnimatedHeaderTitle titleKey="header.printerSetup" shopName={shopName} />,
+    [shopName]
+  );
+  const renderInventoryHeaderTitle = useCallback(
+    () => <AnimatedHeaderTitle titleKey="header.inventory" shopName={shopName} />,
     [shopName]
   );
   const renderHeaderActions = useCallback(
@@ -413,6 +433,14 @@ function ShopStack() {
         getComponent={getPrinterSetupScreen}
         options={{
           headerTitle: renderPrinterHeaderTitle,
+          headerRight: renderHeaderActions,
+        }}
+      />
+      <Stack.Screen
+        name="InventoryManagement"
+        getComponent={getInventoryManagementScreen}
+        options={{
+          headerTitle: renderInventoryHeaderTitle,
           headerRight: renderHeaderActions,
         }}
       />

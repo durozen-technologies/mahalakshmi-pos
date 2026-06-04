@@ -14,3 +14,8 @@ class UnitType(str, Enum):
 class BaseUnit(str, Enum):
     KG = "kg"
     UNIT = "unit"
+
+
+class InventoryMovementType(str, Enum):
+    ADD = "add"
+    USE = "use"

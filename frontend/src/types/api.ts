@@ -1,6 +1,7 @@
 export type UserRole = "admin" | "shop_account";
 export type BaseUnit = "kg" | "unit";
 export type UnitType = "weight" | "count";
+export type InventoryMovementType = "add" | "use";
 export type AnalyticsPeriod = "date" | "month" | "week" | "year";
 export type UUID = string;
 
@@ -73,6 +74,139 @@ export interface ItemCategoryCreate {
 
 export interface ItemCategoryUpdate {
   name: string;
+}
+
+export interface InventoryCategoryRead {
+  id: UUID;
+  name: string;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface InventoryCategoryCreate {
+  name: string;
+}
+
+export interface InventoryCategoryUpdate {
+  name: string;
+}
+
+export interface InventoryItemRead {
+  id: UUID;
+  name: string;
+  tamil_name: string;
+  unit_type: UnitType;
+  base_unit: BaseUnit;
+  is_active: boolean;
+  sort_order: number;
+  category_ids: UUID[];
+  categories: InventoryCategoryRead[];
+  created_at: string;
+  updated_at?: string | null;
+  image_path?: string | null;
+  image_thumb_path?: string | null;
+  image_content_type?: string | null;
+}
+
+export interface InventoryItemImageRead {
+  inventory_item_id: UUID;
+  inventory_item_name: string;
+  inventory_item_tamil_name?: string | null;
+  image_path?: string | null;
+  image_thumb_path?: string | null;
+  image_content_type?: string | null;
+}
+
+export interface InventoryCategoryUsageRead {
+  category_id: UUID;
+  category_name: string;
+  available_quantity: string;
+  used_quantity: string;
+}
+
+export interface InventoryItemStockRead extends InventoryItemRead {
+  allocated: boolean;
+  allocation_active: boolean;
+  allocation_sort_order: number;
+  available_quantity: string;
+  added_quantity: string;
+  used_quantity: string;
+  category_usage: InventoryCategoryUsageRead[];
+}
+
+export interface InventorySummaryRead {
+  shop_id: UUID;
+  shop_name: string;
+  items: InventoryItemStockRead[];
+  categories: InventoryCategoryUsageRead[];
+}
+
+export interface InventoryMovementRead {
+  id: UUID;
+  shop_id: UUID;
+  shop_name?: string | null;
+  inventory_item_id: UUID;
+  inventory_item_name: string;
+  inventory_item_tamil_name?: string | null;
+  category_id?: UUID | null;
+  category_name?: string | null;
+  movement_type: InventoryMovementType;
+  quantity: string;
+  unit: BaseUnit;
+  created_at: string;
+}
+
+export interface InventoryMovementPage {
+  items: InventoryMovementRead[];
+  limit: number;
+  has_more: boolean;
+}
+
+export interface InventoryAddRequest {
+  quantity: string;
+}
+
+export interface InventoryUseRequest {
+  category_id: UUID;
+  quantity: string;
+}
+
+export interface InventoryUseSplitLine {
+  category_id: UUID;
+  quantity: string;
+}
+
+export interface InventoryUseSplitRequest {
+  total_quantity: string;
+  categories: InventoryUseSplitLine[];
+}
+
+export interface InventoryMovementCreateResult {
+  movement: InventoryMovementRead;
+  item: InventoryItemStockRead;
+  summary: InventorySummaryRead;
+}
+
+export interface InventoryMovementSplitCreateResult {
+  movements: InventoryMovementRead[];
+  item: InventoryItemStockRead;
+  summary: InventorySummaryRead;
+}
+
+export interface ShopInventoryAllocationBulkCreate {
+  item_ids: UUID[];
+}
+
+export interface ShopInventoryAllocationBulkRead {
+  item_ids: UUID[];
+  allocated_count: number;
+  already_allocated_count: number;
+}
+
+export interface ShopInventoryAllocationUpdate {
+  item_id: UUID;
+  is_active?: boolean | null;
+  sort_order?: number | null;
 }
 
 export interface ItemRead {

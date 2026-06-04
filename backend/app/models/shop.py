@@ -28,3 +28,9 @@ class Shop(Base, BaseModelMixin):
     item_allocations = relationship(
         "ShopItemAllocation", back_populates="shop", cascade="all, delete-orphan"
     )
+    inventory_allocations = relationship(
+        "ShopInventoryAllocation", back_populates="shop", cascade="all, delete-orphan"
+    )
+    inventory_movements = relationship(
+        "InventoryMovement", back_populates="shop", cascade="all, delete-orphan"
+    )

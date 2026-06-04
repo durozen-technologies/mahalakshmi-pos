@@ -4,7 +4,7 @@ import type {
   AdminItemEditorMode,
   AdminItemWorkspace,
 } from "@/screens/admin/admin-items-model";
-import type { ShopItemRead, UUID } from "@/types/api";
+import type { InventoryItemRead, ShopItemRead, UUID } from "@/types/api";
 
 export type AppStackParamList = {
   AppLoading: undefined;
@@ -16,6 +16,13 @@ export type AppStackParamList = {
   AdminShopItemsOrder: { shopId: UUID; shopName?: string };
   AdminItemPrices: { shopId?: UUID } | undefined;
   AdminItemCategories: undefined;
+  AdminInventory: { shopId?: UUID } | undefined;
+  AdminInventoryItemEditor:
+    | {
+        itemId?: UUID;
+        initialItem?: InventoryItemRead;
+      }
+    | undefined;
   AdminItemEditor: {
     mode: AdminItemEditorMode;
     workspace: AdminItemWorkspace;
@@ -25,6 +32,7 @@ export type AppStackParamList = {
   };
   Billing: undefined;
   Checkout: undefined;
+  InventoryManagement: undefined;
   PrinterSetup: undefined;
 };
 
@@ -35,7 +43,10 @@ export type AdminShopItemsScreenProps = NativeStackScreenProps<AppStackParamList
 export type AdminShopItemsOrderScreenProps = NativeStackScreenProps<AppStackParamList, "AdminShopItemsOrder">;
 export type AdminItemPricesScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemPrices">;
 export type AdminItemCategoriesScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemCategories">;
+export type AdminInventoryScreenProps = NativeStackScreenProps<AppStackParamList, "AdminInventory">;
+export type AdminInventoryItemEditorScreenProps = NativeStackScreenProps<AppStackParamList, "AdminInventoryItemEditor">;
 export type AdminItemEditorScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemEditor">;
 export type BillingScreenProps = NativeStackScreenProps<AppStackParamList, "Billing">;
 export type CheckoutScreenProps = NativeStackScreenProps<AppStackParamList, "Checkout">;
+export type InventoryManagementScreenProps = NativeStackScreenProps<AppStackParamList, "InventoryManagement">;
 export type PrinterSetupScreenProps = NativeStackScreenProps<AppStackParamList, "PrinterSetup">;

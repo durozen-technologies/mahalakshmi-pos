@@ -59,6 +59,20 @@ from app.schemas.admin import (
     ShopUpdate,
 )
 from app.schemas.billing import BillRead
+from app.schemas.inventory import (
+    InventoryCategoryCreate,
+    InventoryCategoryRead,
+    InventoryCategoryUpdate,
+    InventoryItemCreate,
+    InventoryItemImageRead,
+    InventoryItemRead,
+    InventoryItemUpdate,
+    InventoryMovementPage,
+    InventorySummaryRead,
+    ShopInventoryAllocationBulkCreate,
+    ShopInventoryAllocationBulkRead,
+    ShopInventoryAllocationUpdate,
+)
 from app.schemas.pricing import (
     DailyPriceCreate,
     DailyPriceRead,
@@ -104,6 +118,33 @@ from app.services.admin import (
     update_item_metadata,
     update_selected_shop_items_order,
     update_shop_account,
+)
+from app.services.inventory import (
+    allocate_shop_inventory_items,
+    create_inventory_category,
+    delete_inventory_category,
+    get_inventory_item,
+    get_inventory_summary,
+    list_inventory_categories,
+    list_inventory_items,
+    list_inventory_movements,
+    update_inventory_category,
+    update_shop_inventory_allocation,
+)
+from app.services.inventory import (
+    create_inventory_item as create_inventory_management_item,
+)
+from app.services.inventory import (
+    delete_inventory_item as delete_inventory_management_item,
+)
+from app.services.inventory import (
+    remove_inventory_item_image as remove_inventory_item_image_service,
+)
+from app.services.inventory import (
+    update_inventory_item as update_inventory_management_item,
+)
+from app.services.inventory import (
+    upload_inventory_item_image as upload_inventory_item_image_service,
 )
 from app.services.pricing import (
     create_daily_prices,
@@ -244,6 +285,30 @@ def _parse_custom_attributes(raw_value: str | None) -> dict[str, str | int | flo
     return parsed
 
 
+def _parse_inventory_category_ids(raw_value: str | None) -> list[UUID]:
+    if raw_value is None or not raw_value.strip():
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="category_ids must be a valid JSON array",
+        ) from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="category_ids must be a valid JSON array",
+        )
+    try:
+        return [UUID(str(value)) for value in parsed]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="category_ids must contain valid UUID values",
+        ) from exc
+
+
 # ── Shop CRUD ──────────────────────────────────────────────────────────────────
 
 
@@ -356,6 +421,291 @@ async def delete_admin_item_category(category_id: UUID, db: DBSession) -> Respon
     """Delete a category and clear it from assigned catalogue items."""
     await delete_item_category(db, category_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/inventory/categories",
+    response_model=list[InventoryCategoryRead],
+    response_model_exclude_unset=True,
+    summary="List Inventory Categories",
+)
+async def get_inventory_categories(db: DBSession) -> list[InventoryCategoryRead]:
+    return await list_inventory_categories(db)
+
+
+@router.post(
+    "/inventory/categories",
+    response_model=InventoryCategoryRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Create Inventory Category",
+)
+async def create_admin_inventory_category(
+    payload: InventoryCategoryCreate,
+    db: DBSession,
+) -> InventoryCategoryRead:
+    return await create_inventory_category(db, payload)
+
+
+@router.patch(
+    "/inventory/categories/{category_id}",
+    response_model=InventoryCategoryRead,
+    response_model_exclude_unset=True,
+    summary="Update Inventory Category",
+)
+async def update_admin_inventory_category(
+    category_id: UUID,
+    payload: InventoryCategoryUpdate,
+    db: DBSession,
+) -> InventoryCategoryRead:
+    return await update_inventory_category(db, category_id, payload)
+
+
+@router.delete(
+    "/inventory/categories/{category_id}",
+    status_code=204,
+    summary="Delete Inventory Category",
+)
+async def delete_admin_inventory_category(category_id: UUID, db: DBSession) -> Response:
+    await delete_inventory_category(db, category_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/inventory/items",
+    response_model=list[InventoryItemRead],
+    response_model_exclude_unset=True,
+    summary="List Inventory Items",
+)
+async def get_inventory_items(
+    db: DBSession,
+    q: ItemSearchParam = None,
+    active: ItemActiveParam = None,
+) -> list[InventoryItemRead]:
+    return await list_inventory_items(db, q=q, active=active)
+
+
+@router.get(
+    "/inventory/items/{item_id}",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    summary="Get Inventory Item",
+)
+async def get_admin_inventory_item(item_id: UUID, db: DBSession) -> InventoryItemRead:
+    return await get_inventory_item(db, item_id)
+
+
+@router.post(
+    "/inventory/items",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Create Inventory Item",
+)
+async def create_admin_inventory_management_item(
+    name: Annotated[str, Form(min_length=2, max_length=120)],
+    unit_type: Annotated[UnitType, Form()],
+    base_unit: Annotated[BaseUnit, Form()],
+    tamil_name: Annotated[str, Form(min_length=1, max_length=120)],
+    db: DBSession,
+    is_active: Annotated[bool, Form()] = True,
+    sort_order: Annotated[int, Form()] = 0,
+    category_ids: Annotated[str, Form()] = "[]",
+    image: ItemImageUploadOptional = None,
+) -> InventoryItemRead:
+    payload = InventoryItemCreate(
+        name=name,
+        tamil_name=tamil_name,
+        unit_type=unit_type,
+        base_unit=base_unit,
+        is_active=is_active,
+        sort_order=sort_order,
+        category_ids=_parse_inventory_category_ids(category_ids),
+    )
+    return await create_inventory_management_item(db, payload, image=image)
+
+
+@router.post(
+    "/inventory/items/metadata",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Create Inventory Item Metadata",
+)
+async def create_admin_inventory_item_metadata(
+    payload: InventoryItemCreate,
+    db: DBSession,
+) -> InventoryItemRead:
+    return await create_inventory_management_item(db, payload)
+
+
+@router.patch(
+    "/inventory/items/{item_id}",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    summary="Update Inventory Item",
+)
+async def update_admin_inventory_management_item(
+    item_id: UUID,
+    name: Annotated[str, Form(min_length=2, max_length=120)],
+    unit_type: Annotated[UnitType, Form()],
+    base_unit: Annotated[BaseUnit, Form()],
+    tamil_name: Annotated[str, Form(min_length=1, max_length=120)],
+    db: DBSession,
+    is_active: Annotated[bool, Form()] = True,
+    sort_order: Annotated[int, Form()] = 0,
+    category_ids: Annotated[str, Form()] = "[]",
+    remove_image: Annotated[bool, Form()] = False,
+    image: ItemImageUploadOptional = None,
+) -> InventoryItemRead:
+    payload = InventoryItemUpdate(
+        name=name,
+        tamil_name=tamil_name,
+        unit_type=unit_type,
+        base_unit=base_unit,
+        is_active=is_active,
+        sort_order=sort_order,
+        category_ids=_parse_inventory_category_ids(category_ids),
+    )
+    return await update_inventory_management_item(
+        db,
+        item_id,
+        payload,
+        image=image,
+        remove_image=remove_image,
+    )
+
+
+@router.patch(
+    "/inventory/items/{item_id}/metadata",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    summary="Update Inventory Item Metadata",
+)
+async def patch_admin_inventory_item_metadata(
+    item_id: UUID,
+    payload: InventoryItemUpdate,
+    db: DBSession,
+) -> InventoryItemRead:
+    return await update_inventory_management_item(db, item_id, payload)
+
+
+@router.put(
+    "/inventory/items/{item_id}/image",
+    response_model=InventoryItemImageRead,
+    response_model_exclude_unset=True,
+    summary="Replace Inventory Item Image",
+)
+async def upload_admin_inventory_item_image(
+    item_id: UUID,
+    image: ItemImageUploadRequired,
+    db: DBSession,
+) -> InventoryItemImageRead:
+    return await upload_inventory_item_image_service(db, item_id, image)
+
+
+@router.delete(
+    "/inventory/items/{item_id}/image",
+    response_model=InventoryItemImageRead,
+    response_model_exclude_unset=True,
+    summary="Remove Inventory Item Image",
+)
+async def delete_admin_inventory_item_image(
+    item_id: UUID,
+    db: DBSession,
+) -> InventoryItemImageRead:
+    return await remove_inventory_item_image_service(db, item_id)
+
+
+@router.delete(
+    "/inventory/items/{item_id}",
+    status_code=204,
+    summary="Delete Inventory Item",
+)
+async def delete_admin_inventory_management_item(item_id: UUID, db: DBSession) -> Response:
+    await delete_inventory_management_item(db, item_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/shops/{shop_id}/inventory-allocations",
+    response_model=InventorySummaryRead,
+    response_model_exclude_unset=True,
+    summary="List Shop Inventory Allocations",
+)
+async def get_shop_inventory_allocations(shop: ShopDep, db: DBSession) -> InventorySummaryRead:
+    return await get_inventory_summary(db, shop, include_unallocated=True)
+
+
+@router.post(
+    "/shops/{shop_id}/inventory-allocations",
+    response_model=ShopInventoryAllocationBulkRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Allocate Inventory Items",
+)
+async def allocate_shop_inventory(
+    payload: ShopInventoryAllocationBulkCreate,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopInventoryAllocationBulkRead:
+    return await allocate_shop_inventory_items(db, shop, payload.item_ids)
+
+
+@router.patch(
+    "/shops/{shop_id}/inventory-allocations",
+    response_model=InventorySummaryRead,
+    response_model_exclude_unset=True,
+    summary="Update Shop Inventory Allocation",
+)
+async def update_shop_inventory(
+    payload: ShopInventoryAllocationUpdate,
+    shop: ShopDep,
+    db: DBSession,
+) -> InventorySummaryRead:
+    await update_shop_inventory_allocation(
+        db,
+        shop,
+        payload.item_id,
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+    )
+    return await get_inventory_summary(db, shop, include_unallocated=True)
+
+
+@router.get(
+    "/inventory/summary",
+    response_model=InventorySummaryRead,
+    response_model_exclude_unset=True,
+    summary="Get Inventory Summary",
+)
+async def get_admin_inventory_summary(
+    db: DBSession,
+    shop: ShopDep,
+) -> InventorySummaryRead:
+    return await get_inventory_summary(db, shop, include_unallocated=False)
+
+
+@router.get(
+    "/inventory/movements",
+    response_model=InventoryMovementPage,
+    response_model_exclude_unset=True,
+    summary="List Inventory Movements",
+)
+async def get_admin_inventory_movements(
+    db: DBSession,
+    shop_id: ShopIdParam = None,
+    item_id: ItemCursorIdParam = None,
+    category_id: ItemCategoryIdParam = None,
+    limit: ItemsLimitParam = 100,
+) -> InventoryMovementPage:
+    return await list_inventory_movements(
+        db,
+        shop_id=shop_id,
+        item_id=item_id,
+        category_id=category_id,
+        limit=limit,
+    )
 
 
 @router.post(

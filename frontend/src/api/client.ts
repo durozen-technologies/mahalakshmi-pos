@@ -332,8 +332,10 @@ function normalizeRequestPath(value: unknown) {
 function isAdminItemsRequestPath(path: string) {
   return (
     path.startsWith("/api/v1/admin/items") ||
+    path.startsWith("/api/v1/admin/inventory") ||
     path.startsWith("/api/v1/admin/item-categories") ||
-    /\/api\/v1\/admin\/shops\/[^/]+\/(selected-items|item-import-candidates|items\/[^/]+|prices\/bootstrap)/.test(path) ||
+    path.startsWith("/api/v1/shop/inventory") ||
+    /\/api\/v1\/admin\/shops\/[^/]+\/(inventory-allocations|selected-items|item-import-candidates|items\/[^/]+|prices\/bootstrap)/.test(path) ||
     path === "/api/v1/admin/shops"
   );
 }

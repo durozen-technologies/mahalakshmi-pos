@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..core.ids import uuid7
-from ..models import Item
+from ..models import InventoryItem, Item
+from ..schemas.inventory import InventoryItemImageRead
 from ..schemas.pricing import ItemImageRead
 
 settings = get_settings()
@@ -92,6 +93,43 @@ def build_item_image_thumb_path(
         )
     if original_object_key:
         return f"{settings.api_v1_prefix}/catalog/items/{item_id}/image?variant=thumb"
+    return None
+
+
+def build_inventory_item_image_path(
+    inventory_item_id: UUID,
+    image_object_key: str | None,
+    image_content_type: str | None = None,
+    *,
+    variant: ImageVariant = "original",
+) -> str | None:
+    if not image_object_key:
+        return None
+    public_url = _build_public_object_url(image_object_key)
+    if public_url:
+        return public_url
+
+    if variant == "thumb":
+        return f"{settings.api_v1_prefix}/catalog/inventory-items/{inventory_item_id}/image?variant=thumb"
+    return f"{settings.api_v1_prefix}/catalog/inventory-items/{inventory_item_id}/image"
+
+
+def build_inventory_item_image_thumb_path(
+    inventory_item_id: UUID,
+    thumbnail_object_key: str | None,
+    thumbnail_content_type: str | None = None,
+    *,
+    original_object_key: str | None = None,
+) -> str | None:
+    if thumbnail_object_key:
+        return build_inventory_item_image_path(
+            inventory_item_id,
+            thumbnail_object_key,
+            thumbnail_content_type,
+            variant="thumb",
+        )
+    if original_object_key:
+        return f"{settings.api_v1_prefix}/catalog/inventory-items/{inventory_item_id}/image?variant=thumb"
     return None
 
 
@@ -173,7 +211,10 @@ async def ensure_bucket_exists() -> None:
                             "Effect": "Allow",
                             "Principal": "*",
                             "Action": ["s3:GetObject"],
-                            "Resource": [f"arn:aws:s3:::{settings.rustfs_bucket_name}/items/*"],
+                            "Resource": [
+                                f"arn:aws:s3:::{settings.rustfs_bucket_name}/items/*",
+                                f"arn:aws:s3:::{settings.rustfs_bucket_name}/inventory-items/*",
+                            ],
                         }
                     ],
                 }
@@ -205,9 +246,15 @@ def _guess_content_type(filename: str, provided_content_type: str | None = None)
     return "application/octet-stream"
 
 
-def _get_object_key(item_id: UUID, filename: str, *, variant: ImageVariant) -> str:
+def _get_object_key(
+    item_id: UUID,
+    filename: str,
+    *,
+    variant: ImageVariant,
+    prefix: str = "items",
+) -> str:
     suffix = Path(filename).suffix.lower() or ".bin"
-    return f"items/{item_id}/{variant}/{uuid7().hex}{suffix}"
+    return f"{prefix}/{item_id}/{variant}/{uuid7().hex}{suffix}"
 
 
 def _encode_jpeg(image: Image.Image, *, size: int | None, quality: int) -> bytes:
@@ -295,9 +342,10 @@ async def _upload_bytes(
     content: bytes,
     content_type: str,
     variant: ImageVariant = "original",
+    prefix: str = "items",
 ) -> tuple[str, str, str]:
     await ensure_bucket_exists()
-    object_key = _get_object_key(item_id, filename, variant=variant)
+    object_key = _get_object_key(item_id, filename, variant=variant, prefix=prefix)
     resolved_content_type = _guess_content_type(filename, content_type)
     client = _get_storage_client()
 
@@ -513,6 +561,180 @@ async def delete_item_image(db: AsyncSession, item_id: UUID) -> ItemImageRead:
         item_id=item.id,
         item_name=item.name,
         item_tamil_name=item.tamil_name,
+        image_path=None,
+        image_thumb_path=None,
+        image_content_type=None,
+    )
+
+
+async def save_inventory_item_image_content(
+    db: AsyncSession,
+    item: InventoryItem,
+    *,
+    filename: str,
+    content: bytes,
+    content_type: str | None = None,
+    commit: bool = True,
+) -> InventoryItemImageRead:
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Image filename is required",
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Image file is empty",
+        )
+    if len(content) > settings.item_image_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image file exceeds {settings.item_image_max_bytes} bytes",
+        )
+
+    resolved_content_type = _guess_content_type(filename, content_type)
+    if not resolved_content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only image uploads are supported",
+        )
+
+    if not settings.rustfs_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is not configured. Image was not saved.",
+        )
+
+    (
+        content,
+        resolved_content_type,
+        thumbnail_content,
+        thumbnail_content_type,
+    ) = _prepare_square_image_variants(content)
+    filename = f"{Path(filename).stem or item.id}.jpg"
+    thumbnail_filename = f"{Path(filename).stem or item.id}-thumb.jpg"
+
+    previous_object_key = item.image_object_key
+    previous_thumbnail_object_key = item.image_thumbnail_object_key
+    uploaded_object_key: str | None = None
+    uploaded_thumbnail_object_key: str | None = None
+
+    try:
+        uploaded_object_key, resolved_content_type, _ = await _upload_bytes(
+            item_id=item.id,
+            filename=filename,
+            content=content,
+            content_type=resolved_content_type,
+            variant="original",
+            prefix="inventory-items",
+        )
+        uploaded_thumbnail_object_key, thumbnail_content_type, _ = await _upload_bytes(
+            item_id=item.id,
+            filename=thumbnail_filename,
+            content=thumbnail_content,
+            content_type=thumbnail_content_type,
+            variant="thumb",
+            prefix="inventory-items",
+        )
+    except Exception as exc:
+        await _delete_object_if_present(uploaded_object_key)
+        await _delete_object_if_present(uploaded_thumbnail_object_key)
+        logger.warning(
+            "Unable to save inventory item image to RustFS item_id=%s bucket=%s endpoint=%s",
+            item.id,
+            settings.rustfs_bucket_name,
+            settings.rustfs_endpoint_url,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is unavailable. Image was not saved.",
+        ) from exc
+
+    item.image_object_key = uploaded_object_key
+    item.image_content_type = resolved_content_type
+    item.image_thumbnail_object_key = uploaded_thumbnail_object_key
+    item.image_thumbnail_content_type = thumbnail_content_type
+    try:
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
+    except Exception:
+        if uploaded_object_key and uploaded_object_key != previous_object_key:
+            await _delete_object_if_present(uploaded_object_key)
+        if (
+            uploaded_thumbnail_object_key
+            and uploaded_thumbnail_object_key != previous_thumbnail_object_key
+        ):
+            await _delete_object_if_present(uploaded_thumbnail_object_key)
+        raise
+
+    if commit and previous_object_key and previous_object_key != item.image_object_key:
+        await _delete_object_if_present(previous_object_key)
+    if (
+        commit
+        and previous_thumbnail_object_key
+        and previous_thumbnail_object_key != item.image_thumbnail_object_key
+    ):
+        await _delete_object_if_present(previous_thumbnail_object_key)
+
+    return InventoryItemImageRead(
+        inventory_item_id=item.id,
+        inventory_item_name=item.name,
+        inventory_item_tamil_name=item.tamil_name,
+        image_path=build_inventory_item_image_path(
+            item.id, item.image_object_key, item.image_content_type
+        ),
+        image_thumb_path=build_inventory_item_image_thumb_path(
+            item.id,
+            item.image_thumbnail_object_key,
+            item.image_thumbnail_content_type,
+            original_object_key=item.image_object_key,
+        ),
+        image_content_type=item.image_content_type,
+    )
+
+
+async def save_inventory_item_image_upload(
+    db: AsyncSession,
+    item: InventoryItem,
+    file: UploadFile,
+    *,
+    commit: bool = True,
+) -> InventoryItemImageRead:
+    content = await file.read()
+    return await save_inventory_item_image_content(
+        db,
+        item,
+        filename=file.filename or "",
+        content=content,
+        content_type=file.content_type,
+        commit=commit,
+    )
+
+
+async def delete_inventory_item_image(
+    db: AsyncSession,
+    item_id: UUID,
+) -> InventoryItemImageRead:
+    item = await db.scalar(select(InventoryItem).where(InventoryItem.id == item_id).with_for_update())
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+
+    previous_object_key = item.image_object_key
+    previous_thumbnail_object_key = item.image_thumbnail_object_key
+    item.image_object_key = None
+    item.image_content_type = None
+    item.image_thumbnail_object_key = None
+    item.image_thumbnail_content_type = None
+    await db.commit()
+    await _delete_object_if_present(previous_object_key)
+    await _delete_object_if_present(previous_thumbnail_object_key)
+    return InventoryItemImageRead(
+        inventory_item_id=item.id,
+        inventory_item_name=item.name,
+        inventory_item_tamil_name=item.tamil_name,
         image_path=None,
         image_thumb_path=None,
         image_content_type=None,
@@ -761,6 +983,179 @@ async def get_item_image_response_payload(
             request_id=request_id,
         )
         await _commit_stale_image_metadata_cleanup(
+            db,
+            item,
+            clear_original=True,
+            clear_thumbnail=True,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found") from exc
+
+
+def _log_missing_inventory_image_object(
+    *,
+    item: InventoryItem,
+    variant: ImageVariant,
+    object_key: str,
+    request_id: str | None,
+) -> None:
+    logger.warning(
+        "RustFS inventory item image object missing item_id=%s variant=%s bucket=%s object_key=%s request_id=%s",
+        item.id,
+        variant,
+        settings.rustfs_bucket_name,
+        object_key,
+        request_id or "",
+    )
+
+
+async def _commit_stale_inventory_image_metadata_cleanup(
+    db: AsyncSession | None,
+    item: InventoryItem,
+    *,
+    clear_original: bool,
+    clear_thumbnail: bool,
+    request_id: str | None,
+) -> None:
+    if clear_original:
+        item.image_object_key = None
+        item.image_content_type = None
+    if clear_thumbnail or clear_original:
+        item.image_thumbnail_object_key = None
+        item.image_thumbnail_content_type = None
+    if db is None:
+        return
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "Unable to clear stale inventory item image metadata item_id=%s request_id=%s",
+            item.id,
+            request_id or "",
+            exc_info=True,
+        )
+
+
+async def _get_or_create_inventory_thumbnail_payload(
+    db: AsyncSession | None,
+    item: InventoryItem,
+    *,
+    request_id: str | None = None,
+) -> StoredImagePayload:
+    if item.image_thumbnail_object_key:
+        try:
+            return await _download_object(
+                item.image_thumbnail_object_key,
+                fallback_content_type=item.image_thumbnail_content_type,
+            )
+        except StoredImageObjectNotFoundError as exc:
+            _log_missing_inventory_image_object(
+                item=item,
+                variant="thumb",
+                object_key=exc.object_key,
+                request_id=request_id,
+            )
+            await _commit_stale_inventory_image_metadata_cleanup(
+                db,
+                item,
+                clear_original=False,
+                clear_thumbnail=True,
+                request_id=request_id,
+            )
+
+    if not item.image_object_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    try:
+        original = await _download_object(
+            item.image_object_key,
+            fallback_content_type=item.image_content_type,
+        )
+    except StoredImageObjectNotFoundError as exc:
+        _log_missing_inventory_image_object(
+            item=item,
+            variant="original",
+            object_key=exc.object_key,
+            request_id=request_id,
+        )
+        await _commit_stale_inventory_image_metadata_cleanup(
+            db,
+            item,
+            clear_original=True,
+            clear_thumbnail=True,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found") from exc
+    thumbnail_content, thumbnail_content_type = _prepare_thumbnail(original.content)
+    uploaded_thumbnail_object_key: str | None = None
+
+    if db is None:
+        transient_key = f"{item.image_object_key}:thumb"
+        return StoredImagePayload(
+            content=thumbnail_content,
+            content_type=thumbnail_content_type,
+            object_key=transient_key,
+            etag=_normalize_etag(None, transient_key),
+            last_modified=datetime.now(UTC),
+            cache_control=PROXY_IMAGE_CACHE_CONTROL,
+        )
+
+    try:
+        uploaded_thumbnail_object_key, thumbnail_content_type, thumbnail_etag = await _upload_bytes(
+            item_id=item.id,
+            filename=f"{item.id}-thumb.jpg",
+            content=thumbnail_content,
+            content_type=thumbnail_content_type,
+            variant="thumb",
+            prefix="inventory-items",
+        )
+        item.image_thumbnail_object_key = uploaded_thumbnail_object_key
+        item.image_thumbnail_content_type = thumbnail_content_type
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    except Exception:
+        await _delete_object_if_present(uploaded_thumbnail_object_key)
+        raise
+
+    return StoredImagePayload(
+        content=thumbnail_content,
+        content_type=thumbnail_content_type,
+        object_key=uploaded_thumbnail_object_key,
+        etag=thumbnail_etag,
+        last_modified=datetime.now(UTC),
+        cache_control=PROXY_IMAGE_CACHE_CONTROL,
+    )
+
+
+async def get_inventory_item_image_response_payload(
+    item: InventoryItem,
+    *,
+    db: AsyncSession | None = None,
+    variant: ImageVariant = "original",
+    request_id: str | None = None,
+) -> StoredImagePayload:
+    if variant == "thumb":
+        return await _get_or_create_inventory_thumbnail_payload(db, item, request_id=request_id)
+    if not item.image_object_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    try:
+        return await _download_object(
+            item.image_object_key,
+            fallback_content_type=item.image_content_type,
+        )
+    except StoredImageObjectNotFoundError as exc:
+        _log_missing_inventory_image_object(
+            item=item,
+            variant="original",
+            object_key=exc.object_key,
+            request_id=request_id,
+        )
+        await _commit_stale_inventory_image_metadata_cleanup(
             db,
             item,
             clear_original=True,
