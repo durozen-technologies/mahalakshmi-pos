@@ -715,6 +715,28 @@ export function BillingScreen({
 
         <Card className="mt-2">
           <View className="flex-row items-start gap-3">
+            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-[#FAEFD8]">
+              <MaterialCommunityIcons name="cash-minus" size={21} color="#9A6700" />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm font-bold text-ink">
+                {t("expenses.title")}
+              </Text>
+              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
+                {t("expenses.billingEntryDescription")}
+              </Text>
+              <Button
+                label={t("action.manageExpenses")}
+                onPress={() => navigation.navigate("ShopExpenses")}
+                variant="secondary"
+                className="mt-4 self-start"
+              />
+            </View>
+          </View>
+        </Card>
+
+        <Card className="mt-2">
+          <View className="flex-row items-start gap-3">
             <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-surface">
               <MaterialCommunityIcons
                 name={preferredPrinter ? "printer-check" : "printer-alert"}

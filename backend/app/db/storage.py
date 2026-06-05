@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import format_datetime
@@ -46,6 +47,16 @@ ImageVariant = Literal["original", "thumb"]
 @dataclass(frozen=True)
 class StoredImagePayload:
     content: bytes
+    content_type: str
+    object_key: str
+    etag: str
+    last_modified: datetime | None
+    cache_control: str
+
+
+@dataclass(frozen=True)
+class StoredImageStreamPayload:
+    body: object
     content_type: str
     object_key: str
     etag: str
@@ -761,7 +772,7 @@ def format_image_last_modified(last_modified: datetime | None) -> str | None:
     return format_datetime(last_modified.astimezone(UTC), usegmt=True)
 
 
-def image_response_headers(payload: StoredImagePayload) -> dict[str, str]:
+def image_response_headers(payload: StoredImagePayload | StoredImageStreamPayload) -> dict[str, str]:
     headers = {
         "Cache-Control": payload.cache_control,
         "ETag": payload.etag,
@@ -771,6 +782,72 @@ def image_response_headers(payload: StoredImagePayload) -> dict[str, str]:
     if last_modified:
         headers["Last-Modified"] = last_modified
     return headers
+
+
+def iter_stored_image_stream(
+    payload: StoredImageStreamPayload,
+    *,
+    chunk_size: int = 64 * 1024,
+) -> Iterator[bytes]:
+    body = payload.body
+    read = getattr(body, "read")
+    close = getattr(body, "close", None)
+    try:
+        while True:
+            chunk = read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if callable(close):
+            close()
+
+
+def close_stored_image_stream(payload: StoredImageStreamPayload) -> None:
+    close = getattr(payload.body, "close", None)
+    if callable(close):
+        close()
+
+
+async def _stream_object(
+    object_key: str,
+    *,
+    fallback_content_type: str | None = None,
+) -> StoredImageStreamPayload:
+    if not settings.rustfs_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS is not configured",
+        )
+
+    client = _get_storage_client()
+
+    def _open_stream() -> StoredImageStreamPayload:
+        response = client.get_object(
+            Bucket=settings.rustfs_bucket_name,
+            Key=object_key,
+        )
+        content_type = response.get("ContentType") or fallback_content_type or "image/jpeg"
+        return StoredImageStreamPayload(
+            body=response["Body"],
+            content_type=content_type,
+            object_key=object_key,
+            etag=_normalize_etag(response.get("ETag"), object_key),
+            last_modified=response.get("LastModified"),
+            cache_control=PROXY_IMAGE_CACHE_CONTROL,
+        )
+
+    try:
+        return await asyncio.to_thread(_open_stream)
+    except (ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RustFS did not respond in time while downloading the image",
+        ) from exc
+    except ClientError as exc:
+        if _is_missing_object_error(exc):
+            raise StoredImageObjectNotFoundError(object_key) from exc
+        raise
 
 
 async def _download_object(
@@ -871,10 +948,10 @@ async def _get_or_create_thumbnail_payload(
     item: Item,
     *,
     request_id: str | None = None,
-) -> StoredImagePayload:
+) -> StoredImagePayload | StoredImageStreamPayload:
     if item.image_thumbnail_object_key:
         try:
-            return await _download_object(
+            return await _stream_object(
                 item.image_thumbnail_object_key,
                 fallback_content_type=item.image_thumbnail_content_type,
             )
@@ -965,13 +1042,13 @@ async def get_item_image_response_payload(
     db: AsyncSession | None = None,
     variant: ImageVariant = "original",
     request_id: str | None = None,
-) -> StoredImagePayload:
+) -> StoredImagePayload | StoredImageStreamPayload:
     if variant == "thumb":
         return await _get_or_create_thumbnail_payload(db, item, request_id=request_id)
     if not item.image_object_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
     try:
-        return await _download_object(
+        return await _stream_object(
             item.image_object_key,
             fallback_content_type=item.image_content_type,
         )
@@ -1043,10 +1120,10 @@ async def _get_or_create_inventory_thumbnail_payload(
     item: InventoryItem,
     *,
     request_id: str | None = None,
-) -> StoredImagePayload:
+) -> StoredImagePayload | StoredImageStreamPayload:
     if item.image_thumbnail_object_key:
         try:
-            return await _download_object(
+            return await _stream_object(
                 item.image_thumbnail_object_key,
                 fallback_content_type=item.image_thumbnail_content_type,
             )
@@ -1138,13 +1215,13 @@ async def get_inventory_item_image_response_payload(
     db: AsyncSession | None = None,
     variant: ImageVariant = "original",
     request_id: str | None = None,
-) -> StoredImagePayload:
+) -> StoredImagePayload | StoredImageStreamPayload:
     if variant == "thumb":
         return await _get_or_create_inventory_thumbnail_payload(db, item, request_id=request_id)
     if not item.image_object_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
     try:
-        return await _download_object(
+        return await _stream_object(
             item.image_object_key,
             fallback_content_type=item.image_content_type,
         )

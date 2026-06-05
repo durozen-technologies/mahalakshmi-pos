@@ -2,14 +2,17 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.storage import (
+    StoredImagePayload,
+    close_stored_image_stream,
     get_inventory_item_image_response_payload,
     get_item_image_response_payload,
     image_response_headers,
+    iter_stored_image_stream,
 )
 from app.models import InventoryItem, Item
 
@@ -42,7 +45,16 @@ async def get_item_image(
     )
     headers = image_response_headers(payload)
     if request.headers.get("if-none-match") == headers.get("ETag"):
+        if not isinstance(payload, StoredImagePayload):
+            close_stored_image_stream(payload)
         return Response(status_code=304, headers=headers)
+
+    if not isinstance(payload, StoredImagePayload):
+        return StreamingResponse(
+            iter_stored_image_stream(payload),
+            media_type=payload.content_type,
+            headers=headers,
+        )
 
     return Response(
         content=payload.content,
@@ -77,7 +89,16 @@ async def get_inventory_item_image(
     )
     headers = image_response_headers(payload)
     if request.headers.get("if-none-match") == headers.get("ETag"):
+        if not isinstance(payload, StoredImagePayload):
+            close_stored_image_stream(payload)
         return Response(status_code=304, headers=headers)
+
+    if not isinstance(payload, StoredImagePayload):
+        return StreamingResponse(
+            iter_stored_image_stream(payload),
+            media_type=payload.content_type,
+            headers=headers,
+        )
 
     return Response(
         content=payload.content,

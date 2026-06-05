@@ -21,6 +21,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_roles
@@ -32,6 +33,8 @@ from app.schemas.admin import (
     AdminBillPage,
     AdminDashboardBootstrap,
     AdminItemRowsPage,
+    AdminReportDetailLevel,
+    AdminReportSection,
     AnalyticsPeriod,
     ItemCategoryCreate,
     ItemCategoryRead,
@@ -58,16 +61,35 @@ from app.schemas.admin import (
     ShopStatusUpdate,
     ShopUpdate,
 )
-from app.schemas.billing import BillRead
+from app.schemas.billing import BillDetailBatchRequest, BillRead
+from app.schemas.expenses import (
+    ExpenseEntryPage,
+    ExpenseItemCounts,
+    ExpenseItemCreate,
+    ExpenseItemRead,
+    ExpenseItemRowsPage,
+    ExpenseItemUpdate,
+    ShopExpenseAllocationBulkCreate,
+    ShopExpenseAllocationBulkRead,
+    ShopExpenseAllocationUpdate,
+    ShopExpenseItemRead,
+    ShopExpenseItemRowsPage,
+    ShopExpenseItemsOrderRead,
+    ShopExpenseItemsOrderUpdate,
+)
 from app.schemas.inventory import (
     InventoryCategoryCreate,
     InventoryCategoryRead,
     InventoryCategoryUpdate,
+    InventoryItemCounts,
     InventoryItemCreate,
     InventoryItemImageRead,
     InventoryItemRead,
+    InventoryItemRowsPage,
+    InventoryItemStockRead,
     InventoryItemUpdate,
     InventoryMovementPage,
+    InventoryStockRowsPage,
     InventorySummaryRead,
     ShopInventoryAllocationBulkCreate,
     ShopInventoryAllocationBulkRead,
@@ -94,6 +116,7 @@ from app.services.admin import (
     delete_item_category,
     delete_shop_account,
     get_bill_by_id,
+    get_bills_by_ids,
     get_catalogue_item,
     get_daily_bills,
     get_dashboard_bootstrap,
@@ -119,15 +142,34 @@ from app.services.admin import (
     update_selected_shop_items_order,
     update_shop_account,
 )
+from app.services.expenses import (
+    allocate_shop_expense_item,
+    allocate_shop_expense_items,
+    count_expense_items,
+    create_expense_item,
+    deallocate_shop_expense_item,
+    delete_expense_item,
+    get_expense_item,
+    list_expense_entries,
+    list_expense_item_rows,
+    list_shop_expense_candidate_rows,
+    list_shop_expense_item_rows,
+    update_expense_item,
+    update_shop_expense_allocation,
+    update_shop_expense_items_order,
+)
 from app.services.inventory import (
     allocate_shop_inventory_items,
+    count_inventory_items,
     create_inventory_category,
     delete_inventory_category,
     get_inventory_item,
     get_inventory_summary,
     list_inventory_categories,
+    list_inventory_item_rows,
     list_inventory_items,
     list_inventory_movements,
+    list_inventory_stock_rows,
     update_inventory_category,
     update_shop_inventory_allocation,
 )
@@ -154,6 +196,7 @@ from app.services.pricing import (
     get_shop_bootstrap,
     upsert_shop_daily_price,
 )
+from app.services.reports import generate_admin_report_pdf, iter_admin_report_file
 from app.services.storage import delete_item_image
 
 router = APIRouter(tags=["Admin"], dependencies=[Depends(require_roles(UserRole.ADMIN))])
@@ -177,6 +220,18 @@ RangeEndDateParam = Annotated[
 ShopIdParam = Annotated[
     UUID | None,
     Query(description="Filter results to a single shop branch."),
+]
+ShopIdsParam = Annotated[
+    list[UUID] | None,
+    Query(description="Filter reports to one or more shop branches. Omit for all branches."),
+]
+ReportSectionsParam = Annotated[
+    list[AdminReportSection],
+    Query(description="Report sections to include. Repeat for multiple values."),
+]
+ReportDetailLevelParam = Annotated[
+    AdminReportDetailLevel,
+    Query(description="Report detail level: summary or full."),
 ]
 BillsLimitParam = Annotated[
     int,
@@ -239,6 +294,10 @@ ItemCursorIdParam = Annotated[
 CursorCreatedAtParam = Annotated[
     datetime | None,
     Query(description="Pagination cursor timestamp from the previous page."),
+]
+CursorSpentAtParam = Annotated[
+    datetime | None,
+    Query(description="Pagination cursor expense timestamp from the previous page."),
 ]
 CursorIdParam = Annotated[
     UUID | None,
@@ -494,6 +553,46 @@ async def get_inventory_items(
 
 
 @router.get(
+    "/inventory/items/rows",
+    response_model=InventoryItemRowsPage,
+    response_model_exclude_unset=True,
+    summary="List Inventory Item Rows",
+)
+async def get_inventory_item_rows(
+    db: DBSession,
+    q: ItemSearchParam = None,
+    active: ItemActiveParam = None,
+    limit: ItemsLimitParam = 100,
+    cursor_sort_order: ItemCursorSortOrderParam = None,
+    cursor_name: ItemCursorNameParam = None,
+    cursor_id: ItemCursorIdParam = None,
+) -> InventoryItemRowsPage:
+    return await list_inventory_item_rows(
+        db,
+        q=q,
+        active=active,
+        limit=limit,
+        cursor_sort_order=cursor_sort_order,
+        cursor_name=cursor_name,
+        cursor_id=cursor_id,
+    )
+
+
+@router.get(
+    "/inventory/items/counts",
+    response_model=InventoryItemCounts,
+    response_model_exclude_unset=True,
+    summary="Count Inventory Items",
+)
+async def get_inventory_item_counts(
+    db: DBSession,
+    q: ItemSearchParam = None,
+    active: ItemActiveParam = None,
+) -> InventoryItemCounts:
+    return await count_inventory_items(db, q=q, active=active)
+
+
+@router.get(
     "/inventory/items/{item_id}",
     response_model=InventoryItemRead,
     response_model_exclude_unset=True,
@@ -636,6 +735,289 @@ async def delete_admin_inventory_management_item(item_id: UUID, db: DBSession) -
 
 
 @router.get(
+    "/expenses/items",
+    response_model=ExpenseItemRowsPage,
+    response_model_exclude_unset=True,
+    summary="List Expense Items",
+)
+async def get_expense_items(
+    db: DBSession,
+    q: ItemSearchParam = None,
+    active: ItemActiveParam = None,
+    limit: ItemsLimitParam = 50,
+    cursor_sort_order: ItemCursorSortOrderParam = None,
+    cursor_name: ItemCursorNameParam = None,
+    cursor_id: ItemCursorIdParam = None,
+) -> ExpenseItemRowsPage:
+    return await list_expense_item_rows(
+        db,
+        q=q,
+        active=active,
+        limit=limit,
+        cursor_sort_order=cursor_sort_order,
+        cursor_name=cursor_name,
+        cursor_id=cursor_id,
+    )
+
+
+@router.get(
+    "/expenses/items/counts",
+    response_model=ExpenseItemCounts,
+    response_model_exclude_unset=True,
+    summary="Count Expense Items",
+)
+async def get_expense_item_counts(
+    db: DBSession,
+    q: ItemSearchParam = None,
+) -> ExpenseItemCounts:
+    return await count_expense_items(db, q=q)
+
+
+@router.post(
+    "/expenses/items",
+    response_model=ExpenseItemRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Create Expense Item",
+)
+async def create_admin_expense_item(
+    payload: ExpenseItemCreate,
+    db: DBSession,
+) -> ExpenseItemRead:
+    return await create_expense_item(db, payload)
+
+
+@router.get(
+    "/expenses/items/{expense_item_id}",
+    response_model=ExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Get Expense Item",
+)
+async def get_admin_expense_item(expense_item_id: UUID, db: DBSession) -> ExpenseItemRead:
+    return await get_expense_item(db, expense_item_id)
+
+
+@router.patch(
+    "/expenses/items/{expense_item_id}",
+    response_model=ExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Update Expense Item",
+)
+async def update_admin_expense_item(
+    expense_item_id: UUID,
+    payload: ExpenseItemUpdate,
+    db: DBSession,
+) -> ExpenseItemRead:
+    return await update_expense_item(db, expense_item_id, payload)
+
+
+@router.delete(
+    "/expenses/items/{expense_item_id}",
+    status_code=204,
+    summary="Delete Expense Item",
+)
+async def delete_admin_expense_item(expense_item_id: UUID, db: DBSession) -> Response:
+    await delete_expense_item(db, expense_item_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/shops/{shop_id}/expense-items",
+    response_model=ShopExpenseItemRowsPage,
+    response_model_exclude_unset=True,
+    summary="List Branch Expense Items",
+)
+async def get_shop_expense_items(
+    shop: ShopDep,
+    db: DBSession,
+    q: ItemSearchParam = None,
+    active: ItemActiveParam = None,
+    limit: ItemsLimitParam = 50,
+    cursor_sort_order: ItemCursorSortOrderParam = None,
+    cursor_name: ItemCursorNameParam = None,
+    cursor_id: ItemCursorIdParam = None,
+) -> ShopExpenseItemRowsPage:
+    return await list_shop_expense_item_rows(
+        db,
+        shop,
+        q=q,
+        active=active,
+        limit=limit,
+        cursor_sort_order=cursor_sort_order,
+        cursor_name=cursor_name,
+        cursor_id=cursor_id,
+    )
+
+
+@router.get(
+    "/shops/{shop_id}/expense-items/counts",
+    response_model=ExpenseItemCounts,
+    response_model_exclude_unset=True,
+    summary="Count Branch Expense Items",
+)
+async def get_shop_expense_item_counts(
+    shop: ShopDep,
+    db: DBSession,
+    q: ItemSearchParam = None,
+) -> ExpenseItemCounts:
+    return await count_expense_items(db, shop_id=shop.id, q=q)
+
+
+@router.get(
+    "/shops/{shop_id}/expense-item-candidates",
+    response_model=ExpenseItemRowsPage,
+    response_model_exclude_unset=True,
+    summary="List Branch Expense Item Candidates",
+)
+async def get_shop_expense_item_candidates(
+    shop: ShopDep,
+    db: DBSession,
+    q: ItemSearchParam = None,
+    limit: ItemsLimitParam = 50,
+    cursor_sort_order: ItemCursorSortOrderParam = None,
+    cursor_name: ItemCursorNameParam = None,
+    cursor_id: ItemCursorIdParam = None,
+) -> ExpenseItemRowsPage:
+    return await list_shop_expense_candidate_rows(
+        db,
+        shop,
+        q=q,
+        limit=limit,
+        cursor_sort_order=cursor_sort_order,
+        cursor_name=cursor_name,
+        cursor_id=cursor_id,
+    )
+
+
+@router.post(
+    "/shops/{shop_id}/expense-items/allocations",
+    response_model=ShopExpenseAllocationBulkRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Allocate Branch Expense Items",
+)
+async def allocate_shop_expenses(
+    payload: ShopExpenseAllocationBulkCreate,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopExpenseAllocationBulkRead:
+    return await allocate_shop_expense_items(db, shop, payload.expense_item_ids)
+
+
+@router.post(
+    "/shops/{shop_id}/expense-items/{expense_item_id}/allocation",
+    response_model=ShopExpenseItemRead,
+    response_model_exclude_unset=True,
+    status_code=201,
+    summary="Allocate Branch Expense Item",
+)
+async def allocate_shop_expense(
+    expense_item_id: UUID,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopExpenseItemRead:
+    return await allocate_shop_expense_item(db, shop, expense_item_id)
+
+
+@router.patch(
+    "/shops/{shop_id}/expense-items/{expense_item_id}/allocation",
+    response_model=ShopExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Update Branch Expense Allocation",
+)
+async def update_shop_expense(
+    expense_item_id: UUID,
+    payload: ShopExpenseAllocationUpdate,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopExpenseItemRead:
+    return await update_shop_expense_allocation(db, shop, expense_item_id, payload)
+
+
+@router.delete(
+    "/shops/{shop_id}/expense-items/{expense_item_id}/allocation",
+    response_model=ShopExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Remove Branch Expense Allocation",
+)
+async def deallocate_shop_expense(
+    expense_item_id: UUID,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopExpenseItemRead:
+    return await deallocate_shop_expense_item(db, shop, expense_item_id)
+
+
+@router.put(
+    "/shops/{shop_id}/expense-items/order",
+    response_model=ShopExpenseItemsOrderRead,
+    response_model_exclude_unset=True,
+    summary="Update Branch Expense Item Order",
+)
+async def update_shop_expense_order(
+    payload: ShopExpenseItemsOrderUpdate,
+    shop: ShopDep,
+    db: DBSession,
+) -> ShopExpenseItemsOrderRead:
+    return await update_shop_expense_items_order(db, shop, payload.expense_item_ids)
+
+
+@router.get(
+    "/expenses/history",
+    response_model=ExpenseEntryPage,
+    response_model_exclude_unset=True,
+    summary="List Expense History",
+)
+async def get_expense_history(
+    db: DBSession,
+    shop_id: ShopIdParam = None,
+    range_start_date: RangeStartDateParam = None,
+    range_end_date: RangeEndDateParam = None,
+    limit: ItemsLimitParam = 50,
+    cursor_spent_at: CursorSpentAtParam = None,
+    cursor_id: CursorIdParam = None,
+) -> ExpenseEntryPage:
+    return await list_expense_entries(
+        db,
+        shop_id=shop_id,
+        range_start_date=range_start_date,
+        range_end_date=range_end_date,
+        limit=limit,
+        cursor_spent_at=cursor_spent_at,
+        cursor_id=cursor_id,
+    )
+
+
+@router.get(
+    "/shops/{shop_id}/inventory-allocations/rows",
+    response_model=InventoryStockRowsPage,
+    response_model_exclude_unset=True,
+    summary="List Shop Inventory Allocation Rows",
+)
+async def get_shop_inventory_allocation_rows(
+    shop: ShopDep,
+    db: DBSession,
+    q: str | None = Query(None, min_length=1, max_length=120),
+    active: bool | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    cursor_sort_order: int | None = Query(None),
+    cursor_name: str | None = Query(None, max_length=120),
+    cursor_id: UUID | None = Query(None),
+) -> InventoryStockRowsPage:
+    return await list_inventory_stock_rows(
+        db,
+        shop,
+        q=q,
+        active=active,
+        include_unallocated=True,
+        limit=limit,
+        cursor_sort_order=cursor_sort_order,
+        cursor_name=cursor_name,
+        cursor_id=cursor_id,
+    )
+
+
+@router.get(
     "/shops/{shop_id}/inventory-allocations",
     response_model=InventorySummaryRead,
     response_model_exclude_unset=True,
@@ -662,7 +1044,7 @@ async def allocate_shop_inventory(
 
 @router.patch(
     "/shops/{shop_id}/inventory-allocations",
-    response_model=InventorySummaryRead,
+    response_model=InventoryItemStockRead | InventorySummaryRead,
     response_model_exclude_unset=True,
     summary="Update Shop Inventory Allocation",
 )
@@ -670,15 +1052,18 @@ async def update_shop_inventory(
     payload: ShopInventoryAllocationUpdate,
     shop: ShopDep,
     db: DBSession,
-) -> InventorySummaryRead:
-    await update_shop_inventory_allocation(
+    include_summary: bool = Query(False, description="Include the full inventory summary in the response."),
+) -> InventoryItemStockRead | InventorySummaryRead:
+    stock_item = await update_shop_inventory_allocation(
         db,
         shop,
         payload.item_id,
         is_active=payload.is_active,
         sort_order=payload.sort_order,
     )
-    return await get_inventory_summary(db, shop, include_unallocated=True)
+    if include_summary:
+        return await get_inventory_summary(db, shop, include_unallocated=True)
+    return stock_item
 
 
 @router.get(
@@ -1520,6 +1905,35 @@ async def item_sales(
     )
 
 
+@router.get("/reports/pdf", summary="Generate Admin PDF Report")
+async def admin_report_pdf(
+    sections: ReportSectionsParam,
+    detail_level: ReportDetailLevelParam = "summary",
+    period: AnalyticsPeriodParam = "date",
+    reference_date: ReferenceDateParam = None,
+    range_start_date: RangeStartDateParam = None,
+    range_end_date: RangeEndDateParam = None,
+    shop_ids: ShopIdsParam = None,
+    db: DBSession = None,
+) -> StreamingResponse:
+    """Generate a merged PDF report server-side for the selected admin sections."""
+    report = await generate_admin_report_pdf(
+        db,
+        sections=sections,
+        detail_level=detail_level,
+        period=period,
+        reference_date=reference_date,
+        range_start_date=range_start_date,
+        range_end_date=range_end_date,
+        shop_ids=shop_ids,
+    )
+    return StreamingResponse(
+        iter_admin_report_file(report.file),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{report.filename}"'},
+    )
+
+
 # ── Bills ─────────────────────────────────────────────────────────────────────
 
 
@@ -1554,6 +1968,20 @@ async def bills(
         range_start_date=range_start_date,
         range_end_date=range_end_date,
     )
+
+
+@router.post(
+    "/bills/details",
+    response_model=list[BillRead],
+    response_model_exclude_unset=True,
+    summary="Get Bill Details Batch",
+)
+async def bill_details(
+    payload: BillDetailBatchRequest,
+    db: DBSession,
+) -> list[BillRead]:
+    """Full bill details for a print batch, returned in request order."""
+    return await get_bills_by_ids(db, payload.bill_ids)
 
 
 @router.get(

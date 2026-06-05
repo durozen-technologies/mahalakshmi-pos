@@ -14,9 +14,13 @@ import {
   InventoryCategoryCreate,
   InventoryCategoryRead,
   InventoryCategoryUpdate,
+  InventoryItemCounts,
   InventoryItemImageRead,
   InventoryItemRead,
+  InventoryItemRowsPage,
+  InventoryItemStockRead,
   InventoryMovementPage,
+  InventoryStockRowsPage,
   InventorySummaryRead,
   ItemCategoryCreate,
   ItemCategoryRead,
@@ -68,6 +72,20 @@ export type InventoryItemMetadataPayload = {
 export type AnalyticsDateRange = {
   startDate?: string | null;
   endDate?: string | null;
+};
+export type AdminReportSection = "sales" | "billing" | "items" | "inventory";
+export type AdminReportDetailLevel = "summary" | "full";
+export type DownloadAdminReportPdfParams = {
+  sections: AdminReportSection[];
+  detailLevel?: AdminReportDetailLevel;
+  period: AnalyticsPeriod;
+  referenceDate?: string | null;
+  range?: AnalyticsDateRange;
+  shopIds?: UUID[];
+};
+export type DownloadAdminReportPdfResult = {
+  uri: string;
+  filename: string;
 };
 
 function analyticsParams(period: AnalyticsPeriod, referenceDate?: string, range?: AnalyticsDateRange) {
@@ -146,6 +164,13 @@ class UploadFileUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UploadFileUnavailableError";
+  }
+}
+
+class DownloadHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "DownloadHttpError";
   }
 }
 
@@ -242,6 +267,98 @@ export async function updateShopStatus(shopId: UUID, payload: ShopStatusUpdate) 
 export async function fetchAdminBillDetail(billId: UUID) {
   const { data } = await apiClient.get<BillRead>(`/api/v1/admin/bills/${billId}`);
   return data;
+}
+
+export async function fetchAdminBillDetails(billIds: UUID[]) {
+  const { data } = await apiClient.post<BillRead[]>("/api/v1/admin/bills/details", {
+    bill_ids: billIds,
+  });
+  return data;
+}
+
+function buildAdminReportQuery(params: DownloadAdminReportPdfParams) {
+  const query = new URLSearchParams();
+  params.sections.forEach((section) => query.append("sections", section));
+  query.set("detail_level", params.detailLevel ?? "summary");
+  query.set("period", params.period);
+  if (params.referenceDate) {
+    query.set("reference_date", params.referenceDate);
+  }
+  if (params.range?.startDate) {
+    query.set("range_start_date", params.range.startDate);
+  }
+  if (params.range?.endDate) {
+    query.set("range_end_date", params.range.endDate);
+  }
+  params.shopIds?.forEach((shopId) => query.append("shop_ids", shopId));
+  return query.toString();
+}
+
+function buildAdminReportFilename() {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `admin-report-${timestamp}.pdf`;
+}
+
+async function readDownloadedErrorMessage(uri: string) {
+  try {
+    const body = await FileSystem.readAsStringAsync(uri);
+    const parsed = parseUploadResponseBody(body);
+    return getUploadResponseMessage(parsed);
+  } catch {
+    return "";
+  }
+}
+
+export async function downloadAdminReportPdf(
+  params: DownloadAdminReportPdfParams,
+): Promise<DownloadAdminReportPdfResult> {
+  if (params.sections.length === 0) {
+    throw new Error("Select at least one report section.");
+  }
+  const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!baseDirectory) {
+    throw new Error("File storage is not available on this device.");
+  }
+  const filename = buildAdminReportFilename();
+  const localUri = `${baseDirectory}${filename}`;
+  const query = buildAdminReportQuery(params);
+  const downloadUrls = await resolveReachableApiUrlCandidates(`/api/v1/admin/reports/pdf?${query}`);
+  if (downloadUrls.length === 0) {
+    throw new Error("API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL and restart Expo.");
+  }
+
+  let lastNetworkError: unknown = null;
+  for (const [index, downloadUrl] of downloadUrls.entries()) {
+    try {
+      const response = await FileSystem.downloadAsync(downloadUrl, localUri, {
+        headers: {
+          Accept: "application/pdf",
+          ...getApiAuthHeaders(),
+        },
+      });
+      if (response.status >= 200 && response.status < 300) {
+        return { uri: response.uri, filename };
+      }
+      const message = await readDownloadedErrorMessage(response.uri);
+      await FileSystem.deleteAsync(response.uri, { idempotent: true }).catch(() => undefined);
+      throw new DownloadHttpError(message || `Report download failed with status ${response.status}.`, response.status);
+    } catch (error) {
+      if (error instanceof DownloadHttpError) {
+        throw error;
+      }
+      lastNetworkError = error;
+      if (index < downloadUrls.length - 1) {
+        continue;
+      }
+    }
+  }
+
+  if (lastNetworkError instanceof Error && lastNetworkError.message) {
+    const attemptedTargets = getUploadAttemptSummary(downloadUrls);
+    const attemptedMessage = attemptedTargets ? ` Tried ${attemptedTargets}.` : "";
+    throw new Error(`Report download could not reach backend API.${attemptedMessage} ${lastNetworkError.message}`);
+  }
+  throw new Error("Report download failed before the backend responded.");
 }
 
 export async function deleteShop(shopId: UUID) {
@@ -450,6 +567,56 @@ export async function fetchInventoryItems(
   });
   return data;
 }
+
+export type FetchInventoryItemsParams = {
+  q?: string;
+  active?: boolean | null;
+  limit?: number;
+  cursor_sort_order?: number | null;
+  cursor_name?: string | null;
+  cursor_id?: UUID | null;
+};
+
+export async function fetchInventoryItemRows(
+  params?: FetchInventoryItemsParams,
+  options: ApiRequestOptions = {},
+) {
+  const { data } = await apiClient.get<InventoryItemRowsPage>("/api/v1/admin/inventory/items/rows", {
+    params: {
+      q: params?.q || undefined,
+      active: params?.active ?? undefined,
+      limit: params?.limit ?? 50,
+      cursor_sort_order: params?.cursor_sort_order ?? undefined,
+      cursor_name: params?.cursor_name ?? undefined,
+      cursor_id: params?.cursor_id ?? undefined,
+    },
+    signal: options.signal,
+  });
+  return data;
+}
+
+export async function fetchInventoryItemCounts(
+  params?: Pick<FetchInventoryItemsParams, "q" | "active">,
+  options: ApiRequestOptions = {},
+) {
+  const { data } = await apiClient.get<InventoryItemCounts>("/api/v1/admin/inventory/items/counts", {
+    params: {
+      q: params?.q || undefined,
+      active: params?.active ?? undefined,
+    },
+    signal: options.signal,
+  });
+  return data;
+}
+
+export type FetchInventoryStockRowsParams = {
+  q?: string;
+  active?: boolean | null;
+  limit?: number;
+  cursor_sort_order?: number | null;
+  cursor_name?: string | null;
+  cursor_id?: UUID | null;
+};
 
 export async function fetchInventoryItem(itemId: UUID, options: ApiRequestOptions = {}) {
   const { data } = await apiClient.get<InventoryItemRead>(`/api/v1/admin/inventory/items/${itemId}`, {
@@ -677,6 +844,28 @@ export async function fetchShopInventoryAllocations(shopId: UUID, options: ApiRe
   return data;
 }
 
+export async function fetchShopInventoryAllocationRows(
+  shopId: UUID,
+  params?: FetchInventoryStockRowsParams,
+  options: ApiRequestOptions = {},
+) {
+  const { data } = await apiClient.get<InventoryStockRowsPage>(
+    `/api/v1/admin/shops/${shopId}/inventory-allocations/rows`,
+    {
+      params: {
+        q: params?.q || undefined,
+        active: params?.active ?? undefined,
+        limit: params?.limit ?? 50,
+        cursor_sort_order: params?.cursor_sort_order ?? undefined,
+        cursor_name: params?.cursor_name ?? undefined,
+        cursor_id: params?.cursor_id ?? undefined,
+      },
+      signal: options.signal,
+    },
+  );
+  return data;
+}
+
 export async function allocateShopInventoryItems(shopId: UUID, itemIds: UUID[]) {
   const payload: ShopInventoryAllocationBulkCreate = { item_ids: itemIds };
   const { data } = await apiClient.post<ShopInventoryAllocationBulkRead>(
@@ -687,7 +876,7 @@ export async function allocateShopInventoryItems(shopId: UUID, itemIds: UUID[]) 
 }
 
 export async function updateShopInventoryAllocation(shopId: UUID, payload: ShopInventoryAllocationUpdate) {
-  const { data } = await apiClient.patch<InventorySummaryRead>(
+  const { data } = await apiClient.patch<InventoryItemStockRead>(
     `/api/v1/admin/shops/${shopId}/inventory-allocations`,
     payload,
   );

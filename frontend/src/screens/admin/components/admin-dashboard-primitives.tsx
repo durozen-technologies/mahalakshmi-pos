@@ -115,6 +115,9 @@ function adminNavAccent(key: string, palette: ThemePalette) {
   if (key === "billing") {
     return { accent: palette.billing, accentSoft: palette.billingSoft };
   }
+  if (key === "expenses") {
+    return { accent: palette.cash, accentSoft: palette.cashSoft };
+  }
   if (key === "settings") {
     return { accent: palette.settings, accentSoft: palette.settingsSoft };
   }

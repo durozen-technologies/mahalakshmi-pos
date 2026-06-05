@@ -3,6 +3,7 @@ from .base import BaseModelMixin
 from .bill import Bill, BillItem, MonthlyBillSequence
 from .daily_price import DailyPrice
 from .enums import BaseUnit, BillStatus, InventoryMovementType, UnitType, UserRole
+from .expense import ExpenseEntry, ExpenseItem, ShopExpenseAllocation
 from .inventory import (
     InventoryCategory,
     InventoryItem,
@@ -33,6 +34,8 @@ __all__ = [
     "BillItem",
     "BillStatus",
     "DailyPrice",
+    "ExpenseEntry",
+    "ExpenseItem",
     "InventoryCategory",
     "InventoryItem",
     "InventoryItemCategory",
@@ -45,6 +48,7 @@ __all__ = [
     "Payment",
     "Receipt",
     "Shop",
+    "ShopExpenseAllocation",
     "ShopInventoryAllocation",
     "ShopItemAllocation",
     "UnitType",

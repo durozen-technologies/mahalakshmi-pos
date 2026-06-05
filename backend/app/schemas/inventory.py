@@ -62,6 +62,21 @@ class InventoryItemRead(ORMModel):
     image_content_type: str | None = None
 
 
+class InventoryItemRowsPage(BaseModel):
+    items: list[InventoryItemRead]
+    limit: int
+    has_more: bool
+    next_cursor_sort_order: int | None = None
+    next_cursor_name: str | None = None
+    next_cursor_id: UUID | None = None
+
+
+class InventoryItemCounts(BaseModel):
+    all: int = 0
+    active: int = 0
+    paused: int = 0
+
+
 class InventoryItemImageRead(BaseModel):
     inventory_item_id: UUID
     inventory_item_name: str
@@ -111,6 +126,17 @@ class InventorySummaryRead(BaseModel):
     categories: list[InventoryCategoryUsageRead]
 
 
+class InventoryStockRowsPage(BaseModel):
+    shop_id: UUID
+    shop_name: str
+    items: list[InventoryItemStockRead]
+    limit: int
+    has_more: bool
+    next_cursor_sort_order: int | None = None
+    next_cursor_name: str | None = None
+    next_cursor_id: UUID | None = None
+
+
 class InventoryMovementRead(BaseModel):
     id: UUID
     shop_id: UUID
@@ -154,13 +180,13 @@ class InventoryUseSplitRequest(BaseModel):
 class InventoryMovementCreateResult(BaseModel):
     movement: InventoryMovementRead
     item: InventoryItemStockRead
-    summary: InventorySummaryRead
+    summary: InventorySummaryRead | None = None
 
 
 class InventoryMovementSplitCreateResult(BaseModel):
     movements: list[InventoryMovementRead]
     item: InventoryItemStockRead
-    summary: InventorySummaryRead
+    summary: InventorySummaryRead | None = None
 
 
 def _is_whole_decimal(value: Decimal) -> bool:

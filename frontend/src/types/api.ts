@@ -136,6 +136,21 @@ export interface InventoryItemRead {
   image_content_type?: string | null;
 }
 
+export interface InventoryItemRowsPage {
+  items: InventoryItemRead[];
+  limit: number;
+  has_more: boolean;
+  next_cursor_sort_order?: number | null;
+  next_cursor_name?: string | null;
+  next_cursor_id?: UUID | null;
+}
+
+export interface InventoryItemCounts {
+  all: number;
+  active: number;
+  paused: number;
+}
+
 export interface InventoryItemImageRead {
   inventory_item_id: UUID;
   inventory_item_name: string;
@@ -167,6 +182,17 @@ export interface InventorySummaryRead {
   shop_name: string;
   items: InventoryItemStockRead[];
   categories: InventoryCategoryUsageRead[];
+}
+
+export interface InventoryStockRowsPage {
+  shop_id: UUID;
+  shop_name: string;
+  items: InventoryItemStockRead[];
+  limit: number;
+  has_more: boolean;
+  next_cursor_sort_order?: number | null;
+  next_cursor_name?: string | null;
+  next_cursor_id?: UUID | null;
 }
 
 export interface InventoryMovementRead {
@@ -212,13 +238,124 @@ export interface InventoryUseSplitRequest {
 export interface InventoryMovementCreateResult {
   movement: InventoryMovementRead;
   item: InventoryItemStockRead;
-  summary: InventorySummaryRead;
+  summary?: InventorySummaryRead | null;
 }
 
 export interface InventoryMovementSplitCreateResult {
   movements: InventoryMovementRead[];
   item: InventoryItemStockRead;
-  summary: InventorySummaryRead;
+  summary?: InventorySummaryRead | null;
+}
+
+export interface ExpenseItemCreate {
+  name: string;
+  tamil_name: string;
+  sort_order?: number;
+  is_active?: boolean;
+}
+
+export interface ExpenseItemUpdate {
+  name: string;
+  tamil_name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface ExpenseItemRead {
+  id: UUID;
+  name: string;
+  tamil_name: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+  allocated_shop_count: number;
+  entry_count: number;
+  can_delete: boolean;
+}
+
+export interface ShopExpenseItemRead extends ExpenseItemRead {
+  allocated: boolean;
+  allocation_id?: UUID | null;
+  allocation_is_active: boolean;
+  allocation_sort_order: number;
+}
+
+export interface ExpenseItemRowsPage {
+  items: ExpenseItemRead[];
+  limit: number;
+  has_more: boolean;
+  next_cursor_sort_order?: number | null;
+  next_cursor_name?: string | null;
+  next_cursor_id?: UUID | null;
+}
+
+export interface ShopExpenseItemRowsPage {
+  items: ShopExpenseItemRead[];
+  limit: number;
+  has_more: boolean;
+  next_cursor_sort_order?: number | null;
+  next_cursor_name?: string | null;
+  next_cursor_id?: UUID | null;
+}
+
+export interface ExpenseItemCounts {
+  all: number;
+  active: number;
+  paused: number;
+  allocated: number;
+  available: number;
+}
+
+export interface ShopExpenseAllocationBulkCreate {
+  expense_item_ids: UUID[];
+}
+
+export interface ShopExpenseAllocationBulkRead {
+  expense_item_ids: UUID[];
+  allocated_count: number;
+  already_allocated_count: number;
+}
+
+export interface ShopExpenseAllocationUpdate {
+  is_active?: boolean | null;
+  sort_order?: number | null;
+}
+
+export interface ShopExpenseItemsOrderUpdate {
+  expense_item_ids: UUID[];
+}
+
+export interface ShopExpenseItemsOrderRead {
+  expense_item_ids: UUID[];
+}
+
+export interface ExpenseEntryCreate {
+  expense_item_id: UUID;
+  amount: string;
+  spent_at?: string | null;
+  note?: string | null;
+}
+
+export interface ExpenseEntryRead {
+  id: UUID;
+  shop_id: UUID;
+  shop_name: string;
+  expense_item_id: UUID;
+  expense_name: string;
+  expense_tamil_name: string;
+  amount: string;
+  spent_at: string;
+  note?: string | null;
+  created_at: string;
+}
+
+export interface ExpenseEntryPage {
+  items: ExpenseEntryRead[];
+  limit: number;
+  has_more: boolean;
+  next_cursor_spent_at?: string | null;
+  next_cursor_id?: UUID | null;
 }
 
 export interface ShopInventoryAllocationBulkCreate {

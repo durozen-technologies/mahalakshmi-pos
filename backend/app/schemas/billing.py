@@ -33,6 +33,10 @@ class BillCheckoutCommitRequest(BillCheckoutRequest):
     checkout_token: str = Field(min_length=1)
 
 
+class BillDetailBatchRequest(BaseModel):
+    bill_ids: list[UUID] = Field(min_length=1, max_length=50)
+
+
 class BillLineRead(ORMModel):
     item_id: UUID
     item_name: str

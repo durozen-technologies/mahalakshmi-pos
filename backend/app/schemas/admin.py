@@ -11,6 +11,8 @@ from .auth import normalize_username, require_non_blank_password
 from .common import ORMModel
 
 AnalyticsPeriod = Literal["date", "week", "month", "year", "range"]
+AdminReportSection = Literal["sales", "billing", "items", "inventory"]
+AdminReportDetailLevel = Literal["summary", "full"]
 JsonScalar = str | int | float | bool | None
 JsonObject = dict[str, JsonScalar]
 

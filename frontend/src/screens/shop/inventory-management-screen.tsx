@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,7 +18,7 @@ import {
 
 import {
   addShopInventoryStock,
-  fetchShopInventory,
+  fetchShopInventoryRows,
   fetchShopInventoryMovements,
   useShopInventoryStockSplit,
 } from "@/api/inventory";
@@ -37,7 +39,6 @@ import {
   InventoryMovementType,
   type InventoryItemStockRead,
   type InventoryMovementRead,
-  type InventorySummaryRead,
   type UUID,
 } from "@/types/api";
 import { money } from "@/utils/decimal";
@@ -47,6 +48,19 @@ import type { InventoryManagementScreenProps } from "@/navigation/types";
 
 type MovementMode = InventoryMovementType.ADD | InventoryMovementType.USE;
 const HISTORY_BUTTON_GREEN = "#147D52";
+const SHOP_INVENTORY_PAGE_SIZE = 50;
+
+type InventoryCursor = {
+  sortOrder: number | null;
+  name: string | null;
+  id: UUID | null;
+};
+
+const EMPTY_INVENTORY_CURSOR: InventoryCursor = {
+  sortOrder: null,
+  name: null,
+  id: null,
+};
 
 function formatQuantity(value: string | number, unit?: BaseUnit) {
   const numeric = money(value).toNumber();
@@ -89,13 +103,32 @@ function mergeRecentMovements(current: InventoryMovementRead[], nextMovements: I
       seen.add(movement.id);
       return true;
     })
-    .slice(0, 100);
+    .slice(0, 30);
+}
+
+function patchInventoryRow(
+  currentItems: InventoryItemStockRead[],
+  changedItem: InventoryItemStockRead,
+) {
+  return currentItems.map((item) => (item.id === changedItem.id ? changedItem : item));
+}
+
+function visibleStockRows(items: InventoryItemStockRead[]) {
+  return items
+    .filter((item) => item.is_active && item.allocation_active)
+    .sort((left, right) => left.allocation_sort_order - right.allocation_sort_order || left.name.localeCompare(right.name));
 }
 
 export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
   const { language, t } = useShopTranslation();
-  const [summary, setSummary] = useState<InventorySummaryRead | null>(null);
+  const [items, setItems] = useState<InventoryItemStockRead[]>([]);
+  const [shopName, setShopName] = useState<string | null>(null);
+  const [inventoryCursor, setInventoryCursor] = useState<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
+  const [inventoryHasMore, setInventoryHasMore] = useState(false);
+  const [inventoryLoadingMore, setInventoryLoadingMore] = useState(false);
   const [movements, setMovements] = useState<InventoryMovementRead[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementsLoaded, setMovementsLoaded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,8 +138,21 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
   const [mode, setMode] = useState<MovementMode>(InventoryMovementType.ADD);
   const [quantity, setQuantity] = useState("");
   const [categoryQuantities, setCategoryQuantities] = useState<Record<UUID, string>>({});
+  const inventoryCursorRef = useRef<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
+  const inventoryHasMoreRef = useRef(false);
+  const inventoryLoadingRef = useRef(false);
+  const inventoryLoadingMoreRef = useRef(false);
+  const inventoryAbortRef = useRef<AbortController | null>(null);
+  const inventoryRequestIdRef = useRef(0);
+  const movementsLoadingRef = useRef(false);
+  const movementsLoadedRef = useRef(false);
 
   const loadInventory = useCallback(async (refresh = false) => {
+    inventoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    inventoryAbortRef.current = controller;
+    const requestId = ++inventoryRequestIdRef.current;
+    inventoryLoadingRef.current = true;
     if (refresh) {
       setRefreshing(true);
     } else {
@@ -114,17 +160,121 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     }
     setErrorMessage(null);
     try {
-      const [nextSummary, nextMovements] = await Promise.all([
-        fetchShopInventory(),
-        fetchShopInventoryMovements(100),
-      ]);
-      setSummary(nextSummary);
-      setMovements(nextMovements.items);
+      const page = await fetchShopInventoryRows(
+        { limit: SHOP_INVENTORY_PAGE_SIZE },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || requestId !== inventoryRequestIdRef.current) {
+        return;
+      }
+      setShopName(page.shop_name);
+      setItems(page.items);
+      setInventoryHasMore(page.has_more);
+      const nextCursor = {
+        sortOrder: page.next_cursor_sort_order ?? null,
+        name: page.next_cursor_name ?? null,
+        id: page.next_cursor_id ?? null,
+      };
+      inventoryCursorRef.current = nextCursor;
+      inventoryHasMoreRef.current = page.has_more;
+      setInventoryCursor(nextCursor);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setErrorMessage(toApiError(error).message || t("inventory.loadFailed"));
+    } finally {
+      if (inventoryAbortRef.current === controller) {
+        inventoryAbortRef.current = null;
+      }
+      if (requestId === inventoryRequestIdRef.current) {
+        inventoryLoadingRef.current = false;
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [t]);
+
+  const loadMoreInventory = useCallback(async () => {
+    if (
+      !inventoryHasMoreRef.current ||
+      inventoryLoadingRef.current ||
+      inventoryLoadingMoreRef.current
+    ) {
+      return;
+    }
+    inventoryLoadingMoreRef.current = true;
+    setInventoryLoadingMore(true);
+    setErrorMessage(null);
+    try {
+      const page = await fetchShopInventoryRows({
+        limit: SHOP_INVENTORY_PAGE_SIZE,
+        cursor_sort_order: inventoryCursorRef.current.sortOrder,
+        cursor_name: inventoryCursorRef.current.name,
+        cursor_id: inventoryCursorRef.current.id,
+      });
+      setShopName(page.shop_name);
+      setItems((currentItems) => {
+        const existingIds = new Set(currentItems.map((item) => item.id));
+        return [...currentItems, ...page.items.filter((item) => !existingIds.has(item.id))];
+      });
+      setInventoryHasMore(page.has_more);
+      const nextCursor = {
+        sortOrder: page.next_cursor_sort_order ?? null,
+        name: page.next_cursor_name ?? null,
+        id: page.next_cursor_id ?? null,
+      };
+      inventoryCursorRef.current = nextCursor;
+      inventoryHasMoreRef.current = page.has_more;
+      setInventoryCursor(nextCursor);
     } catch (error) {
       setErrorMessage(toApiError(error).message || t("inventory.loadFailed"));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      inventoryLoadingMoreRef.current = false;
+      setInventoryLoadingMore(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    inventoryCursorRef.current = inventoryCursor;
+  }, [inventoryCursor]);
+
+  useEffect(() => {
+    inventoryHasMoreRef.current = inventoryHasMore;
+  }, [inventoryHasMore]);
+
+  useEffect(() => {
+    inventoryLoadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    inventoryLoadingMoreRef.current = inventoryLoadingMore;
+  }, [inventoryLoadingMore]);
+
+  useEffect(() => {
+    movementsLoadingRef.current = movementsLoading;
+  }, [movementsLoading]);
+
+  useEffect(() => {
+    movementsLoadedRef.current = movementsLoaded;
+  }, [movementsLoaded]);
+
+  const loadMovements = useCallback(async (force = false) => {
+    if (movementsLoadingRef.current || (movementsLoadedRef.current && !force)) {
+      return;
+    }
+    movementsLoadingRef.current = true;
+    setMovementsLoading(true);
+    try {
+      const nextMovements = await fetchShopInventoryMovements(30);
+      setMovements(nextMovements.items);
+      movementsLoadedRef.current = true;
+      setMovementsLoaded(true);
+    } catch (error) {
+      setErrorMessage(toApiError(error).message || t("inventory.loadFailed"));
+    } finally {
+      movementsLoadingRef.current = false;
+      setMovementsLoading(false);
     }
   }, [t]);
 
@@ -132,6 +282,19 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     void loadInventory();
     return undefined;
   }, [loadInventory]));
+
+  useEffect(() => {
+    if (historyOpen) {
+      void loadMovements();
+    }
+  }, [historyOpen, loadMovements]);
+
+  const refreshInventory = useCallback(() => {
+    void loadInventory(true);
+    if (historyOpen) {
+      void loadMovements(true);
+    }
+  }, [historyOpen, loadInventory, loadMovements]);
 
   const openMovement = useCallback((item: InventoryItemStockRead, nextMode: MovementMode) => {
     if (!item.is_active || !item.allocation_active) {
@@ -222,12 +385,17 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     }
     setSaving(true);
     try {
-      let nextSummary: InventorySummaryRead;
+      let changedItem: InventoryItemStockRead;
       let nextMovements: InventoryMovementRead[];
       if (mode === InventoryMovementType.ADD) {
         const result = await addShopInventoryStock(selectedItem.id, { quantity: rawQuantity });
-        nextSummary = result.summary;
+        changedItem = result.item;
         nextMovements = [result.movement];
+        if (result.summary) {
+          setItems(visibleStockRows(result.summary.items));
+        } else {
+          setItems((currentItems) => patchInventoryRow(currentItems, changedItem));
+        }
       } else {
         const result = await useShopInventoryStockSplit(selectedItem.id, {
           total_quantity: rawQuantity,
@@ -236,10 +404,14 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
             quantity: categoryQuantities[category.category_id]?.trim() || "0",
           })),
         });
-        nextSummary = result.summary;
+        changedItem = result.item;
         nextMovements = result.movements;
+        if (result.summary) {
+          setItems(visibleStockRows(result.summary.items));
+        } else {
+          setItems((currentItems) => patchInventoryRow(currentItems, changedItem));
+        }
       }
-      setSummary(nextSummary);
       setMovements((current) => mergeRecentMovements(current, nextMovements));
       closeMovement();
     } catch (error) {
@@ -258,18 +430,11 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     }
   }, [categoryQuantities, closeMovement, language, loadInventory, mode, quantity, selectedItem, splitState.canSave, t]);
 
-  const sortedItems = useMemo(
-    () => [...(summary?.items ?? [])]
-      .filter((item) => item.is_active && item.allocation_active)
-      .sort((left, right) => left.allocation_sort_order - right.allocation_sort_order || left.name.localeCompare(right.name)),
-    [summary?.items],
-  );
-
-  if (loading && !summary) {
+  if (loading && items.length === 0) {
     return <LoadingState fullscreen label={t("inventory.loading")} />;
   }
 
-  if (errorMessage && !summary) {
+  if (errorMessage && items.length === 0) {
     return (
       <Screen>
         <EmptyState title={t("inventory.loadFailed")} description={errorMessage} />
@@ -278,165 +443,185 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     );
   }
 
+  const renderInventoryRow = ({ item }: { item: InventoryItemStockRead }) => {
+    const itemName = getLocalizedItemName(language, item.name, item.tamil_name);
+    return (
+      <Card className="gap-4">
+        <View className="flex-row gap-3">
+          <ItemThumbnail
+            uri={getItemThumbnailUri(item)}
+            recyclingKey={item.id}
+            size={58}
+            borderRadius={14}
+            backgroundColor="#F4F7F2"
+            icon="warehouse"
+            iconColor="#6C7A70"
+          />
+          <View className="min-w-0 flex-1">
+            <Text className="text-base font-extrabold text-ink" numberOfLines={2}>{itemName}</Text>
+            <Text className="mt-1 text-sm font-semibold text-muted">
+              {formatQuantity(item.available_quantity, item.base_unit)} {t("inventory.available")}
+            </Text>
+            <Text className="mt-1 text-xs font-semibold text-muted">
+              {t("inventory.used")} {formatQuantity(item.used_quantity, item.base_unit)}
+            </Text>
+          </View>
+        </View>
+        <View className="flex-row gap-2">
+          <Button
+            label={t("inventory.addStock")}
+            onPress={() => openMovement(item, InventoryMovementType.ADD)}
+            className="flex-1"
+          />
+          <Button
+            label={t("inventory.useStock")}
+            onPress={() => openMovement(item, InventoryMovementType.USE)}
+            variant="secondary"
+            disabled={item.category_usage.length === 0}
+            className="flex-1"
+          />
+        </View>
+        <View className="gap-2 border-t border-border/70 pt-3">
+          {item.category_usage.map((category) => (
+            <View key={category.category_id} className="flex-row items-center justify-between gap-3">
+              <Text className="min-w-0 flex-1 text-sm font-semibold text-ink" numberOfLines={1}>
+                {category.category_name}
+              </Text>
+              <Text className="text-xs font-semibold text-muted">
+                {t("inventory.used")} {formatQuantity(category.used_quantity, item.base_unit)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </Card>
+    );
+  };
+
+  const renderInventoryFooter = () => (
+    <View className="gap-3 pt-1">
+      {inventoryLoadingMore ? (
+        <Card className="items-center border-border bg-card">
+          <ActivityIndicator color="#244734" />
+        </Card>
+      ) : null}
+      <View className="w-full items-center">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: historyOpen }}
+          onPress={() => setHistoryOpen((current) => !current)}
+          className="flex-row items-center justify-center gap-2"
+          style={{
+            width: "100%",
+            minHeight: 52,
+            borderWidth: 1,
+            borderRadius: 14,
+            paddingHorizontal: 22,
+            backgroundColor: historyOpen ? "#FFFFFF" : HISTORY_BUTTON_GREEN,
+            borderColor: HISTORY_BUTTON_GREEN,
+          }}
+        >
+          <MaterialCommunityIcons
+            name={historyOpen ? "chevron-up" : "history"}
+            size={20}
+            color={historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF"}
+          />
+          <Text
+            className="text-sm font-extrabold"
+            style={{ color: historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF" }}
+          >
+            {historyOpen ? t("inventory.hideHistory") : t("inventory.history")}
+          </Text>
+        </Pressable>
+      </View>
+      {historyOpen ? (
+        <>
+          <Text className="text-base font-extrabold text-ink">{t("inventory.recentMovement")}</Text>
+          {movementsLoading ? (
+            <Card className="flex-row items-center gap-3 border-border bg-card">
+              <ActivityIndicator color="#244734" />
+              <Text className="text-sm font-semibold text-muted">{t("inventory.loading")}</Text>
+            </Card>
+          ) : movements.length === 0 ? (
+            <Card className="border-border bg-card">
+              <Text className="text-sm font-semibold text-muted">{t("inventory.noRecentMovement")}</Text>
+            </Card>
+          ) : (
+            movements.map((movement) => {
+              const movementItemName = getLocalizedItemName(
+                language,
+                movement.inventory_item_name,
+                movement.inventory_item_tamil_name,
+              );
+              const isAdd = movement.movement_type === InventoryMovementType.ADD;
+              const movementLabel = isAdd
+                ? t("inventory.movementAdded")
+                : t("inventory.movementUsedFor", {
+                    categoryName: movement.category_name ?? t("inventory.unknownCategory"),
+                  });
+              return (
+                <Card key={movement.id} className="flex-row items-center gap-3">
+                  <MaterialCommunityIcons
+                    name={isAdd ? "plus-circle-outline" : "minus-circle-outline"}
+                    size={22}
+                    color={isAdd ? "#168A5B" : "#9F4335"}
+                  />
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-sm font-extrabold text-ink" numberOfLines={1}>
+                      {movementItemName}
+                    </Text>
+                    <Text className="mt-0.5 text-xs font-semibold text-muted" numberOfLines={1}>
+                      {movementLabel} · {formatQuantity(movement.quantity, movement.unit)}
+                    </Text>
+                    <Text className="mt-0.5 text-[11px] font-semibold text-muted">
+                      {formatDateTime(movement.created_at)}
+                    </Text>
+                  </View>
+                </Card>
+              );
+            })
+          )}
+        </>
+      ) : null}
+    </View>
+  );
+
   return (
     <View className="flex-1 bg-cream">
       <Screen scroll={false}>
-        <ScrollView
+        <FlatList
+          data={items}
+          keyExtractor={(item) => item.id}
+          renderItem={renderInventoryRow}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void loadInventory(true)} tintColor="#244734" colors={["#244734"]} />
+            <RefreshControl refreshing={refreshing} onRefresh={refreshInventory} tintColor="#244734" colors={["#244734"]} />
           }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 28, gap: 14 }}
-        >
-          {errorMessage ? (
-            <Card className="border-[#9F4335] bg-[#FFF2EF]">
-              <Text className="text-sm font-semibold text-[#9F4335]">{errorMessage}</Text>
-            </Card>
-          ) : null}
-          {summary?.shop_name ? (
-            <View className="rounded-[14px] border border-border bg-card px-4 py-3">
-              <Text className="text-xs font-extrabold uppercase tracking-[1px] text-muted">
-                {t("inventory.branchName", { branchName: summary.shop_name })}
-              </Text>
-            </View>
-          ) : null}
-
-          {sortedItems.length === 0 ? (
-            <EmptyState title={t("inventory.emptyTitle")} description={t("inventory.emptyDescription")} />
-          ) : (
+          ListHeaderComponent={(
             <>
-              {sortedItems.map((item) => {
-                const itemName = getLocalizedItemName(language, item.name, item.tamil_name);
-                return (
-                  <Card key={item.id} className="gap-4">
-                    <View className="flex-row gap-3">
-                      <ItemThumbnail
-                        uri={getItemThumbnailUri(item)}
-                        recyclingKey={item.id}
-                        size={58}
-                        borderRadius={14}
-                        backgroundColor="#F4F7F2"
-                        icon="warehouse"
-                        iconColor="#6C7A70"
-                      />
-                      <View className="min-w-0 flex-1">
-                        <Text className="text-base font-extrabold text-ink" numberOfLines={2}>{itemName}</Text>
-                        <Text className="mt-1 text-sm font-semibold text-muted">
-                          {formatQuantity(item.available_quantity, item.base_unit)} {t("inventory.available")}
-                        </Text>
-                        <Text className="mt-1 text-xs font-semibold text-muted">
-                          {t("inventory.used")} {formatQuantity(item.used_quantity, item.base_unit)}
-                        </Text>
-                      </View>
-                    </View>
-                    <View className="flex-row gap-2">
-                      <Button
-                        label={t("inventory.addStock")}
-                        onPress={() => openMovement(item, InventoryMovementType.ADD)}
-                        className="flex-1"
-                      />
-                      <Button
-                        label={t("inventory.useStock")}
-                        onPress={() => openMovement(item, InventoryMovementType.USE)}
-                        variant="secondary"
-                        disabled={item.category_usage.length === 0}
-                        className="flex-1"
-                      />
-                    </View>
-                    <View className="gap-2 border-t border-border/70 pt-3">
-                      {item.category_usage.map((category) => (
-                        <View key={category.category_id} className="flex-row items-center justify-between gap-3">
-                          <Text className="min-w-0 flex-1 text-sm font-semibold text-ink" numberOfLines={1}>
-                            {category.category_name}
-                          </Text>
-                          <Text className="text-xs font-semibold text-muted">
-                            {t("inventory.used")} {formatQuantity(category.used_quantity, item.base_unit)}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </Card>
-                );
-              })}
-
-              <View className="gap-3 pt-1">
-                <View className="w-full items-center">
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded: historyOpen }}
-                    onPress={() => setHistoryOpen((current) => !current)}
-                    className="flex-row items-center justify-center gap-2"
-                    style={{
-                      width: "100%",
-                      minHeight: 52,
-                      borderWidth: 1,
-                      borderRadius: 14,
-                      paddingHorizontal: 22,
-                      backgroundColor: historyOpen ? "#FFFFFF" : HISTORY_BUTTON_GREEN,
-                      borderColor: HISTORY_BUTTON_GREEN,
-                    }}
-                  >
-                    <MaterialCommunityIcons
-                      name={historyOpen ? "chevron-up" : "history"}
-                      size={20}
-                      color={historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF"}
-                    />
-                    <Text
-                      className="text-sm font-extrabold"
-                      style={{ color: historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF" }}
-                    >
-                      {historyOpen ? t("inventory.hideHistory") : t("inventory.history")}
-                    </Text>
-                  </Pressable>
+              {errorMessage ? (
+                <Card className="border-[#9F4335] bg-[#FFF2EF]">
+                  <Text className="text-sm font-semibold text-[#9F4335]">{errorMessage}</Text>
+                </Card>
+              ) : null}
+              {shopName ? (
+                <View className="rounded-[14px] border border-border bg-card px-4 py-3">
+                  <Text className="text-xs font-extrabold uppercase tracking-[1px] text-muted">
+                    {t("inventory.branchName", { branchName: shopName })}
+                  </Text>
                 </View>
-                {historyOpen ? (
-                  <>
-                    <Text className="text-base font-extrabold text-ink">{t("inventory.recentMovement")}</Text>
-                    {movements.length === 0 ? (
-                      <Card className="border-border bg-card">
-                        <Text className="text-sm font-semibold text-muted">{t("inventory.noRecentMovement")}</Text>
-                      </Card>
-                    ) : (
-                      movements.map((movement) => {
-                        const movementItemName = getLocalizedItemName(
-                          language,
-                          movement.inventory_item_name,
-                          movement.inventory_item_tamil_name,
-                        );
-                        const isAdd = movement.movement_type === InventoryMovementType.ADD;
-                        const movementLabel = isAdd
-                          ? t("inventory.movementAdded")
-                          : t("inventory.movementUsedFor", {
-                              categoryName: movement.category_name ?? t("inventory.unknownCategory"),
-                            });
-                        return (
-                          <Card key={movement.id} className="flex-row items-center gap-3">
-                            <MaterialCommunityIcons
-                              name={isAdd ? "plus-circle-outline" : "minus-circle-outline"}
-                              size={22}
-                              color={isAdd ? "#168A5B" : "#9F4335"}
-                            />
-                            <View className="min-w-0 flex-1">
-                              <Text className="text-sm font-extrabold text-ink" numberOfLines={1}>
-                                {movementItemName}
-                              </Text>
-                              <Text className="mt-0.5 text-xs font-semibold text-muted" numberOfLines={1}>
-                                {movementLabel} · {formatQuantity(movement.quantity, movement.unit)}
-                              </Text>
-                              <Text className="mt-0.5 text-[11px] font-semibold text-muted">
-                                {formatDateTime(movement.created_at)}
-                              </Text>
-                            </View>
-                          </Card>
-                        );
-                      })
-                    )}
-                  </>
-                ) : null}
-              </View>
+              ) : null}
             </>
           )}
-        </ScrollView>
+          ListEmptyComponent={
+            !loading ? (
+              <EmptyState title={t("inventory.emptyTitle")} description={t("inventory.emptyDescription")} />
+            ) : null
+          }
+          ListFooterComponent={renderInventoryFooter}
+          onEndReached={() => void loadMoreInventory()}
+          onEndReachedThreshold={0.35}
+        />
       </Screen>
 
       <Modal visible={Boolean(selectedItem)} animationType="fade" transparent onRequestClose={closeMovement}>

@@ -4,7 +4,7 @@ import { AnalyticsPeriod, BaseUnit, type ShopRead } from "@/types/api";
 import { money } from "@/utils/decimal";
 import { formatDate } from "@/utils/format";
 
-export type AdminNavTab = "dashboard" | "billing" | "items" | "sales" | "inventory" | "settings";
+export type AdminNavTab = "dashboard" | "billing" | "items" | "sales" | "inventory" | "expenses" | "settings";
 export type SectionKey = AdminNavTab;
 export type AnalyticsSectionKey = "sales" | "billing" | "settings";
 export type LogSeverity = "info" | "warning" | "error" | "critical";
@@ -25,6 +25,7 @@ export const NAV_ITEMS: { key: AdminNavTab; label: string; icon: string }[] = [
   { key: "billing", label: "Billing", icon: "receipt-text-outline" },
   { key: "items", label: "Items", icon: "playlist-edit" },
   { key: "inventory", label: "Inventory", icon: "warehouse" },
+  { key: "expenses", label: "Expenses", icon: "cash-minus" },
   { key: "settings", label: "Settings", icon: "cog-outline" },
 ];
 

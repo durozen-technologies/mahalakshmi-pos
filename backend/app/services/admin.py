@@ -2747,6 +2747,29 @@ async def get_bill_by_id(db: AsyncSession, bill_id: UUID) -> BillRead:
     return _bill_to_read(bill)
 
 
+async def get_bills_by_ids(db: AsyncSession, bill_ids: list[UUID]) -> list[BillRead]:
+    unique_bill_ids = list(dict.fromkeys(bill_ids))
+    result = await db.execute(
+        select(Bill)
+        .join(Bill.shop)
+        .outerjoin(Bill.payment)
+        .outerjoin(Bill.receipt)
+        .options(
+            contains_eager(Bill.shop),
+            contains_eager(Bill.payment),
+            contains_eager(Bill.receipt),
+            selectinload(Bill.items).joinedload(BillItem.item),
+        )
+        .where(Bill.id.in_(unique_bill_ids))
+    )
+    bills = result.unique().scalars().all()
+    bills_by_id = {bill.id: bill for bill in bills}
+    missing_bill_ids = [bill_id for bill_id in unique_bill_ids if bill_id not in bills_by_id]
+    if missing_bill_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bill not found")
+    return [_bill_to_read(bills_by_id[bill_id]) for bill_id in bill_ids]
+
+
 async def get_shop_sales_summary(
     db: AsyncSession,
     period: AnalyticsPeriod = "date",

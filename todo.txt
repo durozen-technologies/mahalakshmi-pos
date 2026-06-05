@@ -235,3 +235,82 @@ Let us take senario:
 
 
 Note: Don't collapse with other freature items, and other stuffs, Do it a standard alone feature.
+
+
+=================================================================================================================
+
+I want to add a freature in Admin side to the greneration of the report:
+- Add to button in admin settings page below the  create new Branch
+- It want to navigate to new page.
+- And want to select the branched or all branched, use top nav bar option to select day, range, week, month, year.
+- Show the option to select which pdf report be generated. (can select multiple options).
+- option:
+  -sales
+  -billing
+  -items
+  -inventry
+Note: Do it in optimizred way, have to give best performance. 
+
+
+======================================================================================================================
+
+# Independent Expenses Feature Plan
+
+## Summary
+
+Create Expenses as a completely separate domain from billing Items. Do not reuse `items`, `item_categories`, `shop_item_allocations`, daily prices, billing item APIs, item images, or checkout logic.
+
+Admins manage independent expense items and allocate them to shop branches. Shops record rupee expense amounts only against admin-allocated expense items. Admin and shop can view expense history from a History button.
+
+## Key Changes
+
+- Backend:
+  - Add independent tables:
+    - `expense_items`: `id`, `name`, `tamil_name`, `sort_order`, `is_active`, timestamps.
+    - `shop_expense_allocations`: `shop_id`, `expense_item_id`, `is_active`, `sort_order`, timestamps.
+    - `expense_entries`: `shop_id`, `expense_item_id`, snapshot `expense_name`, `expense_tamil_name`, `amount`, `spent_at`, optional `note`, timestamps.
+  - Add independent expense schemas and service module, e.g. `schemas/expenses.py`, `services/expenses.py`.
+  - Add admin expense endpoints under `/api/v1/admin/expenses`.
+  - Add shop expense endpoints under `/api/v1/shop/expenses`.
+  - Add branch allocation and drag-sort endpoint:
+    - `PUT /api/v1/admin/shops/{shop_id}/expense-items/order`
+    - Request `{ expense_item_ids: UUID[] }`.
+  - Expense history is paginated and date-filtered.
+  - No dependency on item price, billing item, item image, or item category code paths.
+
+- Frontend:
+  - Add independent expense types and API functions, preferably `frontend/src/api/expenses.ts`.
+  - Add Admin Expenses screen reachable from admin bottom nav.
+  - Admin Expenses screen has:
+    - Expense item management.
+    - Branch allocation.
+    - Drag-and-drop branch allocation ordering.
+    - History button/view.
+  - Add Shop Expenses screen reachable from shop navigation.
+  - Shop Expenses screen has:
+    - Allocated expense item list in admin-defined order.
+    - Amount entry in rupees.
+    - History button/view.
+  - Do not reuse item editor UI where it would expose item-only concepts like price, unit, image, category, or billing status.
+
+## Test Plan
+
+- Backend:
+  - Admin creates/updates expense items independently from billing items.
+  - Duplicate expense names are validated within expense items only.
+  - Admin allocates expense items to branches.
+  - Admin drag-sort updates only `shop_expense_allocations.sort_order`.
+  - Shop can record expenses only for active allocated expense items.
+  - Admin/shop history shows correct scoped expense entries.
+- Frontend:
+  - `cd frontend && npm run typecheck`.
+  - Verify Expenses UI has no price/unit/image/category fields.
+  - Verify drag order persists and shop sees same order.
+  - Verify shop entry appears in both shop and admin history.
+
+## Assumptions
+
+- Expenses are a standalone module.
+- There is no database relationship between `expense_items` and billing `items`.
+- Expense amount is entered by shop per entry.
+- Admin controls which expense items each branch can use.

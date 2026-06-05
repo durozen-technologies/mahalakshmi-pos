@@ -44,8 +44,11 @@ from app.services.inventory import (
     delete_inventory_category,
     delete_inventory_item as delete_inventory_management_item,
     get_inventory_summary,
+    count_inventory_items,
+    list_inventory_item_rows,
     list_inventory_items,
     list_inventory_movements,
+    list_inventory_stock_rows,
     update_inventory_item as update_inventory_management_item,
     update_shop_inventory_allocation,
     use_shop_inventory_stock,
@@ -185,6 +188,32 @@ class ServiceUnitTests(BackendTestCase):
                 item_storage.settings.rustfs_bucket_name,
             ) = original_values
 
+    def test_stored_image_stream_iterator_closes_body(self) -> None:
+        class Body:
+            def __init__(self) -> None:
+                self.closed = False
+                self.remaining = [b"ab", b"cd", b""]
+
+            def read(self, chunk_size: int) -> bytes:
+                assert chunk_size > 0
+                return self.remaining.pop(0)
+
+            def close(self) -> None:
+                self.closed = True
+
+        body = Body()
+        payload = item_storage.StoredImageStreamPayload(
+            body=body,
+            content_type="image/jpeg",
+            object_key="items/chicken/original/image.jpg",
+            etag='"stream-etag"',
+            last_modified=datetime(2026, 5, 31, tzinfo=UTC),
+            cache_control=item_storage.PROXY_IMAGE_CACHE_CONTROL,
+        )
+
+        self.assertEqual(list(item_storage.iter_stored_image_stream(payload)), [b"ab", b"cd"])
+        self.assertTrue(body.closed)
+
     def test_inventory_management_ledger_rules(self) -> None:
         _actor, shop = self.run_async(self.harness.create_shop_user())
 
@@ -248,18 +277,23 @@ class ServiceUnitTests(BackendTestCase):
                 self.assertEqual(allocation.allocated_count, 1)
                 self.assertEqual(allocation.already_allocated_count, 0)
 
-                await add_shop_inventory_stock(
+                add_result = await add_shop_inventory_stock(
                     db,
                     current_shop,
                     item.id,
                     InventoryAddRequest(quantity=Decimal("10")),
                 )
-                await use_shop_inventory_stock(
+                self.assertIsNone(add_result.summary)
+                self.assertEqual(add_result.item.available_quantity, Decimal("10.000"))
+
+                use_result = await use_shop_inventory_stock(
                     db,
                     current_shop,
                     item.id,
                     InventoryUseRequest(category_id=category_a.id, quantity=Decimal("3")),
                 )
+                self.assertIsNone(use_result.summary)
+                self.assertEqual(use_result.item.available_quantity, Decimal("7.000"))
 
                 summary = await get_inventory_summary(db, current_shop)
                 stock_item = next(row for row in summary.items if row.id == item.id)
@@ -461,7 +495,8 @@ class ServiceUnitTests(BackendTestCase):
                 )
 
                 self.assertEqual(len(result.movements), 2)
-                stock_item = next(row for row in result.summary.items if row.id == item.id)
+                self.assertIsNone(result.summary)
+                stock_item = result.item
                 self.assertEqual(stock_item.available_quantity, Decimal("5.000"))
                 self.assertEqual(stock_item.used_quantity, Decimal("5.000"))
                 usage_by_category = {
@@ -475,6 +510,205 @@ class ServiceUnitTests(BackendTestCase):
                     usage_by_category[category_b.id].used_quantity,
                     Decimal("3.000"),
                 )
+
+        self.run_async(scenario())
+
+    def test_inventory_mutation_can_include_full_summary(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Summary Mode")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Summary Stock",
+                        tamil_name="சுருக்க சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [item.id])
+
+                result = await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("2")),
+                    include_summary=True,
+                )
+
+                self.assertIsNotNone(result.summary)
+                self.assertEqual(result.item.available_quantity, Decimal("2.000"))
+                summary_item = next(row for row in result.summary.items if row.id == item.id)
+                self.assertEqual(summary_item.available_quantity, Decimal("2.000"))
+
+        self.run_async(scenario())
+
+    def test_inventory_item_rows_page_and_counts(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Paged Category")
+                )
+                alpha = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Paged Alpha",
+                        tamil_name="பக்கம் அ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=10,
+                        category_ids=[category.id],
+                    ),
+                )
+                beta = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Paged Beta",
+                        tamil_name="பக்கம் ஆ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=20,
+                        category_ids=[category.id],
+                    ),
+                )
+                await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Paged Paused",
+                        tamil_name="பக்கம் நிறுத்தம்",
+                        unit_type=UnitType.COUNT,
+                        base_unit=BaseUnit.UNIT,
+                        sort_order=30,
+                        is_active=False,
+                    ),
+                )
+
+                first_page = await list_inventory_item_rows(db, q="Paged", limit=1)
+                self.assertEqual([item.id for item in first_page.items], [alpha.id])
+                self.assertTrue(first_page.has_more)
+                self.assertEqual(first_page.items[0].category_ids, [category.id])
+                self.assertEqual(first_page.items[0].categories[0].name, "Paged Category")
+
+                second_page = await list_inventory_item_rows(
+                    db,
+                    q="Paged",
+                    limit=1,
+                    cursor_sort_order=first_page.next_cursor_sort_order,
+                    cursor_name=first_page.next_cursor_name,
+                    cursor_id=first_page.next_cursor_id,
+                )
+                self.assertEqual([item.id for item in second_page.items], [beta.id])
+
+                all_counts = await count_inventory_items(db, q="Paged")
+                self.assertEqual(all_counts.all, 3)
+                self.assertEqual(all_counts.active, 2)
+                self.assertEqual(all_counts.paused, 1)
+
+                active_counts = await count_inventory_items(db, q="Paged", active=True)
+                self.assertEqual(active_counts.all, 2)
+                self.assertEqual(active_counts.active, 2)
+                self.assertEqual(active_counts.paused, 0)
+
+        self.run_async(scenario())
+
+    def test_inventory_stock_rows_page_admin_and_shop_views(self) -> None:
+        _actor, shop = self.run_async(
+            self.harness.create_shop_user(username="stock-row-shop", shop_name="Stock Row Shop")
+        )
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Stock Row Category")
+                )
+                alpha = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Stock Row Alpha",
+                        tamil_name="சரக்கு வரிசை அ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=10,
+                        category_ids=[category.id],
+                    ),
+                )
+                beta = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Stock Row Beta",
+                        tamil_name="சரக்கு வரிசை ஆ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=20,
+                        category_ids=[category.id],
+                    ),
+                )
+                gamma = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Stock Row Gamma",
+                        tamil_name="சரக்கு வரிசை இ",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=30,
+                        category_ids=[category.id],
+                    ),
+                )
+
+                await allocate_shop_inventory_items(db, current_shop, [alpha.id, beta.id])
+                await update_shop_inventory_allocation(db, current_shop, beta.id, is_active=False)
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    alpha.id,
+                    InventoryAddRequest(quantity=Decimal("4")),
+                )
+
+                first_page = await list_inventory_stock_rows(
+                    db,
+                    current_shop,
+                    q="Stock Row",
+                    include_unallocated=True,
+                    limit=2,
+                )
+                self.assertEqual([item.id for item in first_page.items], [alpha.id, beta.id])
+                self.assertTrue(first_page.has_more)
+                self.assertTrue(first_page.items[0].allocated)
+                self.assertEqual(first_page.items[0].available_quantity, Decimal("4.000"))
+                self.assertEqual(first_page.items[0].category_ids, [category.id])
+                self.assertFalse(first_page.items[1].allocation_active)
+
+                second_page = await list_inventory_stock_rows(
+                    db,
+                    current_shop,
+                    q="Stock Row",
+                    include_unallocated=True,
+                    limit=2,
+                    cursor_sort_order=first_page.next_cursor_sort_order,
+                    cursor_name=first_page.next_cursor_name,
+                    cursor_id=first_page.next_cursor_id,
+                )
+                self.assertEqual([item.id for item in second_page.items], [gamma.id])
+                self.assertFalse(second_page.has_more)
+                self.assertFalse(second_page.items[0].allocated)
+
+                shop_page = await list_inventory_stock_rows(
+                    db,
+                    current_shop,
+                    active_allocations_only=True,
+                    limit=10,
+                )
+                self.assertEqual([item.id for item in shop_page.items], [alpha.id])
 
         self.run_async(scenario())
 
@@ -635,8 +869,6 @@ class ServiceUnitTests(BackendTestCase):
         regenerated_thumbnail_key = "items/chicken/thumb/regenerated.jpg"
 
         async def fake_download_object(object_key, *, fallback_content_type=None):
-            if object_key == missing_thumbnail_key:
-                raise item_storage.StoredImageObjectNotFoundError(object_key)
             self.assertEqual(object_key, original_key)
             return item_storage.StoredImagePayload(
                 content=_square_image_bytes(400, "JPEG"),
@@ -646,6 +878,10 @@ class ServiceUnitTests(BackendTestCase):
                 last_modified=datetime(2026, 5, 31, tzinfo=UTC),
                 cache_control=item_storage.PROXY_IMAGE_CACHE_CONTROL,
             )
+
+        async def fake_stream_object(object_key, *, fallback_content_type=None):
+            self.assertEqual(object_key, missing_thumbnail_key)
+            raise item_storage.StoredImageObjectNotFoundError(object_key)
 
         async def fake_upload_bytes(**kwargs):
             self.assertEqual(kwargs["variant"], "thumb")
@@ -661,6 +897,7 @@ class ServiceUnitTests(BackendTestCase):
                 session.commit()
 
                 with (
+                    patch.object(item_storage, "_stream_object", fake_stream_object),
                     patch.object(item_storage, "_download_object", fake_download_object),
                     patch.object(item_storage, "_upload_bytes", fake_upload_bytes),
                 ):
@@ -689,7 +926,7 @@ class ServiceUnitTests(BackendTestCase):
         original_key = "items/chicken/original/missing.jpg"
         thumbnail_key = "items/chicken/thumb/stale.jpg"
 
-        async def fake_download_object(object_key, *, fallback_content_type=None):
+        async def fake_stream_object(object_key, *, fallback_content_type=None):
             raise item_storage.StoredImageObjectNotFoundError(object_key)
 
         async def scenario() -> None:
@@ -702,7 +939,7 @@ class ServiceUnitTests(BackendTestCase):
                 session.commit()
 
                 with (
-                    patch.object(item_storage, "_download_object", fake_download_object),
+                    patch.object(item_storage, "_stream_object", fake_stream_object),
                     self.assertRaises(HTTPException) as ctx,
                 ):
                     await item_storage.get_item_image_response_payload(

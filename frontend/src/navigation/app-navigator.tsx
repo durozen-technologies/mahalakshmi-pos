@@ -80,6 +80,12 @@ const getAdminItemCategoriesScreen = () =>
   require("@/screens/admin/admin-item-categories-screen").AdminItemCategoriesScreen;
 const getAdminInventoryScreen = () =>
   require("@/screens/admin/admin-inventory-screen").AdminInventoryScreen;
+const getAdminReportsScreen = () =>
+  require("@/screens/admin/admin-reports-screen").AdminReportsScreen;
+const getAdminExpensesScreen = () =>
+  require("@/screens/admin/admin-expenses-screen").AdminExpensesScreen;
+const getAdminShopExpensesOrderScreen = () =>
+  require("@/screens/admin/admin-shop-expenses-order-screen").AdminShopExpensesOrderScreen;
 const getAdminInventoryItemEditorScreen = () =>
   require("@/screens/admin/admin-inventory-item-editor-screen").AdminInventoryItemEditorScreen;
 const getAdminItemEditorScreen = () =>
@@ -90,6 +96,8 @@ const getCheckoutScreen = () =>
   require("@/screens/shop/checkout-screen").CheckoutScreen;
 const getInventoryManagementScreen = () =>
   require("@/screens/shop/inventory-management-screen").InventoryManagementScreen;
+const getShopExpensesScreen = () =>
+  require("@/screens/shop/expenses-screen").ShopExpensesScreen;
 const getPrinterSetupScreen = () =>
   require("@/screens/shop/printer-setup-screen").PrinterSetupScreen;
 
@@ -362,6 +370,21 @@ function AdminStack() {
         options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen
+        name="AdminReports"
+        getComponent={getAdminReportsScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminExpenses"
+        getComponent={getAdminExpensesScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminShopExpensesOrder"
+        getComponent={getAdminShopExpensesOrderScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
         name="AdminInventoryItemEditor"
         getComponent={getAdminInventoryItemEditorScreen}
         options={HEADER_HIDDEN_OPTIONS}
@@ -396,6 +419,10 @@ function ShopStack() {
   );
   const renderInventoryHeaderTitle = useCallback(
     () => <AnimatedHeaderTitle titleKey="header.inventory" shopName={shopName} />,
+    [shopName]
+  );
+  const renderExpensesHeaderTitle = useCallback(
+    () => <AnimatedHeaderTitle titleKey="header.expenses" shopName={shopName} />,
     [shopName]
   );
   const renderHeaderActions = useCallback(
@@ -442,6 +469,14 @@ function ShopStack() {
         getComponent={getInventoryManagementScreen}
         options={{
           headerTitle: renderInventoryHeaderTitle,
+          headerRight: renderHeaderActions,
+        }}
+      />
+      <Stack.Screen
+        name="ShopExpenses"
+        getComponent={getShopExpensesScreen}
+        options={{
+          headerTitle: renderExpensesHeaderTitle,
           headerRight: renderHeaderActions,
         }}
       />

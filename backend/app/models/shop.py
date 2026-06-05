@@ -34,3 +34,9 @@ class Shop(Base, BaseModelMixin):
     inventory_movements = relationship(
         "InventoryMovement", back_populates="shop", cascade="all, delete-orphan"
     )
+    expense_allocations = relationship(
+        "ShopExpenseAllocation", back_populates="shop", cascade="all, delete-orphan"
+    )
+    expense_entries = relationship(
+        "ExpenseEntry", back_populates="shop", cascade="all, delete-orphan"
+    )

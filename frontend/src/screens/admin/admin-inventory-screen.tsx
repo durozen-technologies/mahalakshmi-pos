@@ -3,7 +3,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -21,13 +23,14 @@ import {
   deleteInventoryItem,
   fetchAdminInventoryMovements,
   fetchInventoryCategories,
-  fetchInventoryItems,
-  fetchShopInventoryAllocations,
+  fetchInventoryItemCounts,
+  fetchInventoryItemRows,
+  fetchShopInventoryAllocationRows,
   fetchShops,
   updateInventoryCategory,
   updateShopInventoryAllocation,
 } from "@/api/admin";
-import { toApiError } from "@/api/client";
+import { isApiRequestCanceled, toApiError } from "@/api/client";
 import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import {
   BaseUnit,
@@ -36,7 +39,6 @@ import {
   type InventoryItemRead,
   type InventoryItemStockRead,
   type InventoryMovementRead,
-  type InventorySummaryRead,
   type ShopRead,
   type UUID,
 } from "@/types/api";
@@ -50,6 +52,20 @@ import { useAdminTheme } from "./use-admin-theme";
 import type { AdminInventoryScreenProps } from "@/navigation/types";
 
 type InventoryTab = "items" | "categories" | "shops";
+const INVENTORY_ITEM_PAGE_SIZE = 50;
+const INVENTORY_STOCK_PAGE_SIZE = 50;
+
+type InventoryCursor = {
+  sortOrder: number | null;
+  name: string | null;
+  id: UUID | null;
+};
+
+const EMPTY_INVENTORY_CURSOR: InventoryCursor = {
+  sortOrder: null,
+  name: null,
+  id: null,
+};
 
 function getRequestMessage(error: unknown, fallback: string) {
   return toApiError(error).message || fallback;
@@ -64,25 +80,26 @@ function formatInventoryQuantity(value: string | number, unit: BaseUnit) {
 }
 
 function markInventoryItemAllocated(
-  summary: InventorySummaryRead | null,
+  items: InventoryItemStockRead[],
   itemId: UUID,
-): InventorySummaryRead | null {
-  if (!summary) {
-    return summary;
-  }
-  return {
-    ...summary,
-    items: summary.items.map((item) =>
-      item.id === itemId
-        ? {
-            ...item,
-            allocated: true,
-            allocation_active: item.is_active,
-            allocation_sort_order: item.allocation_sort_order ?? item.sort_order,
-          }
-        : item,
-    ),
-  };
+) {
+  return items.map((item) =>
+    item.id === itemId
+      ? {
+          ...item,
+          allocated: true,
+          allocation_active: item.is_active,
+          allocation_sort_order: item.allocation_sort_order ?? item.sort_order,
+        }
+      : item,
+  );
+}
+
+function patchStockItem(
+  items: InventoryItemStockRead[],
+  changedItem: InventoryItemStockRead,
+) {
+  return items.map((item) => (item.id === changedItem.id ? changedItem : item));
 }
 
 export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreenProps) {
@@ -94,12 +111,24 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const [shops, setShops] = useState<ShopRead[]>([]);
   const [selectedShopId, setSelectedShopId] = useState<UUID | null>(route.params?.shopId ?? null);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
-  const [summary, setSummary] = useState<InventorySummaryRead | null>(null);
+  const [stockItems, setStockItems] = useState<InventoryItemStockRead[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockLoadingMore, setStockLoadingMore] = useState(false);
+  const [stockHasMore, setStockHasMore] = useState(false);
+  const [stockCursor, setStockCursor] = useState<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
+  const [stockLoadedShopId, setStockLoadedShopId] = useState<UUID | null>(null);
   const [movements, setMovements] = useState<InventoryMovementRead[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementsLoadedShopId, setMovementsLoadedShopId] = useState<UUID | null>(null);
   const [movementHistoryOpen, setMovementHistoryOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [itemsLoading, setItemsLoading] = useState(true);
+  const [itemsLoadingMore, setItemsLoadingMore] = useState(false);
+  const [itemsHasMore, setItemsHasMore] = useState(false);
+  const [itemsTotalCount, setItemsTotalCount] = useState(0);
+  const [itemsCursor, setItemsCursor] = useState<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [baseReloadKey, setBaseReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -111,11 +140,161 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const debouncedSearchRef = useRef("");
   const loadedItemsQueryRef = useRef<string | null>(null);
+  const itemsAbortRef = useRef<AbortController | null>(null);
+  const itemsRequestIdRef = useRef(0);
+  const itemsCursorRef = useRef<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
+  const itemsHasMoreRef = useRef(false);
+  const itemsLoadingRef = useRef(true);
+  const itemsLoadingMoreRef = useRef(false);
+  const stockAbortRef = useRef<AbortController | null>(null);
+  const stockRequestIdRef = useRef(0);
+  const stockCursorRef = useRef<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
+  const stockHasMoreRef = useRef(false);
+  const stockLoadingRef = useRef(false);
+  const stockLoadingMoreRef = useRef(false);
+  const stockLoadedShopIdRef = useRef<UUID | null>(null);
+  const movementsLoadingRef = useRef(false);
+  const movementsLoadedShopIdRef = useRef<UUID | null>(null);
 
   const selectedShop = useMemo(
     () => shops.find((shop) => shop.id === selectedShopId) ?? null,
     [selectedShopId, shops],
   );
+
+  useEffect(() => {
+    itemsCursorRef.current = itemsCursor;
+  }, [itemsCursor]);
+
+  useEffect(() => {
+    itemsHasMoreRef.current = itemsHasMore;
+  }, [itemsHasMore]);
+
+  useEffect(() => {
+    itemsLoadingRef.current = itemsLoading;
+  }, [itemsLoading]);
+
+  useEffect(() => {
+    itemsLoadingMoreRef.current = itemsLoadingMore;
+  }, [itemsLoadingMore]);
+
+  useEffect(() => {
+    stockCursorRef.current = stockCursor;
+  }, [stockCursor]);
+
+  useEffect(() => {
+    stockHasMoreRef.current = stockHasMore;
+  }, [stockHasMore]);
+
+  useEffect(() => {
+    stockLoadingRef.current = stockLoading;
+  }, [stockLoading]);
+
+  useEffect(() => {
+    stockLoadingMoreRef.current = stockLoadingMore;
+  }, [stockLoadingMore]);
+
+  useEffect(() => {
+    stockLoadedShopIdRef.current = stockLoadedShopId;
+  }, [stockLoadedShopId]);
+
+  useEffect(() => {
+    movementsLoadingRef.current = movementsLoading;
+  }, [movementsLoading]);
+
+  useEffect(() => {
+    movementsLoadedShopIdRef.current = movementsLoadedShopId;
+  }, [movementsLoadedShopId]);
+
+  const loadInventoryRows = useCallback(async ({
+    append = false,
+  }: {
+    append?: boolean;
+  } = {}) => {
+    if (
+      append &&
+      (!itemsHasMoreRef.current || itemsLoadingMoreRef.current || itemsLoadingRef.current)
+    ) {
+      return;
+    }
+
+    itemsAbortRef.current?.abort();
+    const controller = new AbortController();
+    itemsAbortRef.current = controller;
+    const requestId = ++itemsRequestIdRef.current;
+    const inventorySearch = debouncedSearchRef.current.trim();
+
+    if (append) {
+      itemsLoadingMoreRef.current = true;
+      setItemsLoadingMore(true);
+    } else {
+      itemsLoadingRef.current = true;
+      setItemsLoading(true);
+    }
+    setErrorMessage(null);
+
+    try {
+      const rowParams = {
+        q: inventorySearch || undefined,
+        limit: INVENTORY_ITEM_PAGE_SIZE,
+        cursor_sort_order: append ? itemsCursorRef.current.sortOrder : undefined,
+        cursor_name: append ? itemsCursorRef.current.name : undefined,
+        cursor_id: append ? itemsCursorRef.current.id : undefined,
+      };
+      const [page, counts] = await Promise.all([
+        fetchInventoryItemRows(rowParams, { signal: controller.signal }),
+        append
+          ? Promise.resolve(null)
+          : fetchInventoryItemCounts(
+              { q: inventorySearch || undefined },
+              { signal: controller.signal },
+            ),
+      ]);
+
+      if (controller.signal.aborted || requestId !== itemsRequestIdRef.current) {
+        return;
+      }
+
+      setItems((currentItems) => {
+        if (!append) {
+          return page.items;
+        }
+        const existingIds = new Set(currentItems.map((item) => item.id));
+        return [...currentItems, ...page.items.filter((item) => !existingIds.has(item.id))];
+      });
+      setItemsHasMore(page.has_more);
+      const nextCursor = {
+        sortOrder: page.next_cursor_sort_order ?? null,
+        name: page.next_cursor_name ?? null,
+        id: page.next_cursor_id ?? null,
+      };
+      itemsCursorRef.current = nextCursor;
+      setItemsCursor(nextCursor);
+      itemsHasMoreRef.current = page.has_more;
+      if (counts) {
+        setItemsTotalCount(counts.all);
+      } else if (!append) {
+        setItemsTotalCount(page.items.length);
+      }
+      loadedItemsQueryRef.current = inventorySearch;
+    } catch (error) {
+      if (isApiRequestCanceled(error)) {
+        return;
+      }
+      triggerHaptic();
+      setErrorMessage(getRequestMessage(error, append ? "Unable to load more inventory items." : "Unable to load inventory items."));
+    } finally {
+      if (itemsAbortRef.current === controller) {
+        itemsAbortRef.current = null;
+      }
+      if (requestId === itemsRequestIdRef.current) {
+        itemsLoadingRef.current = false;
+        itemsLoadingMoreRef.current = false;
+        setItemsLoading(false);
+        setItemsLoadingMore(false);
+      }
+    }
+  }, []);
+
   const loadBaseData = useCallback(async (refresh = false) => {
     if (refresh) {
       setRefreshing(true);
@@ -124,15 +303,11 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     }
     setErrorMessage(null);
     try {
-      const inventorySearch = debouncedSearchRef.current.trim();
-      const [nextCategories, nextItems, nextShops] = await Promise.all([
+      const [nextCategories, nextShops] = await Promise.all([
         fetchInventoryCategories(),
-        fetchInventoryItems(inventorySearch ? { q: inventorySearch } : undefined),
         fetchShops(),
       ]);
       setCategories(nextCategories);
-      setItems(nextItems);
-      loadedItemsQueryRef.current = inventorySearch;
       setShops(nextShops);
       setSelectedShopId((currentShopId) =>
         currentShopId && nextShops.some((shop) => shop.id === currentShopId)
@@ -140,11 +315,17 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           : nextShops[0]?.id ?? null,
       );
       if (nextShops.length === 0) {
-        setSummary(null);
+        setStockItems([]);
+        setStockLoadedShopId(null);
+        stockLoadedShopIdRef.current = null;
         setMovements([]);
+        setMovementsLoadedShopId(null);
       }
       setBaseLoaded(true);
       setBaseReloadKey((current) => current + 1);
+      stockLoadedShopIdRef.current = null;
+      setStockLoadedShopId(null);
+      void loadInventoryRows();
     } catch (error) {
       triggerHaptic();
       setErrorMessage(getRequestMessage(error, "Unable to load inventory."));
@@ -152,20 +333,120 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadInventoryRows]);
 
   const loadShopData = useCallback(async (shopId: UUID) => {
+    stockAbortRef.current?.abort();
+    const controller = new AbortController();
+    stockAbortRef.current = controller;
+    const requestId = ++stockRequestIdRef.current;
+    stockLoadingRef.current = true;
+    setStockLoading(true);
+    setStockLoadingMore(false);
     setErrorMessage(null);
     try {
-      const [nextSummary, nextMovements] = await Promise.all([
-        fetchShopInventoryAllocations(shopId),
-        fetchAdminInventoryMovements({ shop_id: shopId, limit: 100 }),
-      ]);
-      setSummary(nextSummary);
-      setMovements(nextMovements.items);
+      const page = await fetchShopInventoryAllocationRows(
+        shopId,
+        { limit: INVENTORY_STOCK_PAGE_SIZE },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || requestId !== stockRequestIdRef.current) {
+        return;
+      }
+      setStockItems(page.items);
+      setStockHasMore(page.has_more);
+      const nextCursor = {
+        sortOrder: page.next_cursor_sort_order ?? null,
+        name: page.next_cursor_name ?? null,
+        id: page.next_cursor_id ?? null,
+      };
+      stockCursorRef.current = nextCursor;
+      stockHasMoreRef.current = page.has_more;
+      stockLoadedShopIdRef.current = shopId;
+      setStockCursor(nextCursor);
+      setStockLoadedShopId(shopId);
     } catch (error) {
+      if (isApiRequestCanceled(error)) {
+        return;
+      }
       triggerHaptic();
       setErrorMessage(getRequestMessage(error, "Unable to load branch inventory."));
+    } finally {
+      if (stockAbortRef.current === controller) {
+        stockAbortRef.current = null;
+      }
+      if (requestId === stockRequestIdRef.current) {
+        stockLoadingRef.current = false;
+        stockLoadingMoreRef.current = false;
+        setStockLoading(false);
+        setStockLoadingMore(false);
+      }
+    }
+  }, []);
+
+  const loadMoreShopData = useCallback(async () => {
+    const shopId = stockLoadedShopIdRef.current;
+    if (
+      !shopId ||
+      !stockHasMoreRef.current ||
+      stockLoadingRef.current ||
+      stockLoadingMoreRef.current
+    ) {
+      return;
+    }
+    stockLoadingMoreRef.current = true;
+    setStockLoadingMore(true);
+    setErrorMessage(null);
+    try {
+      const page = await fetchShopInventoryAllocationRows(shopId, {
+        limit: INVENTORY_STOCK_PAGE_SIZE,
+        cursor_sort_order: stockCursorRef.current.sortOrder,
+        cursor_name: stockCursorRef.current.name,
+        cursor_id: stockCursorRef.current.id,
+      });
+      if (shopId !== stockLoadedShopIdRef.current) {
+        return;
+      }
+      setStockItems((currentItems) => {
+        const existingIds = new Set(currentItems.map((item) => item.id));
+        return [...currentItems, ...page.items.filter((item) => !existingIds.has(item.id))];
+      });
+      setStockHasMore(page.has_more);
+      const nextCursor = {
+        sortOrder: page.next_cursor_sort_order ?? null,
+        name: page.next_cursor_name ?? null,
+        id: page.next_cursor_id ?? null,
+      };
+      stockCursorRef.current = nextCursor;
+      stockHasMoreRef.current = page.has_more;
+      setStockCursor(nextCursor);
+    } catch (error) {
+      triggerHaptic();
+      setErrorMessage(getRequestMessage(error, "Unable to load more branch inventory."));
+    } finally {
+      stockLoadingMoreRef.current = false;
+      setStockLoadingMore(false);
+    }
+  }, []);
+
+  const loadMovements = useCallback(async (shopId: UUID) => {
+    if (movementsLoadingRef.current) {
+      return;
+    }
+    movementsLoadingRef.current = true;
+    setMovementsLoading(true);
+    setErrorMessage(null);
+    try {
+      const nextMovements = await fetchAdminInventoryMovements({ shop_id: shopId, limit: 30 });
+      setMovements(nextMovements.items);
+      movementsLoadedShopIdRef.current = shopId;
+      setMovementsLoadedShopId(shopId);
+    } catch (error) {
+      triggerHaptic();
+      setErrorMessage(getRequestMessage(error, "Unable to load movement history."));
+    } finally {
+      movementsLoadingRef.current = false;
+      setMovementsLoading(false);
     }
   }, []);
 
@@ -189,24 +470,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     if (!baseLoaded || loadedItemsQueryRef.current === debouncedSearch) {
       return;
     }
-    const controller = new AbortController();
-    void fetchInventoryItems(
-      debouncedSearch ? { q: debouncedSearch } : undefined,
-      { signal: controller.signal },
-    )
-      .then((nextItems) => {
-        loadedItemsQueryRef.current = debouncedSearch;
-        setItems(nextItems);
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        triggerHaptic();
-        setErrorMessage(getRequestMessage(error, "Unable to search inventory items."));
-      });
-    return () => controller.abort();
-  }, [baseLoaded, debouncedSearch]);
+    void loadInventoryRows();
+  }, [baseLoaded, debouncedSearch, loadInventoryRows]);
 
   useEffect(() => {
     setBranchDropdownOpen(false);
@@ -215,14 +480,34 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
 
   useEffect(() => {
     setMovementHistoryOpen(false);
+    setMovements([]);
+    movementsLoadedShopIdRef.current = null;
+    setMovementsLoadedShopId(null);
+    setStockItems([]);
+    stockCursorRef.current = EMPTY_INVENTORY_CURSOR;
+    stockHasMoreRef.current = false;
+    stockLoadedShopIdRef.current = null;
+    setStockCursor(EMPTY_INVENTORY_CURSOR);
+    setStockHasMore(false);
+    setStockLoadedShopId(null);
   }, [selectedShopId]);
 
   useEffect(() => {
-    if (!selectedShopId || !baseLoaded) {
+    if (!movementHistoryOpen || !selectedShopId || movementsLoadedShopId === selectedShopId) {
+      return;
+    }
+    void loadMovements(selectedShopId);
+  }, [loadMovements, movementHistoryOpen, movementsLoadedShopId, selectedShopId]);
+
+  useEffect(() => {
+    if (activeTab !== "shops" || !selectedShopId || !baseLoaded) {
+      return;
+    }
+    if (stockLoadedShopId === selectedShopId && stockItems.length > 0) {
       return;
     }
     void loadShopData(selectedShopId);
-  }, [baseLoaded, baseReloadKey, loadShopData, selectedShopId]);
+  }, [activeTab, baseLoaded, baseReloadKey, loadShopData, selectedShopId, stockItems.length, stockLoadedShopId]);
 
   const openCreateEditor = useCallback(() => {
     navigation.navigate("AdminInventoryItemEditor");
@@ -319,11 +604,9 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     setErrorMessage(null);
     try {
       await allocateShopInventoryItems(shopId, [itemId]);
-      setSummary((currentSummary) =>
-        currentSummary?.shop_id === shopId
-          ? markInventoryItemAllocated(currentSummary, itemId)
-          : currentSummary,
-      );
+      if (stockLoadedShopIdRef.current === shopId) {
+        setStockItems((currentItems) => markInventoryItemAllocated(currentItems, itemId));
+      }
     } catch (error) {
       triggerHaptic();
       setErrorMessage(getRequestMessage(error, "Unable to allocate inventory item."));
@@ -342,11 +625,11 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     setAllocationBusyItemId(item.id);
     setErrorMessage(null);
     try {
-      const nextSummary = await updateShopInventoryAllocation(selectedShopId, {
+      const changedItem = await updateShopInventoryAllocation(selectedShopId, {
         item_id: item.id,
         is_active: !item.allocation_active,
       });
-      setSummary(nextSummary);
+      setStockItems((currentItems) => patchStockItem(currentItems, changedItem));
     } catch (error) {
       triggerHaptic();
       setErrorMessage(getRequestMessage(error, "Unable to update inventory allocation."));
@@ -385,8 +668,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     </View>
   );
 
-  const renderItems = () => (
-    <View style={styles.section}>
+  const renderItemsHeader = () => (
+    <View style={styles.itemsHeader}>
       <View style={styles.row}>
         <View style={[styles.search, { borderColor: palette.border, backgroundColor: palette.card }]}>
           <MaterialCommunityIcons name="magnify" size={18} color={palette.textMuted} />
@@ -400,32 +683,51 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
         </View>
         <ActionButton label="Add" icon="plus" palette={palette} active onPress={openCreateEditor} />
       </View>
-      {items.map((item) => (
-        <View key={item.id} style={[styles.itemRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
-          <ItemThumbnail
-            uri={getItemThumbnailUri(item)}
-            recyclingKey={item.id}
-            size={52}
-            borderRadius={10}
-            backgroundColor={palette.surfaceMuted}
-            icon="package-variant-closed"
-            iconColor={palette.textMuted}
-          />
-          <View style={styles.itemText}>
-            <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
-            <Text style={[styles.itemSub, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
-            <Text style={[styles.itemMeta, { color: palette.textMuted }]}>
-              {item.base_unit.toUpperCase()} · {item.categories.map((category) => category.name).join(", ")}
-            </Text>
-          </View>
-          <View style={styles.rowActions}>
-            <IconButton icon="pencil-outline" label="Edit" palette={palette} onPress={() => openEditEditor(item)} />
-            <IconButton icon="delete-outline" label="Delete" palette={palette} danger onPress={() => confirmDeleteItem(item)} />
-          </View>
-        </View>
-      ))}
     </View>
   );
+
+  const renderInventoryItemRow = ({ item }: { item: InventoryItemRead }) => (
+    <View style={[styles.itemRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
+      <ItemThumbnail
+        uri={getItemThumbnailUri(item)}
+        recyclingKey={item.id}
+        size={52}
+        borderRadius={10}
+        backgroundColor={palette.surfaceMuted}
+        icon="package-variant-closed"
+        iconColor={palette.textMuted}
+      />
+      <View style={styles.itemText}>
+        <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
+        <Text style={[styles.itemSub, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
+        <Text style={[styles.itemMeta, { color: palette.textMuted }]}>
+          {item.base_unit.toUpperCase()} · {item.categories.map((category) => category.name).join(", ")}
+        </Text>
+      </View>
+      <View style={styles.rowActions}>
+        <IconButton icon="pencil-outline" label="Edit" palette={palette} onPress={() => openEditEditor(item)} />
+        <IconButton icon="delete-outline" label="Delete" palette={palette} danger onPress={() => confirmDeleteItem(item)} />
+      </View>
+    </View>
+  );
+
+  const renderItemsFooter = () => {
+    if (itemsLoadingMore) {
+      return (
+        <View style={styles.listFooter}>
+          <ActivityIndicator color={palette.inventory} />
+        </View>
+      );
+    }
+    if (!itemsHasMore && items.length > 0) {
+      return (
+        <Text style={[styles.itemCountText, { color: palette.textMuted }]}>
+          {items.length} of {itemsTotalCount || items.length} inventory items
+        </Text>
+      );
+    }
+    return <View style={styles.listFooterSpacer} />;
+  };
 
   const renderCategories = () => (
     <View style={styles.section}>
@@ -483,7 +785,7 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     </View>
   );
 
-  const renderShopStock = () => (
+  const renderShopStockHeader = () => (
     <View style={styles.section}>
       <View style={styles.dropdownWrap}>
         <Pressable
@@ -558,95 +860,113 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
         {selectedShop?.name ?? "Select branch"}
       </Text>
-      {(summary?.items ?? []).map((item) => {
-        const busy = allocationBusyItemId === item.id;
-        const allocationDisabled = Boolean(allocationBusyItemId && !busy);
-        return (
-          <View key={item.id} style={[styles.stockItemCard, { borderColor: palette.border, backgroundColor: palette.card }]}>
-            <View style={styles.stockItemHeader}>
-              <ItemThumbnail
-                uri={getItemThumbnailUri(item)}
-                recyclingKey={item.id}
-                size={48}
-                borderRadius={10}
-                backgroundColor={palette.surfaceMuted}
-                icon="warehouse"
-                iconColor={palette.textMuted}
-              />
-              <View style={styles.itemText}>
-                <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
-                <View style={styles.itemQuantityRow}>
-                  <View style={styles.itemQuantityGroup}>
-                    <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Available</Text>
-                    <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
-                      {formatInventoryQuantity(item.available_quantity, item.base_unit)}
-                    </Text>
-                  </View>
-                  <View style={styles.itemQuantityGroup}>
-                    <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Used</Text>
-                    <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
-                      {formatInventoryQuantity(item.used_quantity, item.base_unit)}
+      {stockLoading && stockItems.length === 0 ? (
+        <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading branch inventory...</Text>
+      ) : null}
+    </View>
+  );
+
+  const renderStockItemRow = ({ item }: { item: InventoryItemStockRead }) => {
+    const busy = allocationBusyItemId === item.id;
+    const allocationDisabled = Boolean(allocationBusyItemId && !busy);
+    return (
+      <View style={[styles.stockItemCard, { borderColor: palette.border, backgroundColor: palette.card }]}>
+        <View style={styles.stockItemHeader}>
+          <ItemThumbnail
+            uri={getItemThumbnailUri(item)}
+            recyclingKey={item.id}
+            size={48}
+            borderRadius={10}
+            backgroundColor={palette.surfaceMuted}
+            icon="warehouse"
+            iconColor={palette.textMuted}
+          />
+          <View style={styles.itemText}>
+            <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
+            <View style={styles.itemQuantityRow}>
+              <View style={styles.itemQuantityGroup}>
+                <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Available</Text>
+                <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
+                  {formatInventoryQuantity(item.available_quantity, item.base_unit)}
+                </Text>
+              </View>
+              <View style={styles.itemQuantityGroup}>
+                <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Used</Text>
+                <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
+                  {formatInventoryQuantity(item.used_quantity, item.base_unit)}
+                </Text>
+              </View>
+            </View>
+          </View>
+          {!item.is_active ? (
+            <ActionButton
+              label="Inactive"
+              icon="cancel"
+              palette={palette}
+              disabled
+              onPress={() => undefined}
+            />
+          ) : item.allocated ? (
+            <ActionButton
+              label={item.allocation_active ? "Pause" : "Activate"}
+              icon={item.allocation_active ? "pause-circle-outline" : "play-circle-outline"}
+              palette={palette}
+              loading={busy}
+              disabled={allocationDisabled}
+              onPress={() => void toggleAllocation(item)}
+            />
+          ) : (
+            <ActionButton
+              label="Allocate"
+              icon="link-variant-plus"
+              palette={palette}
+              active
+              loading={busy}
+              disabled={allocationDisabled}
+              onPress={() => void allocateItem(item.id)}
+            />
+          )}
+        </View>
+        {item.category_usage.length > 0 ? (
+          <View style={[styles.categoryUsageList, { borderTopColor: palette.border }]}>
+            {item.category_usage.map((category) => (
+              <View
+                key={category.category_id}
+                style={[
+                  styles.categoryUsageRow,
+                  { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
+                ]}
+              >
+                <Text numberOfLines={1} style={[styles.categoryUsageName, { color: palette.textPrimary }]}>
+                  {category.category_name}
+                </Text>
+                <View style={styles.categoryUsageTotals}>
+                  <View style={styles.categoryUsageTotal}>
+                    <Text style={[styles.categoryUsageLabel, { color: palette.textMuted }]}>Used</Text>
+                    <Text style={[styles.categoryUsageValue, { color: palette.textPrimary }]}>
+                      {formatInventoryQuantity(category.used_quantity, item.base_unit)}
                     </Text>
                   </View>
                 </View>
               </View>
-              {!item.is_active ? (
-                <ActionButton
-                  label="Inactive"
-                  icon="cancel"
-                  palette={palette}
-                  disabled
-                  onPress={() => undefined}
-                />
-              ) : item.allocated ? (
-                <ActionButton
-                  label={item.allocation_active ? "Pause" : "Activate"}
-                  icon={item.allocation_active ? "pause-circle-outline" : "play-circle-outline"}
-                  palette={palette}
-                  loading={busy}
-                  disabled={allocationDisabled}
-                  onPress={() => void toggleAllocation(item)}
-                />
-              ) : (
-                <ActionButton
-                  label="Allocate"
-                  icon="link-variant-plus"
-                  palette={palette}
-                  active
-                  loading={busy}
-                  disabled={allocationDisabled}
-                  onPress={() => void allocateItem(item.id)}
-                />
-              )}
-            </View>
-            {item.category_usage.length > 0 ? (
-              <View style={[styles.categoryUsageList, { borderTopColor: palette.border }]}>
-                {item.category_usage.map((category) => (
-                  <View
-                    key={category.category_id}
-                    style={[
-                      styles.categoryUsageRow,
-                      { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
-                    ]}
-                  >
-                    <Text numberOfLines={1} style={[styles.categoryUsageName, { color: palette.textPrimary }]}>
-                      {category.category_name}
-                    </Text>
-                    <View style={styles.categoryUsageTotals}>
-                      <View style={styles.categoryUsageTotal}>
-                        <Text style={[styles.categoryUsageLabel, { color: palette.textMuted }]}>Used</Text>
-                        <Text style={[styles.categoryUsageValue, { color: palette.textPrimary }]}>
-                          {formatInventoryQuantity(category.used_quantity, item.base_unit)}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : null}
+            ))}
           </View>
-        );
-      })}
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderShopStockFooter = () => (
+    <View style={styles.section}>
+      {stockLoadingMore ? (
+        <View style={styles.listFooter}>
+          <ActivityIndicator color={palette.inventory} />
+        </View>
+      ) : !stockHasMore && stockItems.length > 0 ? (
+        <Text style={[styles.itemCountText, { color: palette.textMuted }]}>
+          {stockItems.length} branch stock rows loaded
+        </Text>
+      ) : null}
       <View style={styles.historyToggleRow}>
         <Pressable
           accessibilityRole="button"
@@ -673,7 +993,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       {movementHistoryOpen ? (
         <>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Recent movement</Text>
-          {movements.length === 0 ? (
+          {movementsLoading ? (
+            <View style={[styles.movementRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
+              <ActivityIndicator color={palette.inventory} />
+              <Text style={[styles.itemMeta, { color: palette.textMuted }]}>Loading movement history...</Text>
+            </View>
+          ) : movements.length === 0 ? (
             <View style={[styles.movementRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
               <MaterialCommunityIcons name="history" size={20} color={palette.textMuted} />
               <Text style={[styles.itemMeta, { color: palette.textMuted }]}>No recent stock movement yet.</Text>
@@ -716,30 +1041,95 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           onRefresh={() => loadBaseData(true)}
         />
       </View>
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
-        }
-        contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
-      >
-        {renderTabs()}
-        {errorMessage ? (
-          <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
-            <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
-          </View>
-        ) : null}
-        {loading ? (
-          <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
-        ) : activeTab === "items" ? (
-          renderItems()
-        ) : activeTab === "categories" ? (
-          renderCategories()
-        ) : (
-          renderShopStock()
-        )}
-      </ScrollView>
+      {activeTab === "items" ? (
+        <FlatList
+          data={items}
+          keyExtractor={(item) => item.id}
+          renderItem={renderInventoryItemRow}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+          }
+          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+          ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+          ListHeaderComponent={(
+            <View style={styles.section}>
+              {renderTabs()}
+              {errorMessage ? (
+                <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
+                  <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
+                </View>
+              ) : null}
+              {renderItemsHeader()}
+              {itemsLoading && items.length === 0 ? (
+                <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
+              ) : null}
+            </View>
+          )}
+          ListEmptyComponent={
+            !itemsLoading ? (
+              <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
+            ) : null
+          }
+          ListFooterComponent={renderItemsFooter}
+          onEndReached={() => void loadInventoryRows({ append: true })}
+          onEndReachedThreshold={0.35}
+        />
+      ) : activeTab === "shops" ? (
+        <FlatList
+          data={stockItems}
+          keyExtractor={(item) => item.id}
+          renderItem={renderStockItemRow}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+          }
+          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+          ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+          ListHeaderComponent={(
+            <View style={styles.section}>
+              {renderTabs()}
+              {errorMessage ? (
+                <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
+                  <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
+                </View>
+              ) : null}
+              {renderShopStockHeader()}
+            </View>
+          )}
+          ListEmptyComponent={
+            !stockLoading ? (
+              <Text style={[styles.loadingText, { color: palette.textMuted }]}>No branch stock rows found.</Text>
+            ) : null
+          }
+          ListFooterComponent={renderShopStockFooter}
+          onEndReached={() => void loadMoreShopData()}
+          onEndReachedThreshold={0.35}
+        />
+      ) : (
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+          }
+          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+        >
+          {renderTabs()}
+          {errorMessage ? (
+            <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
+              <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
+            </View>
+          ) : null}
+          {loading ? (
+            <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
+          ) : (
+            renderCategories()
+          )}
+        </ScrollView>
+      )}
 
     </SafeAreaView>
   );
@@ -821,6 +1211,11 @@ const styles = StyleSheet.create({
   tab: { flex: 1, minHeight: 42, borderRadius: 9, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
   tabText: { fontSize: 12, fontWeight: "800", letterSpacing: 0 },
   section: { gap: 10 },
+  itemsHeader: { gap: 10 },
+  listSeparator: { height: 10 },
+  listFooter: { minHeight: 56, alignItems: "center", justifyContent: "center" },
+  listFooterSpacer: { height: 10 },
+  itemCountText: { paddingVertical: 14, textAlign: "center", fontSize: 12, fontWeight: "800", letterSpacing: 0 },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
   historyToggleRow: { flexDirection: "row", justifyContent: "center", marginTop: 8 },
   historyButton: {

@@ -2,7 +2,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,15 +32,18 @@ from app.schemas.inventory import (
     InventoryCategoryRead,
     InventoryCategoryUpdate,
     InventoryCategoryUsageRead,
+    InventoryItemCounts,
     InventoryItemCreate,
     InventoryItemImageRead,
     InventoryItemRead,
+    InventoryItemRowsPage,
     InventoryItemStockRead,
     InventoryItemUpdate,
     InventoryMovementCreateResult,
     InventoryMovementPage,
     InventoryMovementRead,
     InventoryMovementSplitCreateResult,
+    InventoryStockRowsPage,
     InventorySummaryRead,
     InventoryUseRequest,
     InventoryUseSplitRequest,
@@ -324,12 +327,7 @@ async def _resolve_inventory_categories(
     return [categories_by_id[category_id] for category_id in unique_category_ids]
 
 
-async def list_inventory_items(
-    db: AsyncSession,
-    *,
-    q: str | None = None,
-    active: bool | None = None,
-) -> list[InventoryItemRead]:
+def _inventory_items_row_query(*, q: str | None = None, active: bool | None = None):
     query = select(
         InventoryItem.id,
         InventoryItem.name,
@@ -356,19 +354,64 @@ async def list_inventory_items(
         )
     if active is not None:
         query = query.where(InventoryItem.is_active.is_(active))
-    rows = (
-        await db.execute(
-            query.order_by(
-                InventoryItem.sort_order,
-                func.lower(InventoryItem.name),
-                InventoryItem.id,
-            )
-        )
-    ).all()
-    if not rows:
-        return []
+    return query
 
-    item_ids = [row.id for row in rows]
+
+def _inventory_item_cursor_filter(
+    cursor_sort_order: int | None,
+    cursor_name: str | None,
+    cursor_id: UUID | None,
+):
+    if cursor_name is None or cursor_id is None:
+        return None
+    sort_name_expr = func.lower(InventoryItem.name)
+    if cursor_sort_order is None:
+        return or_(
+            sort_name_expr > cursor_name.lower(),
+            and_(sort_name_expr == cursor_name.lower(), InventoryItem.id > cursor_id),
+        )
+    return or_(
+        InventoryItem.sort_order > cursor_sort_order,
+        and_(InventoryItem.sort_order == cursor_sort_order, sort_name_expr > cursor_name.lower()),
+        and_(
+            InventoryItem.sort_order == cursor_sort_order,
+            sort_name_expr == cursor_name.lower(),
+            InventoryItem.id > cursor_id,
+        ),
+    )
+
+
+def _inventory_stock_cursor_filter(
+    sort_order_expr,
+    cursor_sort_order: int | None,
+    cursor_name: str | None,
+    cursor_id: UUID | None,
+):
+    if cursor_name is None or cursor_id is None:
+        return None
+    sort_name_expr = func.lower(InventoryItem.name)
+    if cursor_sort_order is None:
+        return or_(
+            sort_name_expr > cursor_name.lower(),
+            and_(sort_name_expr == cursor_name.lower(), InventoryItem.id > cursor_id),
+        )
+    return or_(
+        sort_order_expr > cursor_sort_order,
+        and_(sort_order_expr == cursor_sort_order, sort_name_expr > cursor_name.lower()),
+        and_(
+            sort_order_expr == cursor_sort_order,
+            sort_name_expr == cursor_name.lower(),
+            InventoryItem.id > cursor_id,
+        ),
+    )
+
+
+async def _categories_by_inventory_item_id(
+    db: AsyncSession,
+    item_ids: list[UUID],
+) -> dict[UUID, list[InventoryCategoryRead]]:
+    if not item_ids:
+        return {}
     category_rows = (
         await db.execute(
             select(
@@ -397,7 +440,110 @@ async def list_inventory_items(
                 updated_at=category_row.category_updated_at,
             )
         )
+    return categories_by_item_id
+
+
+async def list_inventory_items(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    active: bool | None = None,
+) -> list[InventoryItemRead]:
+    query = _inventory_items_row_query(q=q, active=active)
+    rows = (
+        await db.execute(
+            query.order_by(
+                InventoryItem.sort_order,
+                func.lower(InventoryItem.name),
+                InventoryItem.id,
+            )
+        )
+    ).all()
+    if not rows:
+        return []
+
+    item_ids = [row.id for row in rows]
+    categories_by_item_id = await _categories_by_inventory_item_id(db, item_ids)
     return [_inventory_item_row_to_read(row, categories_by_item_id) for row in rows]
+
+
+async def list_inventory_item_rows(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    active: bool | None = None,
+    limit: int = 100,
+    cursor_sort_order: int | None = None,
+    cursor_name: str | None = None,
+    cursor_id: UUID | None = None,
+) -> InventoryItemRowsPage:
+    query = _inventory_items_row_query(q=q, active=active)
+    cursor_condition = _inventory_item_cursor_filter(
+        cursor_sort_order,
+        cursor_name,
+        cursor_id,
+    )
+    if cursor_condition is not None:
+        query = query.where(cursor_condition)
+
+    rows = (
+        await db.execute(
+            query.order_by(
+                InventoryItem.sort_order,
+                func.lower(InventoryItem.name),
+                InventoryItem.id,
+            ).limit(limit + 1)
+        )
+    ).all()
+    page_rows = rows[:limit]
+    has_more = len(rows) > limit
+    item_ids = [row.id for row in page_rows]
+    categories_by_item_id = await _categories_by_inventory_item_id(db, item_ids)
+
+    next_cursor_sort_order = next_cursor_name = next_cursor_id = None
+    if has_more and page_rows:
+        last_row = page_rows[-1]
+        next_cursor_sort_order = last_row.sort_order
+        next_cursor_name = last_row.name.lower()
+        next_cursor_id = last_row.id
+
+    return InventoryItemRowsPage(
+        items=[_inventory_item_row_to_read(row, categories_by_item_id) for row in page_rows],
+        limit=limit,
+        has_more=has_more,
+        next_cursor_sort_order=next_cursor_sort_order,
+        next_cursor_name=next_cursor_name,
+        next_cursor_id=next_cursor_id,
+    )
+
+
+async def count_inventory_items(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    active: bool | None = None,
+) -> InventoryItemCounts:
+    count_source = _inventory_items_row_query(q=q, active=active).subquery()
+    row = (
+        await db.execute(
+            select(
+                func.count().label("all"),
+                func.coalesce(
+                    func.sum(case((count_source.c.is_active.is_(True), 1), else_=0)),
+                    0,
+                ).label("active"),
+                func.coalesce(
+                    func.sum(case((count_source.c.is_active.is_(False), 1), else_=0)),
+                    0,
+                ).label("paused"),
+            ).select_from(count_source)
+        )
+    ).mappings().one()
+    return InventoryItemCounts(
+        all=int(row["all"] or 0),
+        active=int(row["active"] or 0),
+        paused=int(row["paused"] or 0),
+    )
 
 
 async def get_inventory_item(db: AsyncSession, item_id: UUID) -> InventoryItemRead:
@@ -785,6 +931,110 @@ async def get_inventory_summary(
     )
 
 
+async def list_inventory_stock_rows(
+    db: AsyncSession,
+    shop: Shop,
+    *,
+    q: str | None = None,
+    active: bool | None = None,
+    include_unallocated: bool = False,
+    active_allocations_only: bool = False,
+    limit: int = 50,
+    cursor_sort_order: int | None = None,
+    cursor_name: str | None = None,
+    cursor_id: UUID | None = None,
+) -> InventoryStockRowsPage:
+    allocation_join = and_(
+        ShopInventoryAllocation.shop_id == shop.id,
+        ShopInventoryAllocation.inventory_item_id == InventoryItem.id,
+    )
+    sort_order_expr = func.coalesce(
+        ShopInventoryAllocation.sort_order,
+        InventoryItem.sort_order,
+    )
+    query = (
+        select(InventoryItem, ShopInventoryAllocation)
+        .outerjoin(ShopInventoryAllocation, allocation_join)
+        .options(
+            selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category)
+        )
+    )
+
+    if not include_unallocated:
+        query = query.where(ShopInventoryAllocation.id.is_not(None))
+    if active_allocations_only:
+        query = query.where(
+            ShopInventoryAllocation.is_active.is_(True),
+            InventoryItem.is_active.is_(True),
+        )
+    if active is not None:
+        query = query.where(InventoryItem.is_active.is_(active))
+
+    search = q.strip() if q else ""
+    if search:
+        like_search = f"%{search.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(InventoryItem.name).like(like_search),
+                func.lower(InventoryItem.tamil_name).like(like_search),
+            )
+        )
+
+    cursor_condition = _inventory_stock_cursor_filter(
+        sort_order_expr,
+        cursor_sort_order,
+        cursor_name,
+        cursor_id,
+    )
+    if cursor_condition is not None:
+        query = query.where(cursor_condition)
+
+    rows = (
+        await db.execute(
+            query.order_by(
+                sort_order_expr,
+                func.lower(InventoryItem.name),
+                InventoryItem.id,
+            ).limit(limit + 1)
+        )
+    ).all()
+    page_rows = rows[:limit]
+    has_more = len(rows) > limit
+    item_ids = [row[0].id for row in page_rows]
+    added, used, category_used = await _movement_totals(db, shop.id, item_ids)
+
+    stock_items = [
+        _stock_item_from_inventory_item(
+            item,
+            allocation=allocation,
+            added_quantity=added.get(item.id, ZERO),
+            used_quantity=used.get(item.id, ZERO),
+            category_used=category_used,
+        )
+        for item, allocation in page_rows
+    ]
+
+    next_cursor_sort_order = next_cursor_name = next_cursor_id = None
+    if has_more and page_rows:
+        last_item, last_allocation = page_rows[-1]
+        next_cursor_sort_order = (
+            last_allocation.sort_order if last_allocation is not None else last_item.sort_order
+        )
+        next_cursor_name = last_item.name.lower()
+        next_cursor_id = last_item.id
+
+    return InventoryStockRowsPage(
+        shop_id=shop.id,
+        shop_name=shop.name,
+        items=stock_items,
+        limit=limit,
+        has_more=has_more,
+        next_cursor_sort_order=next_cursor_sort_order,
+        next_cursor_name=next_cursor_name,
+        next_cursor_id=next_cursor_id,
+    )
+
+
 async def allocate_shop_inventory_items(
     db: AsyncSession,
     shop: Shop,
@@ -839,7 +1089,7 @@ async def update_shop_inventory_allocation(
     *,
     is_active: bool | None = None,
     sort_order: int | None = None,
-) -> None:
+) -> InventoryItemStockRead:
     allocation = await db.scalar(
         select(ShopInventoryAllocation)
         .where(
@@ -854,14 +1104,24 @@ async def update_shop_inventory_allocation(
         allocation.is_active = is_active
     if sort_order is not None:
         allocation.sort_order = sort_order
+    await db.flush()
+    item = await db.scalar(
+        select(InventoryItem)
+        .where(InventoryItem.id == item_id)
+        .options(selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category))
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
     await db.commit()
+    return stock_item
 
 
 async def _get_allocated_inventory_item_for_shop(
     db: AsyncSession,
     shop: Shop,
     item_id: UUID,
-) -> InventoryItem:
+) -> tuple[InventoryItem, ShopInventoryAllocation]:
     allocation = await db.scalar(
         select(ShopInventoryAllocation)
         .where(
@@ -893,12 +1153,28 @@ async def _get_allocated_inventory_item_for_shop(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Inventory item is inactive",
         )
-    return item
+    return item, allocation
 
 
 async def _available_quantity_for_item(db: AsyncSession, shop_id: UUID, item_id: UUID) -> Decimal:
     added, used, _ = await _movement_totals(db, shop_id, [item_id])
     return added.get(item_id, ZERO) - used.get(item_id, ZERO)
+
+
+async def _stock_item_for_shop_inventory_item(
+    db: AsyncSession,
+    shop: Shop,
+    item: InventoryItem,
+    allocation: ShopInventoryAllocation,
+) -> InventoryItemStockRead:
+    added, used, category_used = await _movement_totals(db, shop.id, [item.id])
+    return _stock_item_from_inventory_item(
+        item,
+        allocation=allocation,
+        added_quantity=added.get(item.id, ZERO),
+        used_quantity=used.get(item.id, ZERO),
+        category_used=category_used,
+    )
 
 
 def _movement_to_read(movement: InventoryMovement) -> InventoryMovementRead:
@@ -958,8 +1234,10 @@ async def add_shop_inventory_stock(
     shop: Shop,
     item_id: UUID,
     payload: InventoryAddRequest,
+    *,
+    include_summary: bool = False,
 ) -> InventoryMovementCreateResult:
-    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    item, allocation = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
     quantity = _normalize_quantity(item.base_unit, payload.quantity)
     movement = InventoryMovement(
         shop_id=shop.id,
@@ -979,8 +1257,12 @@ async def add_shop_inventory_stock(
             selectinload(InventoryMovement.category),
         )
     )
-    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
-    stock_item = next(item for item in summary.items if item.id == item_id)
+    summary = None
+    if include_summary:
+        summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+        stock_item = next(item for item in summary.items if item.id == item_id)
+    else:
+        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
     return InventoryMovementCreateResult(
         movement=_movement_to_read(movement),
         item=stock_item,
@@ -993,8 +1275,10 @@ async def use_shop_inventory_stock(
     shop: Shop,
     item_id: UUID,
     payload: InventoryUseRequest,
+    *,
+    include_summary: bool = False,
 ) -> InventoryMovementCreateResult:
-    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    item, allocation = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
     quantity = _normalize_quantity(item.base_unit, payload.quantity)
     category_ids = {link.category_id for link in item.category_links}
     if payload.category_id not in category_ids:
@@ -1027,8 +1311,12 @@ async def use_shop_inventory_stock(
             selectinload(InventoryMovement.category),
         )
     )
-    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
-    stock_item = next(item for item in summary.items if item.id == item_id)
+    summary = None
+    if include_summary:
+        summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+        stock_item = next(item for item in summary.items if item.id == item_id)
+    else:
+        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
     return InventoryMovementCreateResult(
         movement=_movement_to_read(movement),
         item=stock_item,
@@ -1041,8 +1329,10 @@ async def use_shop_inventory_stock_split(
     shop: Shop,
     item_id: UUID,
     payload: InventoryUseSplitRequest,
+    *,
+    include_summary: bool = False,
 ) -> InventoryMovementSplitCreateResult:
-    item = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
+    item, allocation = await _get_allocated_inventory_item_for_shop(db, shop, item_id)
     total_quantity = _normalize_quantity(item.base_unit, payload.total_quantity)
     linked_category_ids = {link.category_id for link in item.category_links}
     split_quantities: dict[UUID, Decimal] = {}
@@ -1099,8 +1389,12 @@ async def use_shop_inventory_stock_split(
             .order_by(InventoryMovement.created_at, InventoryMovement.id)
         )
     ).all()
-    summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
-    stock_item = next(item for item in summary.items if item.id == item_id)
+    summary = None
+    if include_summary:
+        summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
+        stock_item = next(item for item in summary.items if item.id == item_id)
+    else:
+        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
     return InventoryMovementSplitCreateResult(
         movements=[_movement_to_read(movement) for movement in saved_movements],
         item=stock_item,

@@ -35,14 +35,18 @@ const UPLOAD_REQUEST_TIMEOUT_MS = 90000;
 const HEALTHCHECK_PATH = "/api/v1/health";
 const API_FIELD_LABELS: Record<string, string> = {
   base_unit: "Base unit",
+  amount: "Amount",
   category: "Category",
   category_id: "Category",
   custom_attributes: "Custom attributes",
+  expense_item_id: "Expense item",
   image: "Image",
   is_active: "Active status",
   name: "English name",
+  note: "Note",
   remove_image: "Remove image",
   sort_order: "Sort order",
+  spent_at: "Spent at",
   tamil_name: "Tamil name",
   unit_type: "Unit type",
 };

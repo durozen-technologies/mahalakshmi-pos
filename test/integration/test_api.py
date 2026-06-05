@@ -1,29 +1,48 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from test.support import AsyncSessionAdapter, BackendTestCase  # isort: skip
 
-from app.db.storage import StoredImagePayload
-from app.models import BaseUnit, DailyPrice, Item, ItemChangeEvent, Shop, UnitType, User
+from app.db.storage import StoredImagePayload, StoredImageStreamPayload
+from app.models import (
+    BaseUnit,
+    Bill,
+    BillItem,
+    BillStatus,
+    DailyPrice,
+    ExpenseItem,
+    Item,
+    ItemChangeEvent,
+    Payment,
+    Shop,
+    UnitType,
+    User,
+)
 from app.routers.admin import (
+    admin_report_pdf,
     allocate_shop_catalogue_item,
     allocate_shop_catalogue_items,
+    allocate_shop_expenses,
     bill_detail,
+    bill_details,
     bills,
-    create_admin_item_category,
+    create_admin_expense_item,
     create_admin_inventory_category,
     create_admin_inventory_item_metadata,
+    create_admin_item_category,
     create_inventory_item,
-    create_shop_inventory_item,
     create_shop,
+    create_shop_inventory_item,
     deallocate_shop_catalogue_item,
     delete_admin_inventory_item_image,
     delete_admin_item_category,
@@ -33,34 +52,51 @@ from app.routers.admin import (
     get_catalogue_item_detail,
     get_catalogue_item_rows,
     get_catalogue_items,
+    get_expense_history,
+    get_expense_item_counts,
+    get_expense_items,
     get_item_categories,
     get_selected_shop_item_counts,
     get_selected_shop_item_rows,
     get_selected_shop_items,
+    get_shop_expense_item_candidates,
+    get_shop_expense_items,
     get_shop_item_detail,
     get_shop_item_import_candidate_counts,
     get_shop_item_import_candidate_rows,
     get_shop_item_import_candidates,
     get_shop_items,
     get_shops,
-    patch_inventory_item_metadata,
     patch_admin_inventory_item_metadata,
+    patch_inventory_item_metadata,
     payment_summary,
     sales_summary,
     shop_daily_price,
     shop_daily_prices,
     shop_daily_prices_partial,
     shop_prices_bootstrap,
+    update_admin_expense_item,
     update_admin_item_category,
     update_inventory_item,
     update_selected_shop_items_display_order,
     update_shop_catalogue_item_allocation,
+    update_shop_expense,
+    update_shop_expense_order,
     update_shop_status,
 )
 from app.routers.auth import login, me, register
 from app.routers.catalog import get_item_image as get_catalog_item_image
 from app.routers.health import health_check
-from app.routers.shop import bootstrap, checkout, preview_checkout, save_daily_prices, today_prices
+from app.routers.shop import (
+    bootstrap,
+    checkout,
+    preview_checkout,
+    record_shop_expense,
+    save_daily_prices,
+    shop_expense_history,
+    shop_expense_items,
+    today_prices,
+)
 from app.schemas.admin import (
     ItemCategoryCreate,
     ItemCategoryUpdate,
@@ -76,16 +112,36 @@ from app.schemas.admin import (
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.schemas.billing import (
     BillCheckoutCommitRequest,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               BillCheckoutRequest,
+    BillCheckoutRequest,
+    BillDetailBatchRequest,
     BillItemInput,
     CheckoutPaymentInput,
 )
+from app.schemas.expenses import (
+    ExpenseEntryCreate,
+    ExpenseItemCreate,
+    ExpenseItemUpdate,
+    ShopExpenseAllocationBulkCreate,
+    ShopExpenseAllocationUpdate,
+    ShopExpenseItemsOrderUpdate,
+)
 from app.schemas.inventory import (
     InventoryCategoryCreate as InventoryCategoryCreatePayload,
+)
+from app.schemas.inventory import (
     InventoryItemCreate as InventoryItemCreatePayload,
+)
+from app.schemas.inventory import (
     InventoryItemUpdate as InventoryItemUpdatePayload,
 )
 from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry, DailyPriceUpdate
+
+
+async def _read_streaming_response_body(body_iterator: AsyncIterable[bytes | str]) -> bytes:
+    chunks: list[bytes] = []
+    async for chunk in body_iterator:
+        chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
+    return b"".join(chunks)
 
 
 class BackendApiIntegrationTests(BackendTestCase):
@@ -132,6 +188,197 @@ class BackendApiIntegrationTests(BackendTestCase):
                 )
                 self.assertEqual(logged_in.user.username, "admin")
                 self.assertTrue(logged_in.access_token)
+
+        self.run_async(scenario())
+
+    def test_admin_pdf_report_endpoint_generates_filtered_merged_pdf(self) -> None:
+        _actor_a, branch_a = self.run_async(
+            self.harness.create_shop_user(username="report-a", shop_name="Report Alpha")
+        )
+        _actor_b, branch_b = self.run_async(
+            self.harness.create_shop_user(username="report-b", shop_name="Report Beta")
+        )
+        self.run_async(self.harness.create_catalogue_items(("Chicken",)))
+        self.run_async(self.harness.create_items_for_shop(branch_a.id, ("Chicken",)))
+        self.run_async(self.harness.create_items_for_shop(branch_b.id, ("Duck",)))
+
+        async def scenario() -> None:
+            report_date = date(2026, 6, 5)
+            created_at = datetime(2026, 6, 5, 10, 0, tzinfo=UTC)
+            with self.harness.session_factory() as session:
+                chicken = session.scalar(
+                    select(Item).where(Item.name == "Chicken", Item.shop_id == branch_a.id)
+                )
+                catalogue_chicken = session.scalar(
+                    select(Item).where(Item.name == "Chicken", Item.shop_id.is_(None))
+                )
+                duck = session.scalar(select(Item).where(Item.name == "Duck", Item.shop_id == branch_b.id))
+                chicken.category = "Poultry"
+                catalogue_chicken.category = "Poultry"
+                duck.category = "Water Birds"
+                for index in range(30):
+                    amount = Decimal("100.00") + Decimal(index)
+                    catalogue_amount = Decimal("2.00") if index == 0 else Decimal("0.00")
+                    bill_total = amount + catalogue_amount
+                    bill = Bill(
+                        bill_no=f"RPT-{index + 1:03}",
+                        shop_id=branch_a.id,
+                        total_amount=bill_total,
+                        status=BillStatus.PAID,
+                        created_at=created_at + timedelta(minutes=index),
+                    )
+                    session.add(bill)
+                    session.flush()
+                    bill_rows = [
+                        Payment(
+                            bill_id=bill.id,
+                            cash_amount=bill_total,
+                            upi_amount=Decimal("0.00"),
+                            total_paid=bill_total,
+                            balance=Decimal("0.00"),
+                            is_settled=True,
+                        ),
+                        BillItem(
+                            bill_id=bill.id,
+                            item_id=chicken.id,
+                            item_name="Old Chicken" if index < 15 else chicken.name,
+                            item_tamil_name=chicken.tamil_name,
+                            item_unit_type=chicken.unit_type,
+                            item_base_unit=chicken.base_unit,
+                            quantity=Decimal("1.000"),
+                            unit=chicken.base_unit,
+                            price_per_unit=amount,
+                            line_total=amount,
+                        ),
+                    ]
+                    if catalogue_amount:
+                        bill_rows.append(
+                            BillItem(
+                                bill_id=bill.id,
+                                item_id=catalogue_chicken.id,
+                                item_name="Catalogue Chicken",
+                                item_tamil_name=catalogue_chicken.tamil_name,
+                                item_unit_type=catalogue_chicken.unit_type,
+                                item_base_unit=catalogue_chicken.base_unit,
+                                quantity=Decimal("1.000"),
+                                unit=catalogue_chicken.base_unit,
+                                price_per_unit=catalogue_amount,
+                                line_total=catalogue_amount,
+                            )
+                        )
+                    session.add_all(bill_rows)
+                beta_bill = Bill(
+                    bill_no="RPT-BETA-001",
+                    shop_id=branch_b.id,
+                    total_amount=Decimal("75.00"),
+                    status=BillStatus.PAID,
+                    created_at=created_at + timedelta(minutes=45),
+                )
+                session.add(beta_bill)
+                session.flush()
+                session.add_all(
+                    [
+                        Payment(
+                            bill_id=beta_bill.id,
+                            cash_amount=Decimal("0.00"),
+                            upi_amount=Decimal("75.00"),
+                            total_paid=Decimal("75.00"),
+                            balance=Decimal("0.00"),
+                            is_settled=True,
+                        ),
+                        BillItem(
+                            bill_id=beta_bill.id,
+                            item_id=duck.id,
+                            item_name=duck.name,
+                            item_tamil_name=duck.tamil_name,
+                            item_unit_type=duck.unit_type,
+                            item_base_unit=duck.base_unit,
+                            quantity=Decimal("1.000"),
+                            unit=duck.base_unit,
+                            price_per_unit=Decimal("75.00"),
+                            line_total=Decimal("75.00"),
+                        ),
+                    ]
+                )
+                session.commit()
+
+                db = AsyncSessionAdapter(session)
+                response = await admin_report_pdf(
+                    sections=["sales", "billing", "items", "inventory"],
+                    detail_level="summary",
+                    period="range",
+                    reference_date=None,
+                    range_start_date=report_date,
+                    range_end_date=report_date,
+                    shop_ids=None,
+                    db=db,
+                )
+                body = await _read_streaming_response_body(response.body_iterator)
+                self.assertEqual(response.media_type, "application/pdf")
+                self.assertTrue(body.startswith(b"%PDF"))
+                self.assertIn(b"Sales", body)
+                self.assertIn(b"Billing", body)
+                self.assertIn(b"Items", body)
+                self.assertIn(b"Inventory", body)
+                self.assertIn(b"Report Alpha", body)
+                self.assertIn(b"Report Beta", body)
+                self.assertIn(b"Rows shown: 25 of 31 bills", body)
+
+                items_response = await admin_report_pdf(
+                    sections=["items"],
+                    detail_level="full",
+                    period="range",
+                    reference_date=None,
+                    range_start_date=report_date,
+                    range_end_date=report_date,
+                    shop_ids=None,
+                    db=db,
+                )
+                items_body = await _read_streaming_response_body(items_response.body_iterator)
+                self.assertIn(b"Branch", items_body)
+                self.assertIn(b"Category", items_body)
+                self.assertIn(b"Report Alpha", items_body)
+                self.assertIn(b"Report Beta", items_body)
+                self.assertIn(b"Poultry", items_body)
+                self.assertIn(b"Water Birds", items_body)
+                self.assertIn(b"Chicken", items_body)
+                self.assertIn(b"Duck", items_body)
+                self.assertIn(b"Rows shown: 2 sold item row", items_body)
+                self.assertNotIn(b"Old Chicken", items_body)
+                self.assertNotIn(b"Catalogue Chicken", items_body)
+
+                full_response = await admin_report_pdf(
+                    sections=["billing"],
+                    detail_level="full",
+                    period="range",
+                    reference_date=None,
+                    range_start_date=report_date,
+                    range_end_date=report_date,
+                    shop_ids=[branch_a.id],
+                    db=db,
+                )
+                full_body = await _read_streaming_response_body(full_response.body_iterator)
+                self.assertIn(b"Rows shown: 30 of 30 bills", full_body)
+                self.assertIn(b"Report Alpha", full_body)
+                self.assertNotIn(b"Report Beta", full_body)
+
+        self.run_async(scenario())
+
+    def test_admin_pdf_report_endpoint_validates_sections_and_range(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                with self.assertRaises(HTTPException) as empty_sections_ctx:
+                    await admin_report_pdf(sections=[], db=db)
+                self.assertEqual(empty_sections_ctx.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as invalid_section_ctx:
+                    await admin_report_pdf(sections=["unknown"], db=db)  # type: ignore[list-item]
+                self.assertEqual(invalid_section_ctx.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as range_ctx:
+                    await admin_report_pdf(sections=["sales"], period="range", db=db)
+                self.assertEqual(range_ctx.exception.status_code, 422)
 
         self.run_async(scenario())
 
@@ -605,6 +852,175 @@ class BackendApiIntegrationTests(BackendTestCase):
 
         self.run_async(scenario())
 
+    def test_independent_expenses_support_allocation_order_and_history(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        _other_actor, other_shop = self.run_async(
+            self.harness.create_shop_user(username="expense-other", shop_name="Other Branch")
+        )
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                other_current_shop = session.scalar(select(Shop).where(Shop.id == other_shop.id))
+
+                session.add(
+                    Item(
+                        name="Tea Expense",
+                        tamil_name="பில் தேநீர்",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=5,
+                        is_active=True,
+                    )
+                )
+                session.commit()
+
+                tea = await create_admin_expense_item(
+                    ExpenseItemCreate(
+                        name="Tea Expense",
+                        tamil_name="தேநீர் செலவு",
+                        sort_order=20,
+                    ),
+                    db,
+                )
+                fuel = await create_admin_expense_item(
+                    ExpenseItemCreate(
+                        name="Fuel Expense",
+                        tamil_name="எரிபொருள் செலவு",
+                        sort_order=10,
+                    ),
+                    db,
+                )
+                self.assertIsNotNone(session.scalar(select(ExpenseItem).where(ExpenseItem.id == tea.id)))
+
+                with self.assertRaises(HTTPException) as duplicate_context:
+                    await create_admin_expense_item(
+                        ExpenseItemCreate(name="tea expense", tamil_name="மறு செலவு"),
+                        db,
+                    )
+                self.assertEqual(duplicate_context.exception.status_code, 409)
+
+                updated_tea = await update_admin_expense_item(
+                    tea.id,
+                    ExpenseItemUpdate(
+                        name="Tea Expense",
+                        tamil_name="தேநீர் செலவு",
+                        sort_order=30,
+                        is_active=True,
+                    ),
+                    db,
+                )
+                self.assertEqual(updated_tea.name, "Tea Expense")
+
+                item_rows = await get_expense_items(db, limit=10)
+                self.assertEqual({item.name for item in item_rows.items}, {"Fuel Expense", "Tea Expense"})
+                item_counts = await get_expense_item_counts(db)
+                self.assertEqual(item_counts.all, 2)
+                self.assertEqual(item_counts.active, 2)
+
+                bulk_result = await allocate_shop_expenses(
+                    ShopExpenseAllocationBulkCreate(expense_item_ids=[fuel.id, tea.id]),
+                    current_shop,
+                    db,
+                )
+                self.assertEqual(bulk_result.allocated_count, 2)
+                self.assertEqual(bulk_result.already_allocated_count, 0)
+
+                selected_rows = await get_shop_expense_items(current_shop, db, limit=10)
+                self.assertEqual([item.id for item in selected_rows.items], [fuel.id, tea.id])
+
+                candidates = await get_shop_expense_item_candidates(current_shop, db, limit=10)
+                self.assertNotIn(tea.id, {item.id for item in candidates.items})
+
+                order_result = await update_shop_expense_order(
+                    ShopExpenseItemsOrderUpdate(expense_item_ids=[tea.id, fuel.id]),
+                    current_shop,
+                    db,
+                )
+                self.assertEqual(order_result.expense_item_ids, [tea.id, fuel.id])
+                shop_rows = await shop_expense_items(
+                    q=None,
+                    cursor_sort_order=None,
+                    cursor_name=None,
+                    cursor_id=None,
+                    shop=current_shop,
+                    db=db,
+                    limit=10,
+                )
+                self.assertEqual([item.id for item in shop_rows.items], [tea.id, fuel.id])
+
+                with self.assertRaises(HTTPException) as missing_order_context:
+                    await update_shop_expense_order(
+                        ShopExpenseItemsOrderUpdate(expense_item_ids=[tea.id]),
+                        current_shop,
+                        db,
+                    )
+                self.assertEqual(missing_order_context.exception.status_code, 422)
+
+                paused_fuel = await update_shop_expense(
+                    fuel.id,
+                    ShopExpenseAllocationUpdate(is_active=False),
+                    current_shop,
+                    db,
+                )
+                self.assertFalse(paused_fuel.allocation_is_active)
+                visible_shop_rows = await shop_expense_items(
+                    q=None,
+                    cursor_sort_order=None,
+                    cursor_name=None,
+                    cursor_id=None,
+                    shop=current_shop,
+                    db=db,
+                    limit=10,
+                )
+                self.assertEqual([item.id for item in visible_shop_rows.items], [tea.id])
+
+                entry = await record_shop_expense(
+                    ExpenseEntryCreate(
+                        expense_item_id=tea.id,
+                        amount=Decimal("123.45"),
+                        note="Tea purchase",
+                    ),
+                    current_shop,
+                    db,
+                )
+                self.assertEqual(entry.shop_id, current_shop.id)
+                self.assertEqual(entry.expense_name, "Tea Expense")
+                self.assertEqual(entry.amount, Decimal("123.45"))
+
+                with self.assertRaises(HTTPException) as inactive_context:
+                    await record_shop_expense(
+                        ExpenseEntryCreate(expense_item_id=fuel.id, amount=Decimal("50.00")),
+                        current_shop,
+                        db,
+                    )
+                self.assertEqual(inactive_context.exception.status_code, 409)
+
+                with self.assertRaises(HTTPException) as unallocated_context:
+                    await record_shop_expense(
+                        ExpenseEntryCreate(expense_item_id=tea.id, amount=Decimal("50.00")),
+                        other_current_shop,
+                        db,
+                    )
+                self.assertEqual(unallocated_context.exception.status_code, 409)
+
+                shop_history = await shop_expense_history(
+                    range_start_date=None,
+                    range_end_date=None,
+                    cursor_spent_at=None,
+                    cursor_id=None,
+                    shop=current_shop,
+                    db=db,
+                    limit=10,
+                )
+                self.assertEqual([item.id for item in shop_history.items], [entry.id])
+                admin_history = await get_expense_history(db, shop_id=current_shop.id, limit=10)
+                self.assertEqual([item.id for item in admin_history.items], [entry.id])
+                self.assertEqual(admin_history.items[0].note, "Tea purchase")
+
+        self.run_async(scenario())
+
     def test_catalogue_row_and_count_endpoints_are_split(self) -> None:
         _actor, shop = self.run_async(self.harness.create_shop_user())
         self.run_async(
@@ -930,6 +1346,96 @@ class BackendApiIntegrationTests(BackendTestCase):
                     )
                     self.assertEqual(not_modified.status_code, 304)
                     self.assertEqual(not_modified.headers["etag"], '"thumb-etag"')
+
+        self.run_async(scenario())
+
+    def test_catalogue_image_proxy_streams_payload_and_closes_body(self) -> None:
+        self.run_async(self.harness.create_catalogue_items(("Chicken",)))
+
+        class Body:
+            def __init__(self, chunks: list[bytes]) -> None:
+                self.chunks = chunks
+                self.closed = False
+
+            def read(self, chunk_size: int) -> bytes:
+                assert chunk_size > 0
+                if not self.chunks:
+                    return b""
+                return self.chunks.pop(0)
+
+            def close(self) -> None:
+                self.closed = True
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                chicken = session.scalar(select(Item).where(Item.name == "Chicken"))
+                chicken.image_object_key = "items/chicken/original/image.jpg"
+                chicken.image_content_type = "image/jpeg"
+                session.commit()
+
+                body = Body([b"stream-", b"image"])
+                payload = StoredImageStreamPayload(
+                    body=body,
+                    content_type="image/jpeg",
+                    object_key="items/chicken/original/image.jpg",
+                    etag='"stream-etag"',
+                    last_modified=datetime(2026, 5, 31, tzinfo=UTC),
+                    cache_control="public, max-age=3600",
+                )
+
+                async def fake_image_payload(item, *, db=None, variant="original", request_id=None):
+                    self.assertEqual(item.id, chicken.id)
+                    self.assertEqual(variant, "original")
+                    return payload
+
+                with patch(
+                    "app.routers.catalog.get_item_image_response_payload",
+                    fake_image_payload,
+                ):
+                    request = Mock()
+                    request.headers = {}
+                    response = await get_catalog_item_image(
+                        chicken.id,
+                        request,
+                        "original",
+                        db,
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.headers["etag"], '"stream-etag"')
+                    chunks = []
+                    async for chunk in response.body_iterator:
+                        chunks.append(chunk)
+                    self.assertEqual(b"".join(chunks), b"stream-image")
+                    self.assertTrue(body.closed)
+
+                not_modified_body = Body([b"unused"])
+                not_modified_payload = StoredImageStreamPayload(
+                    body=not_modified_body,
+                    content_type="image/jpeg",
+                    object_key="items/chicken/original/image.jpg",
+                    etag='"stream-etag"',
+                    last_modified=datetime(2026, 5, 31, tzinfo=UTC),
+                    cache_control="public, max-age=3600",
+                )
+
+                async def fake_not_modified_payload(item, *, db=None, variant="original", request_id=None):
+                    return not_modified_payload
+
+                with patch(
+                    "app.routers.catalog.get_item_image_response_payload",
+                    fake_not_modified_payload,
+                ):
+                    request = Mock()
+                    request.headers = {"if-none-match": '"stream-etag"'}
+                    response = await get_catalog_item_image(
+                        chicken.id,
+                        request,
+                        "original",
+                        db,
+                    )
+                    self.assertEqual(response.status_code, 304)
+                    self.assertTrue(not_modified_body.closed)
 
         self.run_async(scenario())
 
@@ -1342,6 +1848,16 @@ class BackendApiIntegrationTests(BackendTestCase):
                     db,
                     current_shop,
                 )
+                second_preview = await preview_checkout(checkout_payload, db, current_shop)
+                second_bill = await checkout(
+                    BillCheckoutCommitRequest(
+                        items=checkout_payload.items,
+                        payment=checkout_payload.payment,
+                        checkout_token=second_preview.checkout_token,
+                    ),
+                    db,
+                    current_shop,
+                )
 
                 chicken.name = "Renamed Chicken"
                 chicken.tamil_name = "மாற்றிய பெயர்"
@@ -1352,6 +1868,23 @@ class BackendApiIntegrationTests(BackendTestCase):
                 self.assertEqual(historical_bill.items[0].item_tamil_name, "தோலுடன்")
                 self.assertEqual(historical_bill.items[0].item_unit_type, UnitType.WEIGHT)
                 self.assertEqual(historical_bill.items[0].item_base_unit, BaseUnit.KG)
+
+                batch = await bill_details(
+                    BillDetailBatchRequest(bill_ids=[second_bill.id, created_bill.id]),
+                    db,
+                )
+                self.assertEqual([bill.id for bill in batch], [second_bill.id, created_bill.id])
+                self.assertEqual(batch[1].items[0].item_name, "Chicken")
+
+                with self.assertRaises(HTTPException) as missing_ctx:
+                    await bill_details(
+                        BillDetailBatchRequest(bill_ids=[created_bill.id, uuid4()]),
+                        db,
+                    )
+                self.assertEqual(missing_ctx.exception.status_code, 404)
+
+                with self.assertRaises(ValidationError):
+                    BillDetailBatchRequest(bill_ids=[uuid4() for _ in range(51)])
 
         self.run_async(scenario())
 

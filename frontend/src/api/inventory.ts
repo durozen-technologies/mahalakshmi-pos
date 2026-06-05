@@ -4,6 +4,7 @@ import {
   InventoryMovementCreateResult,
   InventoryMovementPage,
   InventoryMovementSplitCreateResult,
+  InventoryStockRowsPage,
   InventorySummaryRead,
   InventoryUseRequest,
   InventoryUseSplitRequest,
@@ -12,6 +13,28 @@ import {
 
 export async function fetchShopInventory() {
   const { data } = await apiClient.get<InventorySummaryRead>("/api/v1/shop/inventory");
+  return data;
+}
+
+export type FetchShopInventoryRowsParams = {
+  q?: string;
+  limit?: number;
+  cursor_sort_order?: number | null;
+  cursor_name?: string | null;
+  cursor_id?: UUID | null;
+};
+
+export async function fetchShopInventoryRows(params?: FetchShopInventoryRowsParams, options: { signal?: AbortSignal } = {}) {
+  const { data } = await apiClient.get<InventoryStockRowsPage>("/api/v1/shop/inventory/items/rows", {
+    params: {
+      q: params?.q || undefined,
+      limit: params?.limit ?? 50,
+      cursor_sort_order: params?.cursor_sort_order ?? undefined,
+      cursor_name: params?.cursor_name ?? undefined,
+      cursor_id: params?.cursor_id ?? undefined,
+    },
+    signal: options.signal,
+  });
   return data;
 }
 

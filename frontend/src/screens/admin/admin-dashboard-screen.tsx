@@ -105,7 +105,7 @@ const PERIOD_OPTIONS: { key: AnalyticsPeriod; label: string }[] = [
   { key: AnalyticsPeriod.YEAR, label: "Year" },
 ];
 
-const PRINT_ALL_CHUNK_SIZE = 8;
+const PRINT_ALL_CHUNK_SIZE = 50;
 const CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const calendarMonthFormatter = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" });
 const calendarDateFormatter = new Intl.DateTimeFormat("en-IN", {
@@ -252,6 +252,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
     itemSales,
     largestBill,
     loadBillDetail,
+    loadBillDetails,
     loadDashboard,
     loadMoreBills,
     loading,
@@ -489,6 +490,10 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
     setCreateShopOpen(true);
   }, [createForm]);
 
+  const openReportsScreen = useCallback(() => {
+    navigation.navigate("AdminReports");
+  }, [navigation]);
+
   const openManageShopSheet = useCallback(
     (shop: ShopRead) => {
       setManageShopOpen(true);
@@ -654,7 +659,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
 
       for (let index = 0; index < visibleBills.length; index += PRINT_ALL_CHUNK_SIZE) {
         const billChunk = visibleBills.slice(index, index + PRINT_ALL_CHUNK_SIZE);
-        const chunkDetails = await Promise.all(billChunk.map((bill) => loadBillDetail(bill.bill_id)));
+        const chunkDetails = await loadBillDetails(billChunk.map((bill) => bill.bill_id));
         fullBills.push(...chunkDetails);
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -668,7 +673,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
     } finally {
       setPrintingAll(false);
     }
-  }, [loadBillDetail, preferredPrinter, printingAll, startReceiptImagePrintJob, visibleBills]);
+  }, [loadBillDetails, preferredPrinter, printingAll, startReceiptImagePrintJob, visibleBills]);
 
   const handleLoadMoreBills = useCallback(() => {
     void loadMoreBills().catch((error) => {
@@ -709,8 +714,12 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
       navigation.navigate("AdminInventory");
       return;
     }
+    if (key === "expenses") {
+      navigation.navigate("AdminExpenses", { shopId: selectedShopId ?? undefined });
+      return;
+    }
     setActiveNav(key as AdminNavTab);
-  }, [navigation]);
+  }, [navigation, selectedShopId]);
 
   if (loading && shops.length === 0) {
     return <DashboardSkeleton palette={palette} />;
@@ -1109,6 +1118,7 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
           bottomPadding={inventoryContentPadding}
           onRefresh={handleQuickRefresh}
           onCreateBranch={openCreateShopSheet}
+          onOpenReports={openReportsScreen}
           onManageBranch={openManageShopSheet}
           onToggleBranch={handleToggleBranchStatus}
           onLogout={handleLogout}

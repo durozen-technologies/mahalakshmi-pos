@@ -20,6 +20,14 @@
 			}
 		}
 
+		rate_limit {
+			zone public_api {
+				key {remote_host}
+				events {$CADDY_RATE_LIMIT_EVENTS:300}
+				window {$CADDY_RATE_LIMIT_WINDOW:1m}
+			}
+		}
+
 		handle_path /rustfs/* {
 			reverse_proxy rustfs:9000 {
 				header_up Host {upstream_hostport}

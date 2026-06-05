@@ -52,6 +52,10 @@ services:
   backend:
     build:
       context: ./backend
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${BACKEND_PYTHON_VERSION:-3.11}
+        UV_VERSION: ${BACKEND_UV_VERSION:-0.11.3}
     restart: unless-stopped
     env_file:
       - ./backend/.env
@@ -81,14 +85,21 @@ services:
   caddy:
     build:
       context: ./caddy
+      dockerfile: Dockerfile
+      args:
+        CADDY_VERSION: ${CADDY_VERSION:-2}
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     environment:
       CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?Set CADDY_ACME_EMAIL}
-      DUCKDNS_API_TOKEN: ${DUCKDNS_API_TOKEN:?Set DUCKDNS_API_TOKEN}
+      CADDY_PUBLIC_HOST: ${CADDY_PUBLIC_HOST:?Set CADDY_PUBLIC_HOST}
+      CADDY_DUCKDNS_HOST: ${CADDY_DUCKDNS_HOST:-}
+      DUCKDNS_API_TOKEN: ${DUCKDNS_API_TOKEN:-}
       CADDY_UPSTREAM: ${CADDY_UPSTREAM:-backend:8000}
+      CADDY_RATE_LIMIT_EVENTS: ${CADDY_RATE_LIMIT_EVENTS:-300}
+      CADDY_RATE_LIMIT_WINDOW: ${CADDY_RATE_LIMIT_WINDOW:-1m}
     ports:
       - "80:80"
       - "443:443"

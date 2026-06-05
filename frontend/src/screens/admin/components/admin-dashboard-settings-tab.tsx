@@ -25,6 +25,7 @@ type AdminSettingsTabProps = {
   bottomPadding: number;
   onRefresh: () => void;
   onCreateBranch: () => void;
+  onOpenReports: () => void;
   onManageBranch: (shop: ShopRead) => void;
   onToggleBranch: (shopId: UUID, isActive: boolean) => void;
   onLogout: () => void;
@@ -41,6 +42,7 @@ export const AdminSettingsTab = memo(function AdminSettingsTab({
   bottomPadding,
   onRefresh,
   onCreateBranch,
+  onOpenReports,
   onManageBranch,
   onToggleBranch,
   onLogout,
@@ -63,6 +65,17 @@ export const AdminSettingsTab = memo(function AdminSettingsTab({
       >
         <MaterialCommunityIcons name="store-plus-outline" size={20} color={palette.background} />
         <Text style={[styles.createShopBtnText, { color: palette.background }]}>+ Create New Branch</Text>
+      </Pressable>
+      <Pressable
+        onPress={onOpenReports}
+        style={[
+          styles.reportBtn,
+          adminShadow(palette.shadow, 0.05, 7, 12),
+          { backgroundColor: palette.card, borderColor: palette.border },
+        ]}
+      >
+        <MaterialCommunityIcons name="file-chart-outline" size={20} color={palette.settings} />
+        <Text style={[styles.reportBtnText, { color: palette.textPrimary }]}>Generate Reports</Text>
       </Pressable>
     </View>
   );
@@ -128,6 +141,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   createShopBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  reportBtn: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+  },
+  reportBtnText: {
     fontSize: 15,
     fontWeight: "700",
   },
