@@ -64,9 +64,18 @@ const SECTION_OPTIONS: { key: AdminReportSection; label: string; icon: IconName 
   { key: "billing", label: "Billing", icon: "receipt-text-outline" },
   { key: "items", label: "Items", icon: "playlist-edit" },
   { key: "inventory", label: "Inventory", icon: "warehouse" },
+  { key: "assumptions", label: "Assumption", icon: "percent" },
+  { key: "over_report", label: "Overall Report", icon: "file-chart-outline" },
 ];
 
-const SECTION_ORDER: AdminReportSection[] = ["sales", "billing", "items", "inventory"];
+const SECTION_ORDER: AdminReportSection[] = [
+  "sales",
+  "billing",
+  "items",
+  "inventory",
+  "assumptions",
+  "over_report",
+];
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const calendarMonthFormatter = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" });
@@ -133,6 +142,21 @@ function pluralizeBranch(count: number) {
   return count === 1 ? "1 branch" : `${count} branches`;
 }
 
+function formatSelectedBranchNames(shops: ShopRead[], selectedIds: UUID[]) {
+  if (selectedIds.length === 0) {
+    return "Select branches";
+  }
+  const selectedIdSet = new Set(selectedIds);
+  const selectedNames = shops.filter((shop) => selectedIdSet.has(shop.id)).map((shop) => shop.name);
+  if (selectedNames.length === 0) {
+    return pluralizeBranch(selectedIds.length);
+  }
+  if (selectedNames.length <= 2) {
+    return selectedNames.join(", ");
+  }
+  return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2}`;
+}
+
 function validateRange(startDate: string | null, endDate: string | null) {
   if (!startDate || !endDate) {
     return "Select a start and end date.";
@@ -189,6 +213,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
   const [detailLevel, setDetailLevel] = useState<AdminReportDetailLevel>("summary");
   const [allBranches, setAllBranches] = useState(true);
   const [selectedShopIds, setSelectedShopIds] = useState<UUID[]>([]);
+  const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [selectedSections, setSelectedSections] = useState<AdminReportSection[]>(["sales"]);
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
@@ -202,6 +227,9 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
   );
   const selectedShopIdSet = useMemo(() => new Set(selectedShopIds), [selectedShopIds]);
   const branchSelectionLabel = allBranches ? "All branches" : pluralizeBranch(selectedShopIds.length);
+  const branchSelectionDetail = allBranches
+    ? pluralizeBranch(shops.length)
+    : formatSelectedBranchNames(shops, selectedShopIds);
   const currentPeriodLabel = formatReportPeriodLabel(period, referenceDate, rangeStartDate, rangeEndDate);
   const selectedSectionSet = useMemo(() => new Set(selectedSections), [selectedSections]);
   const canGenerate = selectedSections.length > 0 && (allBranches || selectedShopIds.length > 0) && !generating;
@@ -299,6 +327,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
     triggerHaptic();
     setAllBranches(true);
     setSelectedShopIds([]);
+    setBranchDropdownOpen(false);
   }, []);
 
   const handleToggleShop = useCallback((shopId: UUID) => {
@@ -314,6 +343,11 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
       }
       return [...current, shopId];
     });
+  }, []);
+
+  const handleToggleBranchDropdown = useCallback(() => {
+    triggerHaptic();
+    setBranchDropdownOpen((open) => !open);
   }, []);
 
   const handleGenerate = useCallback(async () => {
@@ -523,6 +557,42 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
     </View>
   );
 
+  const renderBranchOption = (item: ShopRead) => {
+    const selected = !allBranches && selectedShopIdSet.has(item.id);
+    return (
+      <Pressable
+        key={item.id}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: selected }}
+        onPress={() => handleToggleShop(item.id)}
+        style={[
+          styles.branchDropdownOption,
+          {
+            backgroundColor: selected ? palette.primarySoft : palette.card,
+            borderColor: selected ? palette.primary : palette.border,
+          },
+        ]}
+      >
+        <View style={[styles.branchIcon, { backgroundColor: selected ? palette.primary : palette.surfaceMuted }]}>
+          <MaterialCommunityIcons name="storefront-outline" size={18} color={selected ? palette.onPrimary : palette.textMuted} />
+        </View>
+        <View style={styles.branchTextWrap}>
+          <Text numberOfLines={1} style={[styles.branchName, { color: palette.textPrimary }]}>
+            {item.name}
+          </Text>
+          <Text numberOfLines={1} style={[styles.branchMeta, { color: palette.textMuted }]}>
+            {item.is_active ? "Active" : "Paused"}
+          </Text>
+        </View>
+        <MaterialCommunityIcons
+          name={selected ? "check-circle" : "checkbox-blank-circle-outline"}
+          size={20}
+          color={selected ? palette.primary : palette.textMuted}
+        />
+      </Pressable>
+    );
+  };
+
   const renderHeader = () => (
     <View style={styles.contentHeader}>
       {errorMessage ? (
@@ -670,72 +740,90 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ selected: allBranches }}
-          onPress={handleSelectAllBranches}
+          accessibilityState={{ expanded: branchDropdownOpen }}
+          onPress={handleToggleBranchDropdown}
           style={[
-            styles.branchRow,
+            styles.branchSelectButton,
             {
-              backgroundColor: allBranches ? palette.settingsSoft : palette.card,
-              borderColor: allBranches ? palette.settings : palette.border,
+              backgroundColor: palette.card,
+              borderColor: branchDropdownOpen ? palette.primary : palette.border,
             },
           ]}
         >
-          <View style={[styles.branchIcon, { backgroundColor: allBranches ? palette.settings : palette.surfaceMuted }]}>
-            <MaterialCommunityIcons name="source-branch" size={18} color={allBranches ? palette.background : palette.textMuted} />
+          <View style={[styles.branchIcon, { backgroundColor: allBranches ? palette.settingsSoft : palette.primarySoft }]}>
+            <MaterialCommunityIcons name="source-branch" size={18} color={allBranches ? palette.settings : palette.primary} />
           </View>
           <View style={styles.branchTextWrap}>
-            <Text style={[styles.branchName, { color: palette.textPrimary }]}>All Branches</Text>
-            <Text style={[styles.branchMeta, { color: palette.textMuted }]}>{pluralizeBranch(shops.length)}</Text>
+            <Text style={[styles.branchName, { color: palette.textPrimary }]}>{branchSelectionLabel}</Text>
+            <Text numberOfLines={1} style={[styles.branchMeta, { color: palette.textMuted }]}>
+              {branchSelectionDetail}
+            </Text>
           </View>
           <MaterialCommunityIcons
-            name={allBranches ? "check-circle" : "checkbox-blank-circle-outline"}
-            size={20}
-            color={allBranches ? palette.settings : palette.textMuted}
+            name={branchDropdownOpen ? "chevron-up" : "chevron-down"}
+            size={22}
+            color={palette.textMuted}
           />
         </Pressable>
-        {loadingShops ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color={palette.primary} />
+        {branchDropdownOpen ? (
+          <View style={[styles.branchDropdown, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: allBranches }}
+              onPress={handleSelectAllBranches}
+              style={[
+                styles.branchDropdownOption,
+                {
+                  backgroundColor: allBranches ? palette.settingsSoft : palette.card,
+                  borderColor: allBranches ? palette.settings : palette.border,
+                },
+              ]}
+            >
+              <View style={[styles.branchIcon, { backgroundColor: allBranches ? palette.settings : palette.surfaceMuted }]}>
+                <MaterialCommunityIcons
+                  name="source-branch"
+                  size={18}
+                  color={allBranches ? palette.background : palette.textMuted}
+                />
+              </View>
+              <View style={styles.branchTextWrap}>
+                <Text style={[styles.branchName, { color: palette.textPrimary }]}>All branches</Text>
+                <Text style={[styles.branchMeta, { color: palette.textMuted }]}>{pluralizeBranch(shops.length)}</Text>
+              </View>
+              <MaterialCommunityIcons
+                name={allBranches ? "check-circle" : "checkbox-blank-circle-outline"}
+                size={20}
+                color={allBranches ? palette.settings : palette.textMuted}
+              />
+            </Pressable>
+            {loadingShops ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color={palette.primary} />
+              </View>
+            ) : (
+              <ScrollView
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={shops.length > 4}
+                style={styles.branchDropdownScroll}
+                contentContainerStyle={styles.branchDropdownContent}
+              >
+                {shops.map(renderBranchOption)}
+              </ScrollView>
+            )}
+            {!allBranches ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setBranchDropdownOpen(false)}
+                style={[styles.branchDoneButton, { backgroundColor: palette.primary, borderColor: palette.primary }]}
+              >
+                <Text style={[styles.branchDoneText, { color: palette.onPrimary }]}>Done</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </View>
     </View>
   );
-
-  const renderBranch = ({ item }: { item: ShopRead }) => {
-    const selected = !allBranches && selectedShopIdSet.has(item.id);
-    return (
-      <Pressable
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: selected }}
-        onPress={() => handleToggleShop(item.id)}
-        style={[
-          styles.branchRow,
-          {
-            backgroundColor: selected ? palette.primarySoft : palette.card,
-            borderColor: selected ? palette.primary : palette.border,
-          },
-        ]}
-      >
-        <View style={[styles.branchIcon, { backgroundColor: selected ? palette.primary : palette.surfaceMuted }]}>
-          <MaterialCommunityIcons name="storefront-outline" size={18} color={selected ? palette.onPrimary : palette.textMuted} />
-        </View>
-        <View style={styles.branchTextWrap}>
-          <Text numberOfLines={1} style={[styles.branchName, { color: palette.textPrimary }]}>
-            {item.name}
-          </Text>
-          <Text numberOfLines={1} style={[styles.branchMeta, { color: palette.textMuted }]}>
-            {item.is_active ? "Active" : "Paused"}
-          </Text>
-        </View>
-        <MaterialCommunityIcons
-          name={selected ? "check-circle" : "checkbox-blank-circle-outline"}
-          size={20}
-          color={selected ? palette.primary : palette.textMuted}
-        />
-      </Pressable>
-    );
-  };
 
   const renderFooter = () => (
     <View style={[styles.footer, { paddingBottom: 32 + insets.bottom }]}>
@@ -784,9 +872,9 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
       </View>
 
       <FlatList
-        data={shops}
+        data={[] as ShopRead[]}
         keyExtractor={(item) => item.id}
-        renderItem={renderBranch}
+        renderItem={() => null}
         ListHeaderComponent={renderHeader}
         ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
@@ -803,7 +891,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
         maxToRenderPerBatch={8}
         updateCellsBatchingPeriod={48}
         windowSize={7}
-        extraData={`${allBranches}-${selectedShopIds.join(",")}-${selectedSections.join(",")}-${detailLevel}-${period}`}
+        extraData={`${allBranches}-${selectedShopIds.join(",")}-${selectedSections.join(",")}-${detailLevel}-${period}-${branchDropdownOpen}`}
         showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
@@ -1063,7 +1151,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  branchRow: {
+  branchSelectButton: {
+    minHeight: 58,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  branchDropdown: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 8,
+    gap: 8,
+  },
+  branchDropdownScroll: {
+    maxHeight: 278,
+  },
+  branchDropdownContent: {
+    gap: 8,
+  },
+  branchDropdownOption: {
     minHeight: 58,
     borderRadius: 12,
     borderWidth: 1,
@@ -1097,6 +1207,17 @@ const styles = StyleSheet.create({
     minHeight: 42,
     alignItems: "center",
     justifyContent: "center",
+  },
+  branchDoneButton: {
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  branchDoneText: {
+    fontSize: 13,
+    fontWeight: "800",
   },
   footer: {
     paddingTop: 14,

@@ -2,7 +2,14 @@ from ..db.database import Base
 from .base import BaseModelMixin
 from .bill import Bill, BillItem, MonthlyBillSequence
 from .daily_price import DailyPrice
-from .enums import BaseUnit, BillStatus, InventoryMovementType, UnitType, UserRole
+from .enums import (
+    BaseUnit,
+    BillStatus,
+    InventoryMovementType,
+    ItemAssumptionStatus,
+    UnitType,
+    UserRole,
+)
 from .expense import ExpenseEntry, ExpenseItem, ShopExpenseAllocation
 from .inventory import (
     InventoryCategory,
@@ -42,6 +49,7 @@ __all__ = [
     "InventoryMovement",
     "InventoryMovementType",
     "Item",
+    "ItemAssumptionStatus",
     "ItemCategory",
     "ItemChangeEvent",
     "MonthlyBillSequence",

@@ -27,11 +27,23 @@ class ExpenseItemRead(ORMModel):
     tamil_name: str
     sort_order: int = 0
     is_active: bool
+    image_path: str | None = None
+    image_thumb_path: str | None = None
+    image_content_type: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
     allocated_shop_count: int = 0
     entry_count: int = 0
     can_delete: bool = False
+
+
+class ExpenseItemImageRead(BaseModel):
+    expense_item_id: UUID
+    expense_item_name: str
+    expense_item_tamil_name: str | None = None
+    image_path: str | None = None
+    image_thumb_path: str | None = None
+    image_content_type: str | None = None
 
 
 class ShopExpenseItemRead(ExpenseItemRead):
@@ -104,6 +116,9 @@ class ExpenseEntryRead(ORMModel):
     expense_item_id: UUID
     expense_name: str
     expense_tamil_name: str
+    image_path: str | None = None
+    image_thumb_path: str | None = None
+    image_content_type: str | None = None
     amount: Decimal
     spent_at: datetime
     note: str | None = None
@@ -114,5 +129,6 @@ class ExpenseEntryPage(BaseModel):
     items: list[ExpenseEntryRead]
     limit: int
     has_more: bool
+    total_amount: Decimal = Decimal("0.00")
     next_cursor_spent_at: datetime | None = None
     next_cursor_id: UUID | None = None

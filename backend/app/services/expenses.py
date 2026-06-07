@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,15 @@ from app.schemas.expenses import (
     ShopExpenseItemRead,
     ShopExpenseItemRowsPage,
     ShopExpenseItemsOrderRead,
+)
+from app.services.storage import (
+    build_expense_item_image_path,
+    build_expense_item_image_thumb_path,
+    delete_item_image_storage,
+    save_expense_item_image_upload,
+)
+from app.services.storage import (
+    delete_expense_item_image as delete_expense_item_image_storage_record,
 )
 
 
@@ -90,6 +99,14 @@ def _expense_item_to_read(
         tamil_name=item.tamil_name,
         sort_order=item.sort_order,
         is_active=item.is_active,
+        image_path=build_expense_item_image_path(item.id, item.image_object_key, item.image_content_type),
+        image_thumb_path=build_expense_item_image_thumb_path(
+            item.id,
+            item.image_thumbnail_object_key,
+            item.image_thumbnail_content_type,
+            original_object_key=item.image_object_key,
+        ),
+        image_content_type=item.image_content_type,
         created_at=item.created_at,
         updated_at=item.updated_at,
         allocated_shop_count=allocated_shop_count,
@@ -107,6 +124,14 @@ def _shop_expense_item_from_row(row) -> ShopExpenseItemRead:
         tamil_name=row.tamil_name,
         sort_order=row.sort_order,
         is_active=row.is_active,
+        image_path=build_expense_item_image_path(row.id, row.image_object_key, row.image_content_type),
+        image_thumb_path=build_expense_item_image_thumb_path(
+            row.id,
+            row.image_thumbnail_object_key,
+            row.image_thumbnail_content_type,
+            original_object_key=row.image_object_key,
+        ),
+        image_content_type=row.image_content_type,
         created_at=row.created_at,
         updated_at=row.updated_at,
         allocated_shop_count=allocated_shop_count,
@@ -284,8 +309,24 @@ async def delete_expense_item(db: AsyncSession, item_id: UUID) -> None:
     has_entry = await db.scalar(select(ExpenseEntry.id).where(ExpenseEntry.expense_item_id == item_id).limit(1))
     if has_entry is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete an expense item with history")
+    image_object_key = item.image_object_key
+    thumbnail_object_key = item.image_thumbnail_object_key
     await db.delete(item)
     await db.commit()
+    await delete_item_image_storage(image_object_key, thumbnail_object_key)
+
+
+async def upload_expense_item_image(db: AsyncSession, item_id: UUID, image: UploadFile) -> ExpenseItemRead:
+    item = await db.scalar(select(ExpenseItem).where(ExpenseItem.id == item_id).with_for_update())
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense item not found")
+    await save_expense_item_image_upload(db, item, image)
+    return await get_expense_item(db, item_id)
+
+
+async def remove_expense_item_image(db: AsyncSession, item_id: UUID) -> ExpenseItemRead:
+    await delete_expense_item_image_storage_record(db, item_id)
+    return await get_expense_item(db, item_id)
 
 
 def _shop_expense_rows_query(
@@ -315,6 +356,10 @@ def _shop_expense_rows_query(
             ExpenseItem.tamil_name,
             ExpenseItem.sort_order,
             ExpenseItem.is_active,
+            ExpenseItem.image_object_key,
+            ExpenseItem.image_content_type,
+            ExpenseItem.image_thumbnail_object_key,
+            ExpenseItem.image_thumbnail_content_type,
             ExpenseItem.created_at,
             ExpenseItem.updated_at,
             ShopExpenseAllocation.id.label("allocation_id"),
@@ -664,6 +709,14 @@ async def create_shop_expense_entry(
         expense_item_id=entry.expense_item_id,
         expense_name=entry.expense_name,
         expense_tamil_name=entry.expense_tamil_name,
+        image_path=build_expense_item_image_path(item.id, item.image_object_key, item.image_content_type),
+        image_thumb_path=build_expense_item_image_thumb_path(
+            item.id,
+            item.image_thumbnail_object_key,
+            item.image_thumbnail_content_type,
+            original_object_key=item.image_object_key,
+        ),
+        image_content_type=item.image_content_type,
         amount=entry.amount,
         spent_at=entry.spent_at,
         note=entry.note,
@@ -681,27 +734,33 @@ async def list_expense_entries(
     cursor_spent_at: datetime | None = None,
     cursor_id: UUID | None = None,
 ) -> ExpenseEntryPage:
-    filters = _date_range_filters(range_start_date, range_end_date)
+    base_filters = _date_range_filters(range_start_date, range_end_date)
     if shop_id is not None:
-        filters.append(ExpenseEntry.shop_id == shop_id)
+        base_filters.append(ExpenseEntry.shop_id == shop_id)
+    cursor_filters = []
     if cursor_spent_at is not None:
         if cursor_id is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Expense history cursor is incomplete")
-        filters.append(
+        cursor_filters.append(
             or_(
                 ExpenseEntry.spent_at < cursor_spent_at,
                 and_(ExpenseEntry.spent_at == cursor_spent_at, ExpenseEntry.id < cursor_id),
             )
         )
+    total_amount = await db.scalar(
+        select(func.coalesce(func.sum(ExpenseEntry.amount), Decimal("0.00"))).where(*base_filters)
+    )
 
     rows = (
         await db.execute(
             select(
                 ExpenseEntry,
                 Shop.name.label("shop_name"),
+                ExpenseItem,
             )
             .join(Shop, Shop.id == ExpenseEntry.shop_id)
-            .where(*filters)
+            .join(ExpenseItem, ExpenseItem.id == ExpenseEntry.expense_item_id)
+            .where(*base_filters, *cursor_filters)
             .order_by(ExpenseEntry.spent_at.desc(), ExpenseEntry.id.desc())
             .limit(limit + 1)
         )
@@ -715,6 +774,18 @@ async def list_expense_entries(
             expense_item_id=row.ExpenseEntry.expense_item_id,
             expense_name=row.ExpenseEntry.expense_name,
             expense_tamil_name=row.ExpenseEntry.expense_tamil_name,
+            image_path=build_expense_item_image_path(
+                row.ExpenseItem.id,
+                row.ExpenseItem.image_object_key,
+                row.ExpenseItem.image_content_type,
+            ),
+            image_thumb_path=build_expense_item_image_thumb_path(
+                row.ExpenseItem.id,
+                row.ExpenseItem.image_thumbnail_object_key,
+                row.ExpenseItem.image_thumbnail_content_type,
+                original_object_key=row.ExpenseItem.image_object_key,
+            ),
+            image_content_type=row.ExpenseItem.image_content_type,
             amount=row.ExpenseEntry.amount,
             spent_at=row.ExpenseEntry.spent_at,
             note=row.ExpenseEntry.note,
@@ -731,6 +802,7 @@ async def list_expense_entries(
         items=items,
         limit=limit,
         has_more=len(rows) > limit,
+        total_amount=Decimal(total_amount or 0).quantize(Decimal("0.01")),
         next_cursor_spent_at=next_cursor_spent_at,
         next_cursor_id=next_cursor_id,
     )

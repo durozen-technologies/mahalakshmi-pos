@@ -30,6 +30,10 @@ class ExpenseItem(Base, BaseModelMixin):
     tamil_name: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    image_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image_thumbnail_object_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_thumbnail_content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

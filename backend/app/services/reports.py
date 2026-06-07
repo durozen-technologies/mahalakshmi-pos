@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from textwrap import shorten
 from typing import BinaryIO, Iterable, Iterator
@@ -10,19 +11,25 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 from sqlalchemy import and_, case, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    BaseUnit,
     Bill,
     BillItem,
+    DailyPrice,
+    ExpenseEntry,
     InventoryCategory,
     InventoryItem,
     InventoryItemCategory,
     InventoryMovement,
     InventoryMovementType,
     Item,
+    ItemAssumptionStatus,
     Payment,
     Shop,
     ShopInventoryAllocation,
@@ -30,17 +37,36 @@ from app.models import (
 from app.schemas.admin import AdminReportDetailLevel, AdminReportSection, AnalyticsPeriod
 from app.services.admin import _get_period_bounds
 
-SECTION_ORDER: tuple[AdminReportSection, ...] = ("sales", "billing", "items", "inventory")
+SECTION_ORDER: tuple[AdminReportSection, ...] = (
+    "sales",
+    "billing",
+    "items",
+    "inventory",
+    "assumptions",
+    "over_report",
+)
 SECTION_LABELS: dict[AdminReportSection, str] = {
     "sales": "Sales",
     "billing": "Billing",
     "items": "Items",
     "inventory": "Inventory",
+    "assumptions": "Assumptions",
+    "over_report": "Over Report",
 }
 SUMMARY_BILL_ROWS = 25
 SUMMARY_ITEM_ROWS = 50
 SUMMARY_INVENTORY_ROWS = 100
 FULL_QUERY_BATCH_SIZE = 500
+TAMIL_FONT_REGULAR = "BillingReportNotoSansTamil"
+TAMIL_FONT_BOLD = "BillingReportNotoSansTamilBold"
+TAMIL_FONT_REGULAR_PATHS = (
+    Path("/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf"),
+    Path("/usr/share/fonts/truetype/noto/NotoSerifTamil-Regular.ttf"),
+)
+TAMIL_FONT_BOLD_PATHS = (
+    Path("/usr/share/fonts/truetype/noto/NotoSansTamil-Bold.ttf"),
+    Path("/usr/share/fonts/truetype/noto/NotoSerifTamil-Bold.ttf"),
+)
 
 
 @dataclass(frozen=True)
@@ -87,9 +113,27 @@ class TableState:
 SoldItemCategoryKey = tuple[UUID, str, object]
 
 
+@dataclass(frozen=True)
+class OverReportItemRow:
+    category: str
+    item_name: str
+    assumption_percent: Decimal | None
+    used_stock: Decimal
+    sales_kg: Decimal
+    assumption_kg: Decimal
+    difference_kg: Decimal
+    today_price: Decimal | None
+    sales_amount: Decimal
+    assumption_amount: Decimal
+    difference_amount: Decimal
+
+
 class PdfReportWriter:
     def __init__(self, output: BinaryIO) -> None:
         self._canvas = Canvas(output, pagesize=A4, pageCompression=0)
+        self._font_regular = "Helvetica"
+        self._font_bold = "Helvetica-Bold"
+        self._tamil_font_regular, self._tamil_font_bold = _resolve_tamil_fonts()
         self._width, self._height = A4
         self._margin = 36
         self._bottom = 54
@@ -125,9 +169,9 @@ class PdfReportWriter:
             fill=1,
         )
         self._set_fill((1, 1, 1))
-        self._canvas.setFont("Helvetica-Bold", 21)
+        self._canvas.setFont(self._font_bold, 21)
         self._canvas.drawString(self._margin + 18, self._y - 34, title)
-        self._canvas.setFont("Helvetica", 9)
+        self._canvas.setFont(self._font_regular, 9)
         self._canvas.drawString(self._margin + 18, self._y - 52, "Generated for admin reporting")
 
         meta_lines = list(lines)
@@ -138,10 +182,10 @@ class PdfReportWriter:
             x = x_positions[index % 2]
             if index > 0 and index % 2 == 0:
                 y -= 19
-            self._canvas.setFont("Helvetica-Bold", 7)
+            self._canvas.setFont(self._font_bold, 7)
             self._set_fill((0.78, 0.84, 0.91))
             self._canvas.drawString(x, y, _pdf_text(label.upper(), 26))
-            self._canvas.setFont("Helvetica", 8)
+            self._canvas.setFont(self._font_regular, 8)
             self._set_fill((1, 1, 1))
             self._canvas.drawString(x, y - 11, _pdf_text(value.strip(), 44))
         self._y = card_y - 20
@@ -165,7 +209,7 @@ class PdfReportWriter:
         self._set_fill(self._primary)
         self._canvas.roundRect(self._margin, band_y, 6, band_height, 3, stroke=0, fill=1)
         self._set_fill(self._text)
-        self._canvas.setFont("Helvetica-Bold", 13)
+        self._canvas.setFont(self._font_bold, 13)
         self._canvas.drawString(self._margin + 16, band_y + 9, title)
         self._y = band_y - 12
 
@@ -186,7 +230,7 @@ class PdfReportWriter:
             fill=1,
         )
         self._set_fill(self._muted)
-        self._canvas.setFont("Helvetica", 9)
+        self._canvas.setFont(self._font_regular, 9)
         self._canvas.drawString(self._margin + 10, box_y + 7, _pdf_text(text, 128))
         self._y = box_y - 10
 
@@ -230,7 +274,7 @@ class PdfReportWriter:
         self._set_fill(fill)
         self._set_stroke((0.90, 0.92, 0.94))
         self._canvas.rect(self._margin, row_y, sum(widths), row_height, stroke=1, fill=1)
-        self._canvas.setFont("Helvetica", 7)
+        self._canvas.setFont(self._font_regular, 7)
         self._set_fill(self._text)
         x = self._margin
         if alignments is not None:
@@ -264,7 +308,7 @@ class PdfReportWriter:
         self._set_stroke(self._primary)
         self._canvas.roundRect(self._margin, header_y, sum(state.widths), header_height, 5, stroke=1, fill=1)
         self._set_fill((1, 1, 1))
-        self._canvas.setFont("Helvetica-Bold", 7)
+        self._canvas.setFont(self._font_bold, 7)
         x = self._margin
         for header, width, alignment in zip(state.headers, state.widths, state.alignments, strict=True):
             self._draw_cell_text(
@@ -274,6 +318,7 @@ class PdfReportWriter:
                 width,
                 alignment,
                 font_size=7,
+                bold=True,
                 max_ratio=4.2,
             )
             x += width
@@ -288,10 +333,12 @@ class PdfReportWriter:
         alignment: str,
         *,
         font_size: int,
+        bold: bool = False,
         max_ratio: float = 3.7,
     ) -> None:
         padding = 5
         text = _pdf_text(value, max(6, int((width - padding * 2) / max_ratio)))
+        self._set_text_font(text, font_size, bold=bold)
         if alignment == "right":
             self._canvas.drawRightString(x + width - padding, y, text)
         elif alignment == "center":
@@ -314,7 +361,7 @@ class PdfReportWriter:
     def _draw_footer(self) -> None:
         self._set_stroke(self._border)
         self._canvas.line(self._margin, 34, self._width - self._margin, 34)
-        self._canvas.setFont("Helvetica", 7)
+        self._canvas.setFont(self._font_regular, 7)
         self._set_fill(self._muted)
         self._canvas.drawString(self._margin, 22, "Billing System Admin Report")
         self._canvas.drawRightString(
@@ -328,6 +375,12 @@ class PdfReportWriter:
 
     def _set_stroke(self, rgb: tuple[float, float, float]) -> None:
         self._canvas.setStrokeColorRGB(*rgb)
+
+    def _set_text_font(self, text: str, font_size: int, *, bold: bool = False) -> None:
+        if _has_tamil_text(text):
+            self._canvas.setFont(self._tamil_font_bold if bold else self._tamil_font_regular, font_size)
+            return
+        self._canvas.setFont(self._font_bold if bold else self._font_regular, font_size)
 
 
 def iter_admin_report_file(report_file: BinaryIO, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
@@ -382,8 +435,12 @@ async def generate_admin_report_pdf(
             await _write_billing_section(db, writer, context)
         elif section == "items":
             await _write_items_section(db, writer, context)
-        else:
+        elif section == "inventory":
             await _write_inventory_section(db, writer, context)
+        elif section == "assumptions":
+            await _write_assumptions_section(db, writer, context)
+        else:
+            await _write_over_report_section(db, writer, context)
 
     writer.save()
     output.seek(0)
@@ -755,6 +812,423 @@ async def _write_inventory_section(
     )
 
 
+async def _write_assumptions_section(
+    db: AsyncSession,
+    writer: PdfReportWriter,
+    context: ReportContext,
+) -> None:
+    writer.section("Assumptions")
+    category_label = func.coalesce(func.nullif(func.trim(Item.category), ""), "Uncategorized")
+    latest_price_filters = []
+    if context.shop_ids:
+        latest_price_filters.append(DailyPrice.shop_id.in_(context.shop_ids))
+    else:
+        latest_price_filters.append(Shop.is_active.is_(True))
+    latest_prices = (
+        select(
+            DailyPrice.item_id.label("item_id"),
+            DailyPrice.price_per_unit.label("actual_price"),
+            DailyPrice.price_date.label("price_date"),
+            func.row_number()
+            .over(
+                partition_by=DailyPrice.item_id,
+                order_by=(
+                    DailyPrice.price_date.desc(),
+                    DailyPrice.created_at.desc(),
+                    DailyPrice.id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .join(Shop, Shop.id == DailyPrice.shop_id)
+        .where(*latest_price_filters)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                category_label.label("category"),
+                Item.name.label("item_name"),
+                Item.tamil_name.label("item_tamil_name"),
+                Item.base_unit,
+                Item.is_active,
+                Item.assumption_percent,
+                Item.assumption_inventory_item_id,
+                Item.assumption_inventory_category_id,
+                InventoryItem.name.label("inventory_item_name"),
+                InventoryCategory.name.label("inventory_category_name"),
+                latest_prices.c.actual_price,
+                latest_prices.c.price_date,
+            )
+            .outerjoin(InventoryItem, InventoryItem.id == Item.assumption_inventory_item_id)
+            .outerjoin(
+                InventoryCategory,
+                InventoryCategory.id == Item.assumption_inventory_category_id,
+            )
+            .outerjoin(
+                latest_prices,
+                and_(latest_prices.c.item_id == Item.id, latest_prices.c.rn == 1),
+            )
+            .where(Item.shop_id.is_(None))
+            .order_by(category_label, Item.sort_order, func.lower(Item.name), Item.id)
+        )
+    ).all()
+    status_counts = {
+        ItemAssumptionStatus.CONFIGURED: 0,
+        ItemAssumptionStatus.INCOMPLETE: 0,
+        ItemAssumptionStatus.NOT_SET: 0,
+        ItemAssumptionStatus.NOT_APPLICABLE: 0,
+    }
+    row_statuses = []
+    for row in rows:
+        status = _assumption_status(
+            row.base_unit,
+            row.assumption_percent,
+            row.assumption_inventory_item_id,
+            row.assumption_inventory_category_id,
+        )
+        status_counts[status] += 1
+        row_statuses.append((row, status))
+
+    writer.note(
+        f"Rows shown: {len(rows)} catalogue item(s). "
+        f"Configured: {status_counts[ItemAssumptionStatus.CONFIGURED]}; "
+        f"Incomplete: {status_counts[ItemAssumptionStatus.INCOMPLETE]}; "
+        f"Not set: {status_counts[ItemAssumptionStatus.NOT_SET]}; "
+        f"Not applicable: {status_counts[ItemAssumptionStatus.NOT_APPLICABLE]}. "
+        "Total price = actual price x assumption percent."
+    )
+    writer.table(
+        ["Category", "Item", "Tamil", "Unit", "Actual", "Assump", "Total", "Inventory", "Stock Cat", "Status"],
+        (
+            [
+                row.category,
+                row.item_name,
+                row.item_tamil_name,
+                getattr(row.base_unit, "value", row.base_unit),
+                _money_or_blank(row.actual_price),
+                _percent(row.assumption_percent),
+                _money_or_blank(_assumption_total_price(row.actual_price, row.assumption_percent)),
+                row.inventory_item_name or "",
+                row.inventory_category_name or "",
+                _assumption_status_label(status, row.is_active),
+            ]
+            for row, status in row_statuses
+        ),
+        [46, 58, 58, 26, 50, 38, 50, 66, 62, 44],
+        ["left", "left", "left", "center", "right", "right", "right", "left", "left", "center"],
+    )
+
+
+async def _write_over_report_section(
+    db: AsyncSession,
+    writer: PdfReportWriter,
+    context: ReportContext,
+) -> None:
+    writer.section("Over Report")
+    if not context.shops:
+        writer.note("No branch data available for the selected report scope.")
+        return
+
+    for index, (shop_id, shop_name) in enumerate(context.shops):
+        if index > 0:
+            writer.section("Over Report")
+        await _write_over_report_branch(db, writer, context, shop_id, shop_name)
+
+
+async def _write_over_report_branch(
+    db: AsyncSession,
+    writer: PdfReportWriter,
+    context: ReportContext,
+    shop_id: UUID,
+    shop_name: str,
+) -> None:
+    stock_totals = await _over_report_stock_totals(db, context, shop_id)
+    expense_amount = await _over_report_expense_amount(db, context, shop_id)
+    item_rows = await _over_report_item_rows(db, context, shop_id)
+
+    sales_kg = sum((row.sales_kg for row in item_rows), Decimal("0"))
+    assumption_kg = sum((row.assumption_kg for row in item_rows), Decimal("0"))
+    difference_kg = sales_kg - assumption_kg
+    sales_amount = sum((row.sales_amount for row in item_rows), Decimal("0"))
+    assumption_amount = sum((row.assumption_amount for row in item_rows), Decimal("0"))
+    difference_amount = sum((row.difference_amount for row in item_rows), Decimal("0"))
+    total_available = stock_totals["opening_stock"] + stock_totals["adding_stock"]
+    remaining_stock = total_available - stock_totals["used_stock"]
+    end_label = (context.end - timedelta(days=1)).date().isoformat()
+
+    writer.note(
+        "SRI MAHALAKSHMI BROILERS | "
+        f"{shop_name.upper()} - BRANCH | Statement | "
+        f"From Date: {context.start.date().isoformat()} To Date: {end_label}"
+    )
+    writer.table(
+        ["Particulars", "Value", "Format"],
+        [
+            ["Old Stock", _kg(stock_totals["opening_stock"]), ""],
+            ["Adding Stock", _kg(stock_totals["adding_stock"]), ""],
+            ["Old Stock + Adding Stock", _kg(total_available), "Total Available Stock"],
+            ["Used Stock", _kg(stock_totals["used_stock"]), ""],
+            ["Remaining Stock", _kg(remaining_stock), ""],
+            ["Sales (Kg)", _kg(sales_kg), ""],
+            ["Assumption (Kg)", _kg(assumption_kg), ""],
+            ["Difference (Kg)", _kg(difference_kg), "Sales (Kg) - Assumption (Kg)"],
+            ["Assumption Amount", _money(assumption_amount), ""],
+            ["Expense Amount", _money(expense_amount), ""],
+            ["Sales Amount", _money(sales_amount), ""],
+            ["Difference Amount", _money(difference_amount), "Difference (Kg) * Today price"],
+            ["Sales Amount - Expense Amount", _money(sales_amount - expense_amount), ""],
+            ["Sales Amount - Assumption Amount", _money(sales_amount - assumption_amount), ""],
+        ],
+        [178, 112, 206],
+        ["left", "right", "left"],
+    )
+
+    writer.table(
+        ["Category", "Item", "Assump", "Used", "Sales", "Assump Kg", "Diff Kg", "Today", "Diff Amt"],
+        (
+            [
+                row.category,
+                row.item_name,
+                _percent(row.assumption_percent),
+                _kg(row.used_stock),
+                _kg(row.sales_kg),
+                _kg(row.assumption_kg),
+                _kg(row.difference_kg),
+                _money_or_blank(row.today_price),
+                _money(row.difference_amount),
+            ]
+            for row in item_rows
+        ),
+        [56, 70, 42, 54, 54, 60, 52, 62, 66],
+        ["left", "left", "right", "right", "right", "right", "right", "right", "right"],
+    )
+
+
+async def _over_report_stock_totals(
+    db: AsyncSession,
+    context: ReportContext,
+    shop_id: UUID,
+) -> dict[str, Decimal]:
+    before_start = InventoryMovement.created_at < context.start
+    in_period = and_(
+        InventoryMovement.created_at >= context.start,
+        InventoryMovement.created_at < context.end,
+    )
+    row = (
+        await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    before_start,
+                                    InventoryMovement.movement_type == InventoryMovementType.ADD,
+                                ),
+                                InventoryMovement.quantity,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("opening_added"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    before_start,
+                                    InventoryMovement.movement_type == InventoryMovementType.USE,
+                                ),
+                                InventoryMovement.quantity,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("opening_used"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    in_period,
+                                    InventoryMovement.movement_type == InventoryMovementType.ADD,
+                                ),
+                                InventoryMovement.quantity,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("adding_stock"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    in_period,
+                                    InventoryMovement.movement_type == InventoryMovementType.USE,
+                                ),
+                                InventoryMovement.quantity,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("used_stock"),
+            )
+            .select_from(InventoryMovement)
+            .join(InventoryItem, InventoryItem.id == InventoryMovement.inventory_item_id)
+            .where(
+                InventoryMovement.shop_id == shop_id,
+                InventoryItem.base_unit == BaseUnit.KG,
+            )
+        )
+    ).one()
+    opening_stock = _decimal(row.opening_added) - _decimal(row.opening_used)
+    return {
+        "opening_stock": opening_stock,
+        "adding_stock": _decimal(row.adding_stock),
+        "used_stock": _decimal(row.used_stock),
+    }
+
+
+async def _over_report_expense_amount(
+    db: AsyncSession,
+    context: ReportContext,
+    shop_id: UUID,
+) -> Decimal:
+    total = await db.scalar(
+        select(func.coalesce(func.sum(ExpenseEntry.amount), Decimal("0.00"))).where(
+            ExpenseEntry.shop_id == shop_id,
+            ExpenseEntry.spent_at >= context.start,
+            ExpenseEntry.spent_at < context.end,
+        )
+    )
+    return _decimal(total).quantize(Decimal("0.01"))
+
+
+async def _over_report_item_rows(
+    db: AsyncSession,
+    context: ReportContext,
+    shop_id: UUID,
+) -> list[OverReportItemRow]:
+    category_label = func.coalesce(func.nullif(func.trim(Item.category), ""), "Uncategorized")
+    sales_totals = (
+        select(
+            BillItem.item_id.label("item_id"),
+            func.coalesce(func.sum(BillItem.quantity), 0).label("sales_kg"),
+            func.coalesce(func.sum(BillItem.line_total), 0).label("sales_amount"),
+        )
+        .join(Bill, Bill.id == BillItem.bill_id)
+        .where(
+            Bill.shop_id == shop_id,
+            Bill.created_at >= context.start,
+            Bill.created_at < context.end,
+            BillItem.unit == BaseUnit.KG,
+        )
+        .group_by(BillItem.item_id)
+        .subquery()
+    )
+    used_totals = (
+        select(
+            InventoryMovement.inventory_item_id.label("inventory_item_id"),
+            InventoryMovement.category_id.label("category_id"),
+            func.coalesce(func.sum(InventoryMovement.quantity), 0).label("used_stock"),
+        )
+        .where(
+            InventoryMovement.shop_id == shop_id,
+            InventoryMovement.created_at >= context.start,
+            InventoryMovement.created_at < context.end,
+            InventoryMovement.movement_type == InventoryMovementType.USE,
+        )
+        .group_by(InventoryMovement.inventory_item_id, InventoryMovement.category_id)
+        .subquery()
+    )
+    latest_prices = (
+        select(
+            DailyPrice.item_id.label("item_id"),
+            DailyPrice.price_per_unit.label("today_price"),
+            func.row_number()
+            .over(
+                partition_by=DailyPrice.item_id,
+                order_by=(
+                    DailyPrice.price_date.desc(),
+                    DailyPrice.created_at.desc(),
+                    DailyPrice.id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(DailyPrice.shop_id == shop_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                category_label.label("category"),
+                Item.name.label("item_name"),
+                Item.assumption_percent,
+                latest_prices.c.today_price,
+                func.coalesce(sales_totals.c.sales_kg, 0).label("sales_kg"),
+                func.coalesce(sales_totals.c.sales_amount, 0).label("sales_amount"),
+                func.coalesce(used_totals.c.used_stock, 0).label("used_stock"),
+            )
+            .outerjoin(sales_totals, sales_totals.c.item_id == Item.id)
+            .outerjoin(
+                used_totals,
+                and_(
+                    used_totals.c.inventory_item_id == Item.assumption_inventory_item_id,
+                    used_totals.c.category_id == Item.assumption_inventory_category_id,
+                ),
+            )
+            .outerjoin(
+                latest_prices,
+                and_(latest_prices.c.item_id == Item.id, latest_prices.c.rn == 1),
+            )
+            .where(Item.shop_id.is_(None), Item.base_unit == BaseUnit.KG)
+            .order_by(category_label, Item.sort_order, func.lower(Item.name), Item.id)
+        )
+    ).all()
+
+    report_rows: list[OverReportItemRow] = []
+    for row in rows:
+        sales_kg = _decimal(row.sales_kg)
+        sales_amount = _decimal(row.sales_amount)
+        today_price = _decimal(row.today_price) if row.today_price is not None else None
+        assumption_percent = row.assumption_percent
+        assumption_kg = (
+            sales_kg * _decimal(assumption_percent) / Decimal("100")
+            if assumption_percent is not None
+            else Decimal("0")
+        )
+        difference_kg = sales_kg - assumption_kg
+        assumption_amount = (
+            assumption_kg * today_price if today_price is not None else Decimal("0")
+        )
+        difference_amount = (
+            difference_kg * today_price if today_price is not None else Decimal("0")
+        )
+        report_rows.append(
+            OverReportItemRow(
+                category=row.category,
+                item_name=row.item_name,
+                assumption_percent=assumption_percent,
+                used_stock=_decimal(row.used_stock),
+                sales_kg=sales_kg,
+                assumption_kg=assumption_kg,
+                difference_kg=difference_kg,
+                today_price=today_price,
+                sales_amount=sales_amount,
+                assumption_amount=assumption_amount,
+                difference_amount=difference_amount,
+            )
+        )
+    return report_rows
+
+
 async def _inventory_category_labels_by_item_id(
     db: AsyncSession,
     item_ids: list[UUID],
@@ -820,6 +1294,33 @@ def _inventory_totals_subquery(context: ReportContext, *, period_only: bool):
     return query.subquery()
 
 
+def _assumption_status(
+    base_unit: BaseUnit,
+    assumption_percent: object,
+    inventory_item_id: UUID | None,
+    inventory_category_id: UUID | None,
+) -> ItemAssumptionStatus:
+    if base_unit != BaseUnit.KG:
+        return ItemAssumptionStatus.NOT_APPLICABLE
+    values = (assumption_percent, inventory_item_id, inventory_category_id)
+    if all(value is None for value in values):
+        return ItemAssumptionStatus.NOT_SET
+    if all(value is not None for value in values):
+        return ItemAssumptionStatus.CONFIGURED
+    return ItemAssumptionStatus.INCOMPLETE
+
+
+def _assumption_status_label(status: ItemAssumptionStatus, active: bool) -> str:
+    if not active:
+        return "Paused"
+    return {
+        ItemAssumptionStatus.CONFIGURED: "Configured",
+        ItemAssumptionStatus.INCOMPLETE: "Incomplete",
+        ItemAssumptionStatus.NOT_SET: "Not set",
+        ItemAssumptionStatus.NOT_APPLICABLE: "N/A",
+    }[status]
+
+
 def _bill_filters(context: ReportContext) -> list[object]:
     filters: list[object] = [Bill.created_at >= context.start, Bill.created_at < context.end]
     if context.shop_ids:
@@ -848,6 +1349,30 @@ def _format_cell(value: object) -> str:
     return "" if value is None else str(value)
 
 
+def _resolve_tamil_fonts() -> tuple[str, str]:
+    regular = _register_pdf_font(TAMIL_FONT_REGULAR, TAMIL_FONT_REGULAR_PATHS)
+    bold = _register_pdf_font(TAMIL_FONT_BOLD, TAMIL_FONT_BOLD_PATHS)
+    return regular or "Helvetica", bold or regular or "Helvetica-Bold"
+
+
+def _register_pdf_font(name: str, paths: tuple[Path, ...]) -> str | None:
+    if name in pdfmetrics.getRegisteredFontNames():
+        return name
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            pdfmetrics.registerFont(TTFont(name, str(path)))
+            return name
+        except Exception:
+            continue
+    return None
+
+
+def _has_tamil_text(value: str) -> bool:
+    return any("\u0b80" <= character <= "\u0bff" for character in value)
+
+
 def _pdf_text(value: str, width: int) -> str:
     text = value.replace("\n", " ").replace("\r", " ")
     return shorten(text, width=max(4, width), placeholder="...")
@@ -863,6 +1388,28 @@ def _decimal(value: object) -> Decimal:
 
 def _money(value: object) -> str:
     return f"Rs. {_decimal(value).quantize(Decimal('0.01'))}"
+
+
+def _money_or_blank(value: object) -> str:
+    if value is None:
+        return ""
+    return _money(value)
+
+
+def _percent(value: object) -> str:
+    if value is None:
+        return ""
+    return f"{_quantity(value)}%"
+
+
+def _kg(value: object) -> str:
+    return f"{_quantity(value)} kg"
+
+
+def _assumption_total_price(actual_price: object, assumption_percent: object) -> Decimal | None:
+    if actual_price is None or assumption_percent is None:
+        return None
+    return _decimal(actual_price) * _decimal(assumption_percent) / Decimal("100")
 
 
 def _quantity(value: object) -> str:

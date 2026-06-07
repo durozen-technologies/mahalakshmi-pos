@@ -328,6 +328,93 @@ async def get_shop_bootstrap(db: AsyncSession, shop: Shop) -> ShopBootstrapRespo
     )
 
 
+async def get_shop_price_history(
+    db: AsyncSession, shop: Shop, target_date: date
+) -> ShopBootstrapResponse:
+    """Return active allocated shop items with prices saved on one exact date."""
+    exact_prices = (
+        select(
+            DailyPrice.item_id.label("item_id"),
+            DailyPrice.price_per_unit.label("price_per_unit"),
+            DailyPrice.price_date.label("price_date"),
+        )
+        .where(DailyPrice.shop_id == shop.id, DailyPrice.price_date == target_date)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                Item.id,
+                Item.name,
+                Item.tamil_name,
+                Item.unit_type,
+                Item.base_unit,
+                Item.sort_order,
+                Item.category_id,
+                Item.category,
+                Item.image_object_key,
+                Item.image_content_type,
+                Item.image_thumbnail_object_key,
+                Item.image_thumbnail_content_type,
+                ShopItemAllocation.display_name,
+                ShopItemAllocation.tamil_name.label("allocation_tamil_name"),
+                ShopItemAllocation.sort_order.label("allocation_sort_order"),
+                exact_prices.c.price_per_unit,
+                exact_prices.c.price_date,
+            )
+            .outerjoin(
+                ShopItemAllocation,
+                and_(
+                    ShopItemAllocation.item_id == Item.id,
+                    ShopItemAllocation.shop_id == shop.id,
+                ),
+            )
+            .outerjoin(exact_prices, exact_prices.c.item_id == Item.id)
+            .where(Item.is_active.is_(True), _shop_billing_item_filter(shop.id))
+            .order_by(
+                func.coalesce(ShopItemAllocation.sort_order, Item.sort_order, 0),
+                func.coalesce(ShopItemAllocation.display_name, Item.name),
+            )
+        )
+    ).all()
+    has_prices = bool(rows) and all(row.price_date == target_date for row in rows)
+
+    return ShopBootstrapResponse(
+        shop_id=shop.id,
+        shop_name=shop.name,
+        price_date=target_date,
+        prices_set=has_prices,
+        next_screen="billing" if has_prices else "daily_price_setup",
+        items=[
+            ItemPriceRead(
+                item_id=row.id,
+                item_name=(row.display_name or row.name).strip(),
+                item_tamil_name=(row.allocation_tamil_name or row.tamil_name),
+                unit_type=row.unit_type,
+                base_unit=row.base_unit,
+                current_price=row.price_per_unit,
+                latest_price_date=row.price_date,
+                price_status=_price_status_for(row.price_date),
+                sort_order=row.allocation_sort_order
+                if row.allocation_sort_order is not None
+                else row.sort_order,
+                category_id=row.category_id,
+                category=row.category,
+                image_path=build_item_image_path(
+                    row.id, row.image_object_key, row.image_content_type
+                ),
+                image_thumb_path=build_item_image_thumb_path(
+                    row.id,
+                    row.image_thumbnail_object_key,
+                    row.image_thumbnail_content_type,
+                    original_object_key=row.image_object_key,
+                ),
+            )
+            for row in rows
+        ],
+    )
+
+
 async def get_today_prices(db: AsyncSession, shop: Shop) -> list[DailyPriceRead]:
     """Return today's prices for active items currently allocated to the shop."""
     rows = await db.execute(

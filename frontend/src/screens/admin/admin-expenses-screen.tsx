@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system/legacy";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -21,22 +22,27 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { fetchShops } from "@/api/admin";
 import { toApiError } from "@/api/client";
 import {
-  allocateShopExpenseItem,
+  allocateShopExpenseItems,
   createExpenseItem,
   deallocateShopExpenseItem,
+  deleteExpenseItemImage,
   deleteExpenseItem,
   fetchAdminExpenseHistory,
   fetchExpenseItemCounts,
   fetchExpenseItemRows,
   fetchShopExpenseItemCandidateRows,
   fetchShopExpenseItemRows,
+  replaceExpenseItemImageFile,
   updateExpenseItem,
   updateShopExpenseAllocation,
+  type ExpenseItemImageUploadFile,
 } from "@/api/expenses";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import { LoadingState } from "@/components/ui/loading-state";
 import { TextField } from "@/components/ui/text-field";
+import { useApiConnection } from "@/hooks/use-api-connection";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { AdminExpensesScreenProps } from "@/navigation/types";
 import type {
@@ -47,14 +53,36 @@ import type {
   ShopRead,
   UUID,
 } from "@/types/api";
+import {
+  buildExpenseHistoryRange,
+  createExpenseHistoryFilterDraft,
+  EXPENSE_HISTORY_INTERVAL_OPTIONS,
+  toDateInputValue,
+  type ExpenseHistoryFilterDraft,
+  type ExpenseHistoryRange,
+} from "@/utils/expense-history-filters";
 import { formatCurrency, formatDateTime } from "@/utils/format";
+import { getItemThumbnailUri } from "@/utils/item-images";
 
 import { adminShadow } from "./admin-dashboard-theme";
-import { triggerHaptic } from "./admin-dashboard-utils";
+import {
+  buildMonthOptions,
+  buildWeekOptions,
+  buildYearOptions,
+  triggerHaptic,
+} from "./admin-dashboard-utils";
 import { AdminHeaderActions } from "./components/admin-header-actions";
 import { useAdminTheme } from "./use-admin-theme";
 
 type ExpenseTab = "items" | "allocation" | "history";
+type ExpoImagePickerModule = typeof import("expo-image-picker");
+type ImageDraft = ExpenseItemImageUploadFile;
+type PickedImageAsset = {
+  uri: string;
+  fileName?: string | null;
+  fileSize?: number | null;
+  mimeType?: string | null;
+};
 
 type CursorState = {
   sortOrder: number | null;
@@ -64,6 +92,15 @@ type CursorState = {
 
 const PAGE_LIMIT = 50;
 const CANDIDATE_LIMIT = 20;
+const MAX_EXPENSE_ITEM_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+const EXPENSE_ITEM_IMAGE_UPLOAD_DRAFT_DIR = "expense-item-image-uploads";
+const EXPENSE_CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const expenseCalendarMonthFormatter = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" });
+const expenseCalendarDateFormatter = new Intl.DateTimeFormat("en-IN", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
 const EMPTY_CURSOR: CursorState = { sortOrder: null, name: null, id: null };
 const EMPTY_COUNTS: ExpenseItemCounts = {
   all: 0,
@@ -77,6 +114,102 @@ const TABS: { key: ExpenseTab; label: string; icon: React.ComponentProps<typeof 
   { key: "allocation", label: "Allocation", icon: "source-branch" },
   { key: "history", label: "History", icon: "history" },
 ];
+
+async function loadImagePickerModule(): Promise<ExpoImagePickerModule | null> {
+  try {
+    return await import("expo-image-picker");
+  } catch {
+    return null;
+  }
+}
+
+function extensionForImageType(contentType: string) {
+  if (contentType === "image/png") {
+    return ".png";
+  }
+  if (contentType === "image/webp") {
+    return ".webp";
+  }
+  return ".jpg";
+}
+
+function normalizedImageFilename(asset: PickedImageAsset, contentType: string) {
+  const fallbackName = `expense-item-${Date.now()}${extensionForImageType(contentType)}`;
+  const candidate = asset.fileName?.trim() || fallbackName;
+  const sanitized = candidate.replace(/[^a-zA-Z0-9._-]/g, "-");
+  return /\.[a-zA-Z0-9]+$/.test(sanitized)
+    ? sanitized
+    : `${sanitized}${extensionForImageType(contentType)}`;
+}
+
+function readableBytes(byteCount: number) {
+  return `${(byteCount / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function ensureImageUploadDraftDirectory() {
+  const parentDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+  if (!parentDirectory) {
+    throw new Error("Image upload storage is unavailable on this device.");
+  }
+  const uploadDirectory = `${parentDirectory}${EXPENSE_ITEM_IMAGE_UPLOAD_DRAFT_DIR}`;
+  try {
+    await FileSystem.makeDirectoryAsync(uploadDirectory, { intermediates: true });
+  } catch (error) {
+    const directoryInfo = await FileSystem.getInfoAsync(uploadDirectory);
+    if (!directoryInfo.exists || !directoryInfo.isDirectory) {
+      throw error;
+    }
+  }
+  return uploadDirectory;
+}
+
+async function copyImageToUploadDraftDirectory(sourceUri: string, name: string) {
+  const uploadDirectory = await ensureImageUploadDraftDirectory();
+  const cachedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${name}`;
+  const cachedUri = `${uploadDirectory.replace(/\/$/, "")}/${cachedName}`;
+  await FileSystem.copyAsync({ from: sourceUri, to: cachedUri });
+  return cachedUri;
+}
+
+async function deleteImageDraftFile(draft: ImageDraft | null) {
+  if (!draft?.uri) {
+    return;
+  }
+  try {
+    await FileSystem.deleteAsync(draft.uri, { idempotent: true });
+  } catch {
+    // Temporary image drafts may already be gone.
+  }
+}
+
+async function getLocalFileSize(uri: string) {
+  const info = await FileSystem.getInfoAsync(uri);
+  if (!info.exists) {
+    throw new Error("Selected image file is no longer available. Pick it again and save.");
+  }
+  return typeof info.size === "number" ? info.size : null;
+}
+
+async function prepareImageDraftForUpload(asset: PickedImageAsset): Promise<ImageDraft> {
+  const contentType = asset.mimeType?.startsWith("image/") ? asset.mimeType : "image/jpeg";
+  const name = normalizedImageFilename(asset, contentType);
+  if (!asset.uri) {
+    throw new Error("Selected image has no readable file URI. Pick another image.");
+  }
+  if (typeof asset.fileSize === "number" && asset.fileSize > MAX_EXPENSE_ITEM_IMAGE_UPLOAD_BYTES) {
+    throw new Error(
+      `Selected image is ${readableBytes(asset.fileSize)}. Choose an image under ${readableBytes(MAX_EXPENSE_ITEM_IMAGE_UPLOAD_BYTES)}.`,
+    );
+  }
+  const cachedUri = await copyImageToUploadDraftDirectory(asset.uri, name);
+  const preparedSize = await getLocalFileSize(cachedUri);
+  if (preparedSize !== null && preparedSize > MAX_EXPENSE_ITEM_IMAGE_UPLOAD_BYTES) {
+    throw new Error(
+      `Selected image is ${readableBytes(preparedSize)}. Choose an image under ${readableBytes(MAX_EXPENSE_ITEM_IMAGE_UPLOAD_BYTES)}.`,
+    );
+  }
+  return { uri: cachedUri, name, type: contentType };
+}
 
 function pageCursor(page: {
   next_cursor_sort_order?: number | null;
@@ -97,6 +230,66 @@ function mergeById<T extends { id: UUID }>(current: T[], nextRows: T[]) {
 
 function formatCount(value: number, label: string) {
   return `${value} ${label}${value === 1 ? "" : "s"}`;
+}
+
+function parseExpenseLocalDateValue(value: string) {
+  const [yearText, monthText, dayText] = value.split("-");
+  return new Date(Number(yearText), Number(monthText) - 1, Number(dayText));
+}
+
+function addExpenseCalendarMonths(value: string, offset: number) {
+  const date = parseExpenseLocalDateValue(value);
+  return toDateInputValue(new Date(date.getFullYear(), date.getMonth() + offset, 1));
+}
+
+function buildExpenseCalendarDays(monthValue: string) {
+  const monthDate = parseExpenseLocalDateValue(monthValue);
+  const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const mondayOffset = (monthStart.getDay() + 6) % 7;
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - mondayOffset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    return {
+      value: toDateInputValue(date),
+      day: date.getDate(),
+      inMonth: date.getMonth() === monthStart.getMonth(),
+    };
+  });
+}
+
+function isExpenseDateBetween(value: string, start?: string | null, end?: string | null) {
+  return Boolean(start && end && value >= start && value <= end);
+}
+
+function formatExpenseCalendarDateLabel(value?: string | null) {
+  return value ? expenseCalendarDateFormatter.format(parseExpenseLocalDateValue(value)) : "Select date";
+}
+
+function addExpenseDays(value: string, offset: number) {
+  const date = parseExpenseLocalDateValue(value);
+  date.setDate(date.getDate() + offset);
+  return toDateInputValue(date);
+}
+
+function formatExpenseReferenceSubtitle(interval: ExpenseHistoryFilterDraft["interval"], value: string) {
+  if (interval === "week") {
+    return `${formatExpenseCalendarDateLabel(value)} - ${formatExpenseCalendarDateLabel(addExpenseDays(value, 6))}`;
+  }
+  if (interval === "month") {
+    const [yearText, monthText] = value.split("-");
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const start = toDateInputValue(new Date(year, monthIndex, 1));
+    const end = toDateInputValue(new Date(year, monthIndex + 1, 0));
+    return `${formatExpenseCalendarDateLabel(start)} - ${formatExpenseCalendarDateLabel(end)}`;
+  }
+  if (interval === "year") {
+    return `${formatExpenseCalendarDateLabel(`${value}-01-01`)} - ${formatExpenseCalendarDateLabel(`${value}-12-31`)}`;
+  }
+  return "";
 }
 
 function useSelectedShop(shops: ShopRead[], selectedShopId: UUID | null) {
@@ -167,7 +360,7 @@ function CountStrip({ counts, palette }: { counts: ExpenseItemCounts; palette: R
   );
 }
 
-function BranchSelector({
+function BranchDropdown({
   shops,
   selectedShopId,
   includeAll = false,
@@ -180,53 +373,573 @@ function BranchSelector({
   onSelect: (shopId: UUID | null) => void;
   palette: ReturnType<typeof useAdminTheme>["palette"];
 }) {
+  const [open, setOpen] = useState(false);
+  const selectedShop = shops.find((shop) => shop.id === selectedShopId) ?? null;
+  const selectedLabel = includeAll && selectedShopId === null
+    ? "All branches"
+    : selectedShop?.name ?? "Select branch";
+  const options: { id: UUID | null; name: string }[] = [
+    ...(includeAll ? [{ id: null, name: "All branches" }] : []),
+    ...shops.map((shop) => ({ id: shop.id, name: shop.name })),
+  ];
+
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.branchChips}
-    >
-      {includeAll ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ selected: selectedShopId === null }}
-          onPress={() => onSelect(null)}
-          style={[
-            styles.branchChip,
-            {
-              backgroundColor: selectedShopId === null ? palette.cashSoft : palette.card,
-              borderColor: selectedShopId === null ? palette.cash : palette.border,
-            },
-          ]}
-        >
-          <Text style={[styles.branchChipText, { color: selectedShopId === null ? palette.cash : palette.textPrimary }]}>
-            All branches
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Select branch"
+        onPress={() => setOpen(true)}
+        style={[styles.dropdownSelect, { backgroundColor: palette.card, borderColor: palette.border }]}
+      >
+        <View style={styles.dropdownTextWrap}>
+          <Text style={[styles.dropdownLabel, { color: palette.textMuted }]}>Branch</Text>
+          <Text numberOfLines={1} style={[styles.dropdownValue, { color: palette.textPrimary }]}>
+            {selectedLabel}
           </Text>
-        </Pressable>
-      ) : null}
-      {shops.map((shop) => {
-        const selected = shop.id === selectedShopId;
-        return (
-          <Pressable
-            key={shop.id}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            onPress={() => onSelect(shop.id)}
-            style={[
-              styles.branchChip,
-              {
-                backgroundColor: selected ? palette.cashSoft : palette.card,
-                borderColor: selected ? palette.cash : palette.border,
-              },
-            ]}
-          >
-            <Text style={[styles.branchChipText, { color: selected ? palette.cash : palette.textPrimary }]} numberOfLines={1}>
-              {shop.name}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
+        </View>
+        <MaterialCommunityIcons name="chevron-down" size={22} color={palette.textMuted} />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={[styles.dropdownOverlay, { backgroundColor: palette.overlay }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+          <View style={[styles.dropdownSheet, { backgroundColor: palette.card, borderColor: palette.border }]}>
+            <View style={styles.dropdownSheetHeader}>
+              <Text style={[styles.dropdownSheetTitle, { color: palette.textPrimary }]}>Select branch</Text>
+              <Pressable accessibilityRole="button" onPress={() => setOpen(false)} style={styles.dropdownClose}>
+                <MaterialCommunityIcons name="close" size={20} color={palette.textPrimary} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.dropdownOptionList}>
+              {options.map((option) => {
+                const selected = option.id === selectedShopId;
+                return (
+                  <Pressable
+                    key={option.id ?? "all"}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      onSelect(option.id);
+                      setOpen(false);
+                    }}
+                    style={[
+                      styles.dropdownOption,
+                      {
+                        backgroundColor: selected ? palette.cashSoft : palette.surfaceMuted,
+                        borderColor: selected ? palette.cash : palette.border,
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={option.id === null ? "storefront-outline" : "store-outline"}
+                      size={18}
+                      color={selected ? palette.cash : palette.textMuted}
+                    />
+                    <Text numberOfLines={1} style={[styles.dropdownOptionText, { color: palette.textPrimary }]}>
+                      {option.name}
+                    </Text>
+                    {selected ? <MaterialCommunityIcons name="check" size={18} color={palette.cash} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function HistoryFilterControls({
+  filter,
+  range,
+  totalAmount,
+  palette,
+  onChange,
+}: {
+  filter: ExpenseHistoryFilterDraft;
+  range: ExpenseHistoryRange;
+  totalAmount: string;
+  palette: ReturnType<typeof useAdminTheme>["palette"];
+  onChange: (filter: ExpenseHistoryFilterDraft) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const todayValue = useMemo(() => toDateInputValue(new Date()), []);
+  const [pickerInterval, setPickerInterval] = useState<ExpenseHistoryFilterDraft["interval"]>(filter.interval);
+  const [calendarMonthValue, setCalendarMonthValue] = useState(() => filter.date || todayValue);
+  const [draftRangeStartDate, setDraftRangeStartDate] = useState<string | null>(() => filter.startDate || todayValue);
+  const [draftRangeEndDate, setDraftRangeEndDate] = useState<string | null>(() => filter.endDate || todayValue);
+  const selectedOption = EXPENSE_HISTORY_INTERVAL_OPTIONS.find((option) => option.key === filter.interval)
+    ?? EXPENSE_HISTORY_INTERVAL_OPTIONS[0];
+  const updateFilter = (patch: Partial<ExpenseHistoryFilterDraft>) => onChange({ ...filter, ...patch });
+  const calendarDays = useMemo(() => buildExpenseCalendarDays(calendarMonthValue), [calendarMonthValue]);
+  const calendarMonthLabel = useMemo(
+    () => expenseCalendarMonthFormatter.format(parseExpenseLocalDateValue(calendarMonthValue)),
+    [calendarMonthValue],
+  );
+  const canApplyDraftRange = Boolean(draftRangeStartDate && draftRangeEndDate);
+  const weekOptions = useMemo(() => buildWeekOptions(), []);
+  const monthOptions = useMemo(
+    () => buildMonthOptions().map((option) => ({ ...option, value: option.value.slice(0, 7) })),
+    [],
+  );
+  const yearOptions = useMemo(
+    () => buildYearOptions().map((option) => ({ ...option, value: option.value.slice(0, 4) })),
+    [],
+  );
+
+  const intervalModes: { key: ExpenseHistoryFilterDraft["interval"]; label: string }[] = [
+    { key: "today", label: "Today" },
+    { key: "date", label: "Day" },
+    { key: "range", label: "Range" },
+    { key: "week", label: "Week" },
+    { key: "month", label: "Month" },
+    { key: "year", label: "Year" },
+    { key: "all", label: "Total" },
+  ];
+  const referenceOptions = (() => {
+    if (pickerInterval === "week") {
+      return weekOptions;
+    }
+    if (pickerInterval === "month") {
+      return monthOptions;
+    }
+    if (pickerInterval === "year") {
+      return yearOptions;
+    }
+    return [];
+  })();
+  const selectedReferenceValue =
+    pickerInterval === "week"
+      ? (weekOptions.some((option) => option.value === filter.weekDate) ? filter.weekDate : weekOptions[0]?.value)
+      : pickerInterval === "month"
+        ? (monthOptions.some((option) => option.value === filter.month) ? filter.month : monthOptions[0]?.value)
+        : pickerInterval === "year"
+          ? (yearOptions.some((option) => option.value === filter.year) ? filter.year : yearOptions[0]?.value)
+          : null;
+  const selectedReferenceLabel = selectedReferenceValue
+    ? referenceOptions.find((option) => option.value === selectedReferenceValue)?.label ?? selectedReferenceValue
+    : null;
+  const intervalValueLabel = selectedReferenceLabel
+    ? `${selectedOption.label} · ${selectedReferenceLabel}`
+    : selectedOption.label;
+
+  useEffect(() => {
+    if (!open) {
+      setPickerInterval(filter.interval);
+    }
+  }, [filter.interval, open]);
+
+  useEffect(() => {
+    if (filter.interval === "range") {
+      setDraftRangeStartDate(filter.startDate || todayValue);
+      setDraftRangeEndDate(filter.endDate || todayValue);
+      setCalendarMonthValue(filter.startDate || todayValue);
+      return;
+    }
+    if (filter.interval === "date") {
+      setCalendarMonthValue(filter.date || todayValue);
+    }
+  }, [filter.date, filter.endDate, filter.interval, filter.startDate, todayValue]);
+
+  const openIntervalPicker = () => {
+    triggerHaptic();
+    setPickerInterval(filter.interval);
+    if (filter.interval === "range") {
+      setDraftRangeStartDate(filter.startDate || todayValue);
+      setDraftRangeEndDate(filter.endDate || todayValue);
+      setCalendarMonthValue(filter.startDate || todayValue);
+    } else {
+      setCalendarMonthValue(filter.date || todayValue);
+    }
+    setOpen(true);
+  };
+
+  const handleSelectIntervalMode = (mode: ExpenseHistoryFilterDraft["interval"]) => {
+    triggerHaptic();
+    setPickerInterval(mode);
+    if (mode === "date") {
+      const date = filter.date || draftRangeStartDate || todayValue;
+      setCalendarMonthValue(date);
+      updateFilter({ interval: "date", date });
+      return;
+    }
+
+    if (mode !== "range") {
+      if (mode === "week") {
+        const weekDate = weekOptions.some((option) => option.value === filter.weekDate)
+          ? filter.weekDate
+          : weekOptions[0]?.value ?? todayValue;
+        updateFilter({ interval: mode, weekDate });
+        return;
+      }
+      if (mode === "month") {
+        const month = monthOptions.some((option) => option.value === filter.month)
+          ? filter.month
+          : monthOptions[0]?.value ?? todayValue.slice(0, 7);
+        updateFilter({ interval: mode, month });
+        return;
+      }
+      if (mode === "year") {
+        const year = yearOptions.some((option) => option.value === filter.year)
+          ? filter.year
+          : yearOptions[0]?.value ?? todayValue.slice(0, 4);
+        updateFilter({ interval: mode, year });
+        return;
+      }
+      updateFilter({ interval: mode });
+      setOpen(false);
+      return;
+    }
+
+    const startDate = filter.startDate || filter.date || todayValue;
+    const endDate = filter.endDate || filter.date || startDate;
+    setDraftRangeStartDate(startDate);
+    setDraftRangeEndDate(endDate);
+    setCalendarMonthValue(startDate);
+    updateFilter({ interval: "range", startDate, endDate });
+    return;
+  };
+
+  const handleSelectReferenceOption = (value: string) => {
+    triggerHaptic();
+    if (pickerInterval === "week") {
+      updateFilter({ interval: "week", weekDate: value });
+    } else if (pickerInterval === "month") {
+      updateFilter({ interval: "month", month: value });
+    } else if (pickerInterval === "year") {
+      updateFilter({ interval: "year", year: value });
+    }
+    setOpen(false);
+  };
+
+  const handleSelectCalendarDate = (value: string) => {
+    triggerHaptic();
+    if (pickerInterval === "date") {
+      setCalendarMonthValue(value);
+      updateFilter({ interval: "date", date: value });
+      setOpen(false);
+      return;
+    }
+
+    setDraftRangeStartDate((currentStart) => {
+      if (!currentStart || draftRangeEndDate) {
+        setDraftRangeEndDate(null);
+        return value;
+      }
+      if (value < currentStart) {
+        setDraftRangeEndDate(currentStart);
+        return value;
+      }
+      setDraftRangeEndDate(value);
+      return currentStart;
+    });
+  };
+
+  const applyExpenseRange = () => {
+    if (!draftRangeStartDate || !draftRangeEndDate) {
+      return;
+    }
+    triggerHaptic();
+    updateFilter({
+      interval: "range",
+      date: draftRangeStartDate,
+      startDate: draftRangeStartDate,
+      endDate: draftRangeEndDate,
+    });
+    setOpen(false);
+  };
+
+  const showPreviousCalendarMonth = () => {
+    triggerHaptic();
+    setCalendarMonthValue((value) => addExpenseCalendarMonths(value, -1));
+  };
+
+  const showNextCalendarMonth = () => {
+    triggerHaptic();
+    setCalendarMonthValue((value) => addExpenseCalendarMonths(value, 1));
+  };
+
+  const showCalendarGrid = pickerInterval === "date" || pickerInterval === "range";
+  const showReferenceDropdown = pickerInterval === "week" || pickerInterval === "month" || pickerInterval === "year";
+
+  return (
+    <View style={styles.historyControls}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Select history interval"
+        onPress={openIntervalPicker}
+        style={[styles.dropdownSelect, { backgroundColor: palette.card, borderColor: palette.border }]}
+      >
+        <View style={styles.dropdownTextWrap}>
+          <Text style={[styles.dropdownLabel, { color: palette.textMuted }]}>Interval</Text>
+          <Text numberOfLines={1} style={[styles.dropdownValue, { color: palette.textPrimary }]}>
+            {intervalValueLabel}
+          </Text>
+        </View>
+        <MaterialCommunityIcons
+          name={selectedOption.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
+          size={20}
+          color={palette.cash}
+        />
+        <MaterialCommunityIcons name="chevron-down" size={22} color={palette.textMuted} />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={[styles.dropdownOverlay, { backgroundColor: palette.overlay }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+          <View style={[styles.dropdownSheet, styles.historyIntervalSheet, { backgroundColor: palette.card, borderColor: palette.border }]}>
+            <View style={styles.dropdownSheetHeader}>
+              <Text style={[styles.dropdownSheetTitle, { color: palette.textPrimary }]}>Select interval</Text>
+              <Pressable accessibilityRole="button" onPress={() => setOpen(false)} style={styles.dropdownClose}>
+                <MaterialCommunityIcons name="close" size={20} color={palette.textPrimary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.historySegmentRow}>
+              {intervalModes.map((mode) => {
+                const selected = mode.key === pickerInterval;
+                return (
+                  <Pressable
+                    key={mode.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => handleSelectIntervalMode(mode.key)}
+                    style={[
+                      styles.historySegmentButton,
+                      {
+                        backgroundColor: selected ? palette.cash : palette.surfaceMuted,
+                        borderColor: selected ? palette.cash : palette.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.historySegmentText, { color: selected ? palette.onCash : palette.textSecondary }]}>
+                      {mode.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {showCalendarGrid ? (
+              <ScrollView
+                style={styles.historyPickerScroll}
+                contentContainerStyle={styles.historyCalendarContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.historyCalendarHeader}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous month"
+                    onPress={showPreviousCalendarMonth}
+                    style={[
+                      styles.historyCalendarIconButton,
+                      { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="chevron-left" size={22} color={palette.textSecondary} />
+                  </Pressable>
+                  <View style={styles.historyCalendarTitleWrap}>
+                    <Text style={[styles.historyCalendarModeLabel, { color: palette.textMuted }]}>
+                      {pickerInterval === "range" ? "Custom range" : "Select day"}
+                    </Text>
+                    <Text style={[styles.historyCalendarMonthTitle, { color: palette.textPrimary }]}>
+                      {calendarMonthLabel}
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Next month"
+                    onPress={showNextCalendarMonth}
+                    style={[
+                      styles.historyCalendarIconButton,
+                      { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="chevron-right" size={22} color={palette.textSecondary} />
+                  </Pressable>
+                </View>
+
+                <View style={styles.historyWeekdayRow}>
+                  {EXPENSE_CALENDAR_WEEKDAYS.map((weekday) => (
+                    <Text key={weekday} style={[styles.historyWeekdayText, { color: palette.textMuted }]}>
+                      {weekday}
+                    </Text>
+                  ))}
+                </View>
+
+                <View style={styles.historyCalendarGrid}>
+                  {calendarDays.map((day) => {
+                    const isDaySelected = pickerInterval === "date" && day.value === filter.date;
+                    const isRangeStart = pickerInterval === "range" && day.value === draftRangeStartDate;
+                    const isRangeEnd = pickerInterval === "range" && day.value === draftRangeEndDate;
+                    const isRangeEdge = isRangeStart || isRangeEnd;
+                    const isRangeMiddle =
+                      pickerInterval === "range"
+                      && isExpenseDateBetween(day.value, draftRangeStartDate, draftRangeEndDate)
+                      && !isRangeEdge;
+                    const isSelected = isDaySelected || isRangeEdge;
+                    const isToday = day.value === todayValue;
+
+                    return (
+                      <View key={day.value} style={styles.historyCalendarDayCell}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={formatExpenseCalendarDateLabel(day.value)}
+                          accessibilityState={{ selected: isSelected }}
+                          onPress={() => handleSelectCalendarDate(day.value)}
+                          style={[
+                            styles.historyCalendarDayButton,
+                            {
+                              backgroundColor: isSelected
+                                ? palette.cash
+                                : isRangeMiddle
+                                  ? palette.cashSoft
+                                  : "transparent",
+                              borderColor: isToday ? palette.cash : "transparent",
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.historyCalendarDayText,
+                              {
+                                color: isSelected
+                                  ? palette.onCash
+                                  : !day.inMonth
+                                    ? palette.textMuted
+                                    : isRangeMiddle || isToday
+                                      ? palette.cash
+                                      : palette.textPrimary,
+                                opacity: day.inMonth || isSelected || isRangeMiddle ? 1 : 0.5,
+                              },
+                            ]}
+                          >
+                            {day.day}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {pickerInterval === "range" ? (
+                  <View
+                    style={[
+                      styles.historyRangeFooter,
+                      { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+                    ]}
+                  >
+                    <View style={styles.historyRangeDatesRow}>
+                      <View style={styles.historyRangeDateBlock}>
+                        <Text style={[styles.historyRangeDateLabel, { color: palette.textMuted }]}>Start</Text>
+                        <Text style={[styles.historyRangeDateValue, { color: palette.textPrimary }]} numberOfLines={1}>
+                          {formatExpenseCalendarDateLabel(draftRangeStartDate)}
+                        </Text>
+                      </View>
+                      <View style={[styles.historyRangeDivider, { backgroundColor: palette.border }]} />
+                      <View style={styles.historyRangeDateBlock}>
+                        <Text style={[styles.historyRangeDateLabel, { color: palette.textMuted }]}>End</Text>
+                        <Text style={[styles.historyRangeDateValue, { color: palette.textPrimary }]} numberOfLines={1}>
+                          {formatExpenseCalendarDateLabel(draftRangeEndDate)}
+                        </Text>
+                      </View>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Apply expense history range"
+                      disabled={!canApplyDraftRange}
+                      onPress={applyExpenseRange}
+                      style={[
+                        styles.historyRangeApplyButton,
+                        { backgroundColor: canApplyDraftRange ? palette.cash : palette.border },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.historyRangeApplyText,
+                          { color: canApplyDraftRange ? palette.onCash : palette.textMuted },
+                        ]}
+                      >
+                        Apply Range
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </ScrollView>
+            ) : showReferenceDropdown ? (
+              <ScrollView
+                style={styles.historyPickerScroll}
+                contentContainerStyle={styles.historyReferenceOptionList}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {referenceOptions.map((option) => {
+                  const selected = option.value === selectedReferenceValue;
+                  const subtitle = formatExpenseReferenceSubtitle(pickerInterval, option.value);
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => handleSelectReferenceOption(option.value)}
+                      style={[
+                        styles.dropdownOption,
+                        {
+                          backgroundColor: selected ? palette.cashSoft : palette.surfaceMuted,
+                          borderColor: selected ? palette.cash : palette.border,
+                        },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={pickerInterval === "week" ? "calendar-week" : pickerInterval === "month" ? "calendar-month" : "calendar-blank"}
+                        size={18}
+                        color={selected ? palette.cash : palette.textMuted}
+                      />
+                      <View style={styles.dropdownOptionTextWrap}>
+                        <Text numberOfLines={1} style={[styles.dropdownOptionText, { color: palette.textPrimary }]}>
+                          {option.label}
+                        </Text>
+                        <Text numberOfLines={1} style={[styles.historyReferenceOptionSubtitle, { color: palette.textMuted }]}>
+                          {subtitle}
+                        </Text>
+                      </View>
+                      {selected ? <MaterialCommunityIcons name="check" size={18} color={palette.cash} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={[styles.historyQuickFilterPanel, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                <MaterialCommunityIcons
+                  name={filter.interval === "all" ? "sigma" : "calendar-today"}
+                  size={20}
+                  color={palette.cash}
+                />
+                <Text style={[styles.historyQuickFilterText, { color: palette.textSecondary }]}>
+                  {filter.interval === "all"
+                    ? "Showing complete expense history."
+                    : "Showing today's expense history."}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <View style={[styles.totalPanel, { backgroundColor: palette.cashSoft, borderColor: palette.cash }]}>
+        <View style={styles.rowBody}>
+          <Text style={[styles.totalLabel, { color: palette.textMuted }]}>Total for {range.isValid ? range.label : selectedOption.label}</Text>
+          {!range.isValid ? (
+            <Text style={[styles.totalHint, { color: palette.danger }]}>{range.validationMessage}</Text>
+          ) : (
+            <Text style={[styles.totalHint, { color: palette.textSecondary }]}>Filtered expense amount</Text>
+          )}
+        </View>
+        <Text style={[styles.totalAmount, { color: palette.cash }]}>{formatCurrency(totalAmount)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -241,34 +954,52 @@ function ExpenseItemRow({
   onEdit: (item: ExpenseItemRead) => void;
   onDelete: (item: ExpenseItemRead) => void;
 }) {
+  const thumbnailUri = getItemThumbnailUri(item);
   return (
-    <View style={[styles.rowCard, adminShadow(palette.shadow, 0.04, 8, 12), { backgroundColor: palette.card, borderColor: palette.border }]}>
-      <View style={[styles.rowIcon, { backgroundColor: palette.cashSoft }]}>
-        <MaterialCommunityIcons name="cash-minus" size={20} color={palette.cash} />
-      </View>
-      <View style={styles.rowBody}>
-        <View style={styles.rowTitleLine}>
-          <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textPrimary }]}>{item.name}</Text>
-          <View style={[styles.statusPill, { backgroundColor: item.is_active ? palette.successSoft : palette.dangerSoft }]}>
-            <Text style={[styles.statusText, { color: item.is_active ? palette.success : palette.danger }]}>
-              {item.is_active ? "Active" : "Paused"}
-            </Text>
-          </View>
-        </View>
-        <Text numberOfLines={1} style={[styles.rowSubtitle, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
-        <Text numberOfLines={1} style={[styles.rowMeta, { color: palette.textMuted }]}>
-          {formatCount(item.allocated_shop_count, "branch")} · {formatCount(item.entry_count, "entry")} · Sort {item.sort_order}
-        </Text>
-      </View>
-      <View style={styles.rowActions}>
-        <IconButton label="Edit expense item" icon="pencil-outline" tone={palette.cash} onPress={() => onEdit(item)} />
-        <IconButton
-          label="Delete expense item"
-          icon="trash-can-outline"
-          tone={palette.danger}
-          disabled={!item.can_delete}
-          onPress={() => onDelete(item)}
+    <View
+      style={[
+        styles.expenseItemCard,
+        adminShadow(palette.shadow, 0.04, 8, 12),
+        { backgroundColor: palette.card, borderColor: palette.border },
+      ]}
+    >
+      <View style={styles.expenseItemMain}>
+        <ItemThumbnail
+          uri={thumbnailUri}
+          recyclingKey={item.id}
+          size={46}
+          borderRadius={14}
+          backgroundColor={palette.cashSoft}
+          borderColor={palette.border}
+          icon="cash-minus"
+          iconColor={palette.cash}
         />
+        <View style={styles.expenseItemBody}>
+          <View style={styles.expenseItemTitleLine}>
+            <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textPrimary }]}>{item.name}</Text>
+            <View style={[styles.statusPill, { backgroundColor: item.is_active ? palette.successSoft : palette.dangerSoft }]}>
+              <Text style={[styles.statusText, { color: item.is_active ? palette.success : palette.danger }]}>
+                {item.is_active ? "Active" : "Paused"}
+              </Text>
+            </View>
+          </View>
+          <Text numberOfLines={1} style={[styles.rowSubtitle, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
+        </View>
+      </View>
+      <View style={[styles.expenseItemFooter, { borderTopColor: palette.border }]}>
+        <Text numberOfLines={1} style={[styles.expenseItemMetaText, { color: palette.textMuted }]}>
+          {formatCount(item.allocated_shop_count, "branch")} · {formatCount(item.entry_count, "entry")}
+        </Text>
+        <View style={styles.expenseItemActionGroup}>
+          <IconButton label="Edit expense item" icon="pencil-outline" tone={palette.cash} onPress={() => onEdit(item)} />
+          <IconButton
+            label="Delete expense item"
+            icon="trash-can-outline"
+            tone={palette.danger}
+            disabled={!item.can_delete}
+            onPress={() => onDelete(item)}
+          />
+        </View>
       </View>
     </View>
   );
@@ -287,44 +1018,58 @@ function AllocationRow({
   onToggle: (item: ShopExpenseItemRead) => void;
   onRemove: (item: ShopExpenseItemRead) => void;
 }) {
+  const thumbnailUri = getItemThumbnailUri(item);
   return (
-    <View style={[styles.rowCard, adminShadow(palette.shadow, 0.04, 8, 12), { backgroundColor: palette.card, borderColor: palette.border }]}>
-      <View style={[styles.rowIcon, { backgroundColor: item.allocation_is_active ? palette.cashSoft : palette.dangerSoft }]}>
-        <MaterialCommunityIcons
-          name={item.allocation_is_active ? "cash-check" : "cash-remove"}
-          size={20}
-          color={item.allocation_is_active ? palette.cash : palette.danger}
+    <View
+      style={[
+        styles.expenseItemCard,
+        adminShadow(palette.shadow, 0.04, 8, 12),
+        { backgroundColor: palette.card, borderColor: palette.border },
+      ]}
+    >
+      <View style={styles.expenseItemMain}>
+        <ItemThumbnail
+          uri={thumbnailUri}
+          recyclingKey={item.id}
+          size={46}
+          borderRadius={14}
+          backgroundColor={item.allocation_is_active ? palette.cashSoft : palette.dangerSoft}
+          borderColor={palette.border}
+          icon={item.allocation_is_active ? "cash-check" : "cash-remove"}
+          iconColor={item.allocation_is_active ? palette.cash : palette.danger}
         />
-      </View>
-      <View style={styles.rowBody}>
-        <View style={styles.rowTitleLine}>
-          <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textPrimary }]}>{item.name}</Text>
-          <View style={[styles.statusPill, { backgroundColor: item.allocation_is_active ? palette.successSoft : palette.dangerSoft }]}>
-            <Text style={[styles.statusText, { color: item.allocation_is_active ? palette.success : palette.danger }]}>
-              {item.allocation_is_active ? "Usable" : "Hidden"}
-            </Text>
+        <View style={styles.expenseItemBody}>
+          <View style={styles.expenseItemTitleLine}>
+            <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textPrimary }]}>{item.name}</Text>
+            <View style={[styles.statusPill, { backgroundColor: item.allocation_is_active ? palette.successSoft : palette.dangerSoft }]}>
+              <Text style={[styles.statusText, { color: item.allocation_is_active ? palette.success : palette.danger }]}>
+                {item.allocation_is_active ? "Usable" : "Hidden"}
+              </Text>
+            </View>
           </View>
+          <Text numberOfLines={1} style={[styles.rowSubtitle, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
         </View>
-        <Text numberOfLines={1} style={[styles.rowSubtitle, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
-        <Text numberOfLines={1} style={[styles.rowMeta, { color: palette.textMuted }]}>
+      </View>
+      <View style={[styles.expenseItemFooter, { borderTopColor: palette.border }]}>
+        <Text numberOfLines={1} style={[styles.expenseItemMetaText, { color: palette.textMuted }]}>
           Order {item.allocation_sort_order} · {formatCount(item.entry_count, "entry")}
         </Text>
-      </View>
-      <View style={styles.rowActions}>
-        <IconButton
-          label={item.allocation_is_active ? "Pause expense allocation" : "Resume expense allocation"}
-          icon={item.allocation_is_active ? "pause-circle-outline" : "play-circle-outline"}
-          tone={item.allocation_is_active ? palette.textSecondary : palette.success}
-          loading={busy}
-          onPress={() => onToggle(item)}
-        />
-        <IconButton
-          label="Remove expense allocation"
-          icon="link-off"
-          tone={palette.danger}
-          loading={busy}
-          onPress={() => onRemove(item)}
-        />
+        <View style={styles.expenseItemActionGroup}>
+          <IconButton
+            label={item.allocation_is_active ? "Pause expense allocation" : "Resume expense allocation"}
+            icon={item.allocation_is_active ? "pause-circle-outline" : "play-circle-outline"}
+            tone={item.allocation_is_active ? palette.textSecondary : palette.success}
+            loading={busy}
+            onPress={() => onToggle(item)}
+          />
+          <IconButton
+            label="Remove expense allocation"
+            icon="link-off"
+            tone={palette.danger}
+            loading={busy}
+            onPress={() => onRemove(item)}
+          />
+        </View>
       </View>
     </View>
   );
@@ -337,11 +1082,20 @@ function HistoryRow({
   entry: ExpenseEntryRead;
   palette: ReturnType<typeof useAdminTheme>["palette"];
 }) {
+  const imageUri = getItemThumbnailUri(entry);
   return (
     <View style={[styles.rowCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-      <View style={[styles.rowIcon, { backgroundColor: palette.cashSoft }]}>
-        <MaterialCommunityIcons name="receipt-text-clock-outline" size={20} color={palette.cash} />
-      </View>
+      <ItemThumbnail
+        uri={imageUri}
+        recyclingKey={`${entry.id}:${entry.expense_item_id}`}
+        size={42}
+        borderRadius={13}
+        backgroundColor={palette.cashSoft}
+        borderColor={palette.border}
+        icon="receipt-text-clock-outline"
+        iconColor={palette.cash}
+        iconSize={20}
+      />
       <View style={styles.rowBody}>
         <View style={styles.rowTitleLine}>
           <Text numberOfLines={1} style={[styles.rowTitle, { color: palette.textPrimary }]}>{entry.expense_name}</Text>
@@ -361,6 +1115,7 @@ function HistoryRow({
 export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenProps) {
   const insets = useSafeAreaInsets();
   const { colorScheme, palette } = useAdminTheme();
+  const apiConnection = useApiConnection();
   const [activeTab, setActiveTab] = useState<ExpenseTab>("items");
   const [shops, setShops] = useState<ShopRead[]>([]);
   const [selectedShopId, setSelectedShopId] = useState<UUID | null>(route.params?.shopId ?? null);
@@ -384,8 +1139,13 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
   const [allocationLoading, setAllocationLoading] = useState(false);
   const [allocationLoadingMore, setAllocationLoadingMore] = useState(false);
   const [allocationBusyId, setAllocationBusyId] = useState<UUID | null>(null);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<UUID>>(() => new Set());
+  const [importingCandidates, setImportingCandidates] = useState(false);
 
   const [historyRows, setHistoryRows] = useState<ExpenseEntryRead[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<ExpenseHistoryFilterDraft>(() => createExpenseHistoryFilterDraft());
+  const historyRange = useMemo(() => buildExpenseHistoryRange(historyFilter), [historyFilter]);
+  const [historyTotalAmount, setHistoryTotalAmount] = useState("0.00");
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<{ spentAt: string | null; id: UUID | null }>({
     spentAt: null,
@@ -400,7 +1160,10 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
   const [editingItem, setEditingItem] = useState<ExpenseItemRead | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   const [tamilNameDraft, setTamilNameDraft] = useState("");
-  const [sortOrderDraft, setSortOrderDraft] = useState("0");
+  const [imageDraft, setImageDraft] = useState<ImageDraft | null>(null);
+  const [removeImageRequested, setRemoveImageRequested] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageStatus, setImageStatus] = useState<string | null>(null);
   const [activeDraft, setActiveDraft] = useState(true);
   const [savingItem, setSavingItem] = useState(false);
 
@@ -458,6 +1221,7 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     if (!selectedShop) {
       setAllocationRows([]);
       setCandidateRows([]);
+      setSelectedCandidateIds(new Set());
       return;
     }
     setAllocationLoading(true);
@@ -474,6 +1238,7 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
       setAllocationCursor(pageCursor(allocationPage));
       setAllocationHasMore(allocationPage.has_more);
       setCandidateRows(candidatePage.items);
+      setSelectedCandidateIds(new Set());
     } catch (error) {
       setErrorMessage(toApiError(error).message || "Unable to load branch expenses.");
     } finally {
@@ -504,15 +1269,25 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
   }, [allocationCursor, allocationHasMore, allocationLoading, allocationLoadingMore, selectedShop]);
 
   const loadHistory = useCallback(async () => {
+    if (!historyRange.isValid) {
+      setHistoryRows([]);
+      setHistoryHasMore(false);
+      setHistoryTotalAmount("0.00");
+      setHistoryCursor({ spentAt: null, id: null });
+      return;
+    }
     setHistoryLoading(true);
     setErrorMessage(null);
     try {
       const page = await fetchAdminExpenseHistory({
         shop_id: activeTab === "history" ? selectedShopId : null,
+        range_start_date: historyRange.rangeStartDate,
+        range_end_date: historyRange.rangeEndDate,
         limit: PAGE_LIMIT,
       });
       setHistoryRows(page.items);
       setHistoryHasMore(page.has_more);
+      setHistoryTotalAmount(page.total_amount);
       setHistoryCursor({
         spentAt: page.next_cursor_spent_at ?? null,
         id: page.next_cursor_id ?? null,
@@ -522,22 +1297,25 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     } finally {
       setHistoryLoading(false);
     }
-  }, [activeTab, selectedShopId]);
+  }, [activeTab, historyRange.isValid, historyRange.rangeEndDate, historyRange.rangeStartDate, selectedShopId]);
 
   const loadMoreHistory = useCallback(async () => {
-    if (!historyHasMore || historyLoading || historyLoadingMore) {
+    if (!historyRange.isValid || !historyHasMore || historyLoading || historyLoadingMore) {
       return;
     }
     setHistoryLoadingMore(true);
     try {
       const page = await fetchAdminExpenseHistory({
         shop_id: selectedShopId,
+        range_start_date: historyRange.rangeStartDate,
+        range_end_date: historyRange.rangeEndDate,
         limit: PAGE_LIMIT,
         cursor_spent_at: historyCursor.spentAt,
         cursor_id: historyCursor.id,
       });
       setHistoryRows((current) => mergeById(current, page.items));
       setHistoryHasMore(page.has_more);
+      setHistoryTotalAmount(page.total_amount);
       setHistoryCursor({
         spentAt: page.next_cursor_spent_at ?? null,
         id: page.next_cursor_id ?? null,
@@ -547,7 +1325,16 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     } finally {
       setHistoryLoadingMore(false);
     }
-  }, [historyCursor, historyHasMore, historyLoading, historyLoadingMore, selectedShopId]);
+  }, [
+    historyCursor,
+    historyHasMore,
+    historyLoading,
+    historyLoadingMore,
+    historyRange.isValid,
+    historyRange.rangeEndDate,
+    historyRange.rangeStartDate,
+    selectedShopId,
+  ]);
 
   const refreshCurrentTab = useCallback(async () => {
     setRefreshing(true);
@@ -588,33 +1375,104 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     setEditingItem(null);
     setNameDraft("");
     setTamilNameDraft("");
-    setSortOrderDraft("0");
+    void deleteImageDraftFile(imageDraft);
+    setImageDraft(null);
+    setRemoveImageRequested(false);
+    setImageError(null);
+    setImageStatus(null);
     setActiveDraft(true);
     setEditorOpen(true);
-  }, []);
+  }, [imageDraft]);
 
   const openEditEditor = useCallback((item: ExpenseItemRead) => {
     setEditingItem(item);
     setNameDraft(item.name);
     setTamilNameDraft(item.tamil_name);
-    setSortOrderDraft(String(item.sort_order));
+    void deleteImageDraftFile(imageDraft);
+    setImageDraft(null);
+    setRemoveImageRequested(false);
+    setImageError(null);
+    setImageStatus(null);
     setActiveDraft(item.is_active);
     setEditorOpen(true);
-  }, []);
+  }, [imageDraft]);
 
   const closeEditor = useCallback(() => {
     if (savingItem) {
       return;
     }
+    void deleteImageDraftFile(imageDraft);
+    setImageDraft(null);
+    setRemoveImageRequested(false);
+    setImageError(null);
+    setImageStatus(null);
     setEditorOpen(false);
-  }, [savingItem]);
+  }, [imageDraft, savingItem]);
+
+  const hasStoredImage = Boolean(editingItem?.image_path || editingItem?.image_thumb_path);
+  const currentImageUri = removeImageRequested
+    ? ""
+    : imageDraft?.uri ?? (editingItem ? getItemThumbnailUri(editingItem) : "");
+
+  const pickImage = useCallback(async () => {
+    setImageError(null);
+    setImageStatus("Opening image picker...");
+    const imagePicker = await loadImagePickerModule();
+    if (!imagePicker) {
+      setImageStatus(null);
+      setImageError("Image picker is not available in this app build.");
+      return;
+    }
+    try {
+      const result = await imagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.72,
+      });
+      if (result.canceled || !result.assets[0]) {
+        setImageStatus(null);
+        return;
+      }
+      const draft = await prepareImageDraftForUpload(result.assets[0]);
+      void deleteImageDraftFile(imageDraft);
+      setImageDraft(draft);
+      setRemoveImageRequested(false);
+      setImageError(null);
+      setImageStatus("Ready to upload when you save.");
+    } catch (error) {
+      setImageStatus(null);
+      setImageError(error instanceof Error && error.message ? error.message : "Unable to pick image.");
+    }
+  }, [imageDraft]);
+
+  const removeImage = useCallback(() => {
+    if (imageDraft) {
+      void deleteImageDraftFile(imageDraft);
+      setImageDraft(null);
+      setImageError(null);
+      setImageStatus(null);
+      return;
+    }
+    if (removeImageRequested) {
+      setRemoveImageRequested(false);
+      setImageError(null);
+      setImageStatus(null);
+      return;
+    }
+    if (hasStoredImage) {
+      setRemoveImageRequested(true);
+      setImageError(null);
+      setImageStatus("Stored image will be removed when you save.");
+    }
+  }, [hasStoredImage, imageDraft, removeImageRequested]);
 
   const saveExpenseItem = useCallback(async () => {
     const name = nameDraft.trim();
     const tamilName = tamilNameDraft.trim();
-    const sortOrder = Number.parseInt(sortOrderDraft.trim() || "0", 10);
-    if (name.length < 2 || !tamilName || !Number.isFinite(sortOrder)) {
-      Alert.alert("Check expense item", "Enter name, Tamil name, and a valid sort order.");
+    const sortOrder = editingItem?.sort_order ?? 0;
+    if (name.length < 2 || !tamilName) {
+      Alert.alert("Check expense item", "Enter name and Tamil name.");
       return;
     }
     setSavingItem(true);
@@ -626,14 +1484,32 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
           sort_order: sortOrder,
           is_active: activeDraft,
         });
+        if (imageDraft) {
+          await replaceExpenseItemImageFile(editingItem.id, imageDraft);
+        } else if (removeImageRequested && hasStoredImage) {
+          await deleteExpenseItemImage(editingItem.id);
+        }
       } else {
-        await createExpenseItem({
+        const createdItem = await createExpenseItem({
           name,
           tamil_name: tamilName,
           sort_order: sortOrder,
           is_active: activeDraft,
         });
+        if (imageDraft) {
+          try {
+            await replaceExpenseItemImageFile(createdItem.id, imageDraft);
+          } catch (error) {
+            await deleteExpenseItem(createdItem.id).catch(() => undefined);
+            throw error;
+          }
+        }
       }
+      void deleteImageDraftFile(imageDraft);
+      setImageDraft(null);
+      setRemoveImageRequested(false);
+      setImageError(null);
+      setImageStatus(null);
       setEditorOpen(false);
       await loadItems();
       if (activeTab === "allocation") {
@@ -648,10 +1524,12 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     activeDraft,
     activeTab,
     editingItem,
+    hasStoredImage,
+    imageDraft,
     loadAllocation,
     loadItems,
     nameDraft,
-    sortOrderDraft,
+    removeImageRequested,
     tamilNameDraft,
   ]);
 
@@ -674,21 +1552,33 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     );
   }, [loadItems]);
 
-  const allocateCandidate = useCallback(async (item: ExpenseItemRead) => {
-    if (!selectedShop) {
+  const toggleCandidateSelection = useCallback((itemId: UUID) => {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }, []);
+
+  const importSelectedCandidates = useCallback(async () => {
+    if (!selectedShop || selectedCandidateIds.size === 0) {
       return;
     }
-    setAllocationBusyId(item.id);
+    setImportingCandidates(true);
     try {
-      await allocateShopExpenseItem(selectedShop.id, item.id);
+      await allocateShopExpenseItems(selectedShop.id, [...selectedCandidateIds]);
       await loadAllocation();
       await loadItems();
     } catch (error) {
-      Alert.alert("Allocation failed", toApiError(error).message || "Unable to allocate expense item.");
+      Alert.alert("Import failed", toApiError(error).message || "Unable to import expense items.");
     } finally {
-      setAllocationBusyId(null);
+      setImportingCandidates(false);
     }
-  }, [loadAllocation, loadItems, selectedShop]);
+  }, [loadAllocation, loadItems, selectedCandidateIds, selectedShop]);
 
   const toggleAllocation = useCallback(async (item: ShopExpenseItemRead) => {
     if (!selectedShop) {
@@ -732,6 +1622,24 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
 
   const renderHeader = () => (
     <>
+      {apiConnection.status === "offline" ? (
+        <View style={[styles.errorBanner, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}>
+          <MaterialCommunityIcons name="database-alert-outline" size={18} color={palette.danger} />
+          <Text style={[styles.errorText, { color: palette.danger }]}>
+            Backend offline at {apiConnection.baseUrl || "configured API URL"}. {apiConnection.message}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void apiConnection.retry()}
+            disabled={apiConnection.checking}
+            hitSlop={10}
+          >
+            <Text style={[styles.errorAction, { color: palette.danger }]}>
+              {apiConnection.checking ? "Checking" : "Retry"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
       {errorMessage ? (
         <View style={[styles.errorBanner, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}>
           <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
@@ -747,7 +1655,7 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
       <Text style={[styles.sectionSubtitle, { color: palette.textMuted }]}>
         Shops can only record expenses from active items allocated here.
       </Text>
-      <BranchSelector
+      <BranchDropdown
         shops={shops}
         selectedShopId={selectedShop?.id ?? null}
         onSelect={setSelectedShopId}
@@ -765,8 +1673,10 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
           className="flex-1"
         />
         <Button
-          label="New item"
-          onPress={openCreateEditor}
+          label={selectedCandidateIds.size > 0 ? `Import (${selectedCandidateIds.size})` : "Import"}
+          onPress={importSelectedCandidates}
+          loading={importingCandidates}
+          disabled={!selectedShop || selectedCandidateIds.size === 0}
           className="flex-1"
         />
       </View>
@@ -775,7 +1685,7 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
         <TextInput
           value={candidateSearch}
           onChangeText={setCandidateSearch}
-          placeholder="Search unallocated items"
+          placeholder="Search items to import"
           placeholderTextColor={palette.textMuted}
           style={[styles.searchInput, { color: palette.textPrimary }]}
         />
@@ -784,25 +1694,47 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
         {candidateRows.length === 0 ? (
           <Text style={[styles.smallMuted, { color: palette.textMuted }]}>No unallocated expense items match this branch.</Text>
         ) : (
-          candidateRows.map((item) => (
-            <Pressable
-              key={item.id}
-              accessibilityRole="button"
-              onPress={() => allocateCandidate(item)}
-              disabled={allocationBusyId === item.id}
-              style={[styles.candidateRow, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
-            >
-              <View style={styles.rowBody}>
-                <Text numberOfLines={1} style={[styles.candidateTitle, { color: palette.textPrimary }]}>{item.name}</Text>
-                <Text numberOfLines={1} style={[styles.rowMeta, { color: palette.textMuted }]}>{item.tamil_name}</Text>
-              </View>
-              {allocationBusyId === item.id ? (
-                <ActivityIndicator size="small" color={palette.cash} />
-              ) : (
-                <MaterialCommunityIcons name="plus-circle-outline" size={20} color={palette.cash} />
-              )}
-            </Pressable>
-          ))
+          candidateRows.map((item) => {
+            const selected = selectedCandidateIds.has(item.id);
+            const thumbnailUri = getItemThumbnailUri(item);
+            return (
+              <Pressable
+                key={item.id}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: selected, disabled: importingCandidates }}
+                onPress={() => toggleCandidateSelection(item.id)}
+                disabled={importingCandidates}
+                style={[
+                  styles.candidateRow,
+                  {
+                    backgroundColor: selected ? palette.cashSoft : palette.surfaceMuted,
+                    borderColor: selected ? palette.cash : palette.border,
+                  },
+                ]}
+              >
+                <ItemThumbnail
+                  uri={thumbnailUri}
+                  recyclingKey={item.id}
+                  size={38}
+                  borderRadius={12}
+                  backgroundColor={palette.card}
+                  borderColor={palette.border}
+                  icon="cash-minus"
+                  iconColor={palette.cash}
+                  iconSize={18}
+                />
+                <View style={styles.rowBody}>
+                  <Text numberOfLines={1} style={[styles.candidateTitle, { color: palette.textPrimary }]}>{item.name}</Text>
+                  <Text numberOfLines={1} style={[styles.rowMeta, { color: palette.textMuted }]}>{item.tamil_name}</Text>
+                </View>
+                <MaterialCommunityIcons
+                  name={selected ? "checkbox-marked-circle-outline" : "checkbox-blank-circle-outline"}
+                  size={21}
+                  color={selected ? palette.cash : palette.textMuted}
+                />
+              </Pressable>
+            );
+          })
         )}
       </View>
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
@@ -817,12 +1749,19 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
       <Text style={[styles.sectionSubtitle, { color: palette.textMuted }]}>
         View entries from every branch or filter to one branch.
       </Text>
-      <BranchSelector
+      <BranchDropdown
         shops={shops}
         selectedShopId={selectedShopId}
         includeAll
         onSelect={setSelectedShopId}
         palette={palette}
+      />
+      <HistoryFilterControls
+        filter={historyFilter}
+        range={historyRange}
+        totalAmount={historyTotalAmount}
+        palette={palette}
+        onChange={setHistoryFilter}
       />
     </View>
   );
@@ -965,52 +1904,116 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
 
       {content}
 
-      <Modal visible={editorOpen} animationType="slide" transparent onRequestClose={closeEditor}>
+      <Modal visible={editorOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={closeEditor}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={[styles.modalBackdrop, { backgroundColor: palette.overlay }]}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+          style={[styles.centeredModalBackdrop, { backgroundColor: palette.overlay }]}
         >
-          <View style={[styles.modalCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-            <Text style={[styles.modalTitle, { color: palette.textPrimary }]}>
-              {editingItem ? "Edit expense item" : "Create expense item"}
-            </Text>
-            <TextField label="Name" value={nameDraft} onChangeText={setNameDraft} placeholder="Example: Transport" />
-            <TextField label="Tamil name" value={tamilNameDraft} onChangeText={setTamilNameDraft} placeholder="தமிழ் பெயர்" />
-            <TextField
-              label="Sort order"
-              value={sortOrderDraft}
-              onChangeText={setSortOrderDraft}
-              keyboardType="number-pad"
-              placeholder="0"
-            />
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityState={{ checked: activeDraft }}
-              onPress={() => setActiveDraft((current) => !current)}
-              style={[styles.switchRow, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeEditor} />
+          <View style={styles.centeredKeyboardWrap} pointerEvents="box-none">
+            <View
+              style={[
+                styles.modalCard,
+                adminShadow(palette.shadow, 0.16, 18, 24),
+                { backgroundColor: palette.card, borderColor: palette.border },
+              ]}
             >
-              <View style={[styles.switchIcon, { backgroundColor: activeDraft ? palette.successSoft : palette.dangerSoft }]}>
-                <MaterialCommunityIcons
-                  name={activeDraft ? "check-circle-outline" : "pause-circle-outline"}
-                  size={18}
-                  color={activeDraft ? palette.success : palette.danger}
+              <View style={styles.modalHeader}>
+                <View style={styles.rowBody}>
+                  <Text style={[styles.modalTitle, { color: palette.textPrimary }]}>
+                    {editingItem ? "Edit expense item" : "Create expense item"}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close expense item editor"
+                  onPress={closeEditor}
+                  style={[styles.modalCloseButton, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={palette.textPrimary} />
+                </Pressable>
+              </View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.modalScrollContent}
+              >
+              <TextField label="Name" value={nameDraft} onChangeText={setNameDraft} placeholder="Example: Transport" />
+              <TextField label="Tamil name" value={tamilNameDraft} onChangeText={setTamilNameDraft} placeholder="தமிழ் பெயர்" />
+              <View style={[styles.imagePanel, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                <ItemThumbnail
+                  uri={currentImageUri}
+                  recyclingKey={editingItem?.id ?? "new-expense-item"}
+                  size={76}
+                  borderRadius={16}
+                  backgroundColor={palette.card}
+                  borderColor={palette.border}
+                  icon="image-plus"
+                  iconColor={palette.textMuted}
+                  iconSize={28}
+                />
+                <View style={styles.rowBody}>
+                  <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Image</Text>
+                  <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
+                    Optional square image for expense rows.
+                  </Text>
+                  {imageStatus ? <Text style={[styles.imageMessage, { color: palette.textMuted }]}>{imageStatus}</Text> : null}
+                  {imageError ? <Text style={[styles.imageMessage, { color: palette.danger }]}>{imageError}</Text> : null}
+                  <View style={styles.imageActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={pickImage}
+                      style={[styles.imageActionButton, { backgroundColor: palette.card, borderColor: palette.border }]}
+                    >
+                      <MaterialCommunityIcons name="image-edit-outline" size={16} color={palette.cash} />
+                      <Text style={[styles.imageActionText, { color: palette.textPrimary }]}>Pick image</Text>
+                    </Pressable>
+                    {imageDraft || hasStoredImage || removeImageRequested ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={removeImage}
+                        style={[styles.imageActionButton, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}
+                      >
+                        <MaterialCommunityIcons name="image-remove-outline" size={16} color={palette.danger} />
+                        <Text style={[styles.imageActionText, { color: palette.danger }]}>
+                          {removeImageRequested ? "Undo" : imageDraft ? "Clear" : "Remove"}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              </View>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityState={{ checked: activeDraft }}
+                onPress={() => setActiveDraft((current) => !current)}
+                style={[styles.switchRow, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+              >
+                <View style={[styles.switchIcon, { backgroundColor: activeDraft ? palette.successSoft : palette.dangerSoft }]}>
+                  <MaterialCommunityIcons
+                    name={activeDraft ? "check-circle-outline" : "pause-circle-outline"}
+                    size={18}
+                    color={activeDraft ? palette.success : palette.danger}
+                  />
+                </View>
+                <View style={styles.rowBody}>
+                  <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Active</Text>
+                  <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
+                    Inactive expense items cannot be allocated to branches.
+                  </Text>
+                </View>
+              </Pressable>
+              </ScrollView>
+              <View style={styles.modalActions}>
+                <Button label="Cancel" variant="secondary" onPress={closeEditor} disabled={savingItem} className="flex-1" />
+                <Button
+                  label={editingItem ? "Save changes" : "Create item"}
+                  onPress={saveExpenseItem}
+                  loading={savingItem}
+                  className="flex-1"
                 />
               </View>
-              <View style={styles.rowBody}>
-                <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Active</Text>
-                <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
-                  Inactive expense items cannot be allocated to branches.
-                </Text>
-              </View>
-            </Pressable>
-            <View style={styles.modalActions}>
-              <Button label="Cancel" variant="secondary" onPress={closeEditor} disabled={savingItem} className="flex-1" />
-              <Button
-                label={editingItem ? "Save changes" : "Create item"}
-                onPress={saveExpenseItem}
-                loading={savingItem}
-                className="flex-1"
-              />
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -1141,8 +2144,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 11,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 10,
+  },
+  expenseItemCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    gap: 11,
+  },
+  expenseItemMain: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  expenseItemBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  expenseItemTitleLine: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  expenseItemFooter: {
+    minHeight: 42,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  expenseItemMetaText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+  },
+  expenseItemActionGroup: {
+    width: 100,
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
+    justifyContent: "space-between",
   },
   rowIcon: {
     width: 42,
@@ -1152,12 +2199,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   rowBody: {
+    alignSelf: "stretch",
     flex: 1,
     minWidth: 0,
+    justifyContent: "center",
   },
   rowTitleLine: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: 8,
   },
   rowTitle: {
@@ -1182,7 +2232,10 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "stretch",
+    flexShrink: 0,
     gap: 6,
+    justifyContent: "center",
   },
   iconButton: {
     width: 36,
@@ -1194,6 +2247,8 @@ const styles = StyleSheet.create({
   },
   statusPill: {
     borderRadius: 999,
+    flexShrink: 0,
+    marginTop: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
@@ -1207,22 +2262,269 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: "900",
   },
-  branchChips: {
-    gap: 8,
-    paddingRight: 14,
-  },
-  branchChip: {
-    maxWidth: 180,
-    minHeight: 38,
-    borderRadius: 999,
+  dropdownSelect: {
+    minHeight: 58,
+    borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  dropdownTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  dropdownLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  dropdownValue: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "900",
+  },
+  dropdownOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  dropdownSheet: {
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "82%",
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  dropdownSheetHeader: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  dropdownSheetTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "900",
+  },
+  dropdownClose: {
+    width: 38,
+    height: 38,
     alignItems: "center",
     justifyContent: "center",
   },
-  branchChipText: {
+  dropdownOption: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  dropdownOptionList: {
+    gap: 8,
+  },
+  dropdownOptionTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  dropdownOptionText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "900",
+  },
+  historyControls: {
+    gap: 9,
+  },
+  historyIntervalSheet: {
+    maxHeight: "84%",
+  },
+  historySegmentRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  historySegmentButton: {
+    flexGrow: 1,
+    flexBasis: "30%",
+    minHeight: 42,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historySegmentText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  historyPickerScroll: {
+    maxHeight: 430,
+  },
+  historyReferenceOptionList: {
+    gap: 8,
+  },
+  historyReferenceOptionSubtitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+  },
+  historyCalendarContent: {
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    gap: 10,
+  },
+  historyCalendarHeader: {
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  historyCalendarIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyCalendarTitleWrap: {
+    minWidth: 0,
+    flex: 1,
+    alignItems: "center",
+  },
+  historyCalendarModeLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  historyCalendarMonthTitle: {
+    marginTop: 3,
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  historyWeekdayRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  historyWeekdayText: {
+    width: "14.2857%",
+    textAlign: "center",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  historyCalendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  historyCalendarDayCell: {
+    width: "14.2857%",
+    padding: 2,
+  },
+  historyCalendarDayButton: {
+    height: 38,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyCalendarDayText: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  historyRangeFooter: {
+    marginTop: 4,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 10,
+    gap: 10,
+  },
+  historyRangeDatesRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+  },
+  historyRangeDateBlock: {
+    minWidth: 0,
+    flex: 1,
+  },
+  historyRangeDateLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  historyRangeDateValue: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  historyRangeDivider: {
+    width: 1,
+  },
+  historyRangeApplyButton: {
+    minHeight: 44,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyRangeApplyText: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  historyQuickFilterPanel: {
+    minHeight: 58,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  historyQuickFilterText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "800",
+  },
+  totalPanel: {
+    minHeight: 68,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  totalLabel: {
     fontSize: 12,
     lineHeight: 16,
+    fontWeight: "900",
+  },
+  totalHint: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+  },
+  totalAmount: {
+    flexShrink: 0,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: "900",
   },
   candidateWrap: {
@@ -1263,23 +2565,92 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: "800",
   },
+  errorAction: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "900",
+  },
   footerLoader: {
     paddingVertical: 18,
   },
-  modalBackdrop: {
+  centeredModalBackdrop: {
     flex: 1,
-    justifyContent: "flex-end",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+  },
+  centeredKeyboardWrap: {
+    flex: 1,
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
   },
   modalCard: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "86%",
+    borderRadius: 24,
     borderWidth: 1,
     padding: 18,
+    gap: 16,
+  },
+  modalHeader: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  modalScrollContent: {
     gap: 14,
+    paddingBottom: 2,
   },
   modalTitle: {
     fontSize: 18,
     lineHeight: 23,
+    fontWeight: "900",
+  },
+  modalCloseButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imagePanel: {
+    minHeight: 104,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  imageMessage: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+  },
+  imageActions: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  imageActionButton: {
+    minHeight: 36,
+    borderRadius: 11,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  imageActionText: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "900",
   },
   switchRow: {

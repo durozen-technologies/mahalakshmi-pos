@@ -314,3 +314,11 @@ Admins manage independent expense items and allocate them to shop branches. Shop
 - There is no database relationship between `expense_items` and billing `items`.
 - Expense amount is entered by shop per entry.
 - Admin controls which expense items each branch can use.
+
+===============================================================================================================
+
+- Database is unavailabe.in expenses page. In new item button, while creation of new item, remove the sort order. And image for the item.
+- Add a drop down in allocation for the allocation page in expenses.
+- Remove the new item , and import item from items page in expenses
+- Add drop down for history expenses page.
+- Add existing date, range, week, month and year, toal. selt the interval.

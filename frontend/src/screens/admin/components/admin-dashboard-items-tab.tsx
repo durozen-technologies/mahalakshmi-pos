@@ -151,7 +151,7 @@ const filterOptions: {
 ];
 
 const workspacePageOptions: {
-  value: ItemWorkspaceMode;
+  value: AdminItemWorkspace.Catalogue | AdminItemWorkspace.Shop | AdminItemWorkspace.Prices;
   label: string;
   detail: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];

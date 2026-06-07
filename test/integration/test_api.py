@@ -976,11 +976,23 @@ class BackendApiIntegrationTests(BackendTestCase):
                 )
                 self.assertEqual([item.id for item in visible_shop_rows.items], [tea.id])
 
+                expense_day = date(2026, 1, 15)
                 entry = await record_shop_expense(
                     ExpenseEntryCreate(
                         expense_item_id=tea.id,
                         amount=Decimal("123.45"),
+                        spent_at=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
                         note="Tea purchase",
+                    ),
+                    current_shop,
+                    db,
+                )
+                older_entry = await record_shop_expense(
+                    ExpenseEntryCreate(
+                        expense_item_id=tea.id,
+                        amount=Decimal("20.00"),
+                        spent_at=datetime(2026, 1, 14, 9, 15, tzinfo=UTC),
+                        note="Previous tea purchase",
                     ),
                     current_shop,
                     db,
@@ -1014,10 +1026,48 @@ class BackendApiIntegrationTests(BackendTestCase):
                     db=db,
                     limit=10,
                 )
-                self.assertEqual([item.id for item in shop_history.items], [entry.id])
+                self.assertEqual([item.id for item in shop_history.items], [entry.id, older_entry.id])
+                self.assertEqual(shop_history.total_amount, Decimal("143.45"))
+
+                dated_history = await shop_expense_history(
+                    range_start_date=expense_day,
+                    range_end_date=expense_day,
+                    cursor_spent_at=None,
+                    cursor_id=None,
+                    shop=current_shop,
+                    db=db,
+                    limit=10,
+                )
+                self.assertEqual([item.id for item in dated_history.items], [entry.id])
+                self.assertEqual(dated_history.total_amount, Decimal("123.45"))
+
+                first_page = await shop_expense_history(
+                    range_start_date=None,
+                    range_end_date=None,
+                    cursor_spent_at=None,
+                    cursor_id=None,
+                    shop=current_shop,
+                    db=db,
+                    limit=1,
+                )
+                self.assertEqual([item.id for item in first_page.items], [entry.id])
+                self.assertTrue(first_page.has_more)
+                self.assertEqual(first_page.total_amount, Decimal("143.45"))
+                next_page = await shop_expense_history(
+                    range_start_date=None,
+                    range_end_date=None,
+                    cursor_spent_at=first_page.next_cursor_spent_at,
+                    cursor_id=first_page.next_cursor_id,
+                    shop=current_shop,
+                    db=db,
+                    limit=1,
+                )
+                self.assertEqual([item.id for item in next_page.items], [older_entry.id])
+                self.assertEqual(next_page.total_amount, Decimal("143.45"))
                 admin_history = await get_expense_history(db, shop_id=current_shop.id, limit=10)
-                self.assertEqual([item.id for item in admin_history.items], [entry.id])
+                self.assertEqual([item.id for item in admin_history.items], [entry.id, older_entry.id])
                 self.assertEqual(admin_history.items[0].note, "Tea purchase")
+                self.assertEqual(admin_history.total_amount, Decimal("143.45"))
 
         self.run_async(scenario())
 

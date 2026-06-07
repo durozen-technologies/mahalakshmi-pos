@@ -20,6 +20,13 @@ export enum InventoryMovementType {
   USE = "use",
 }
 
+export enum ItemAssumptionStatus {
+  NotApplicable = "not_applicable",
+  NotSet = "not_set",
+  Incomplete = "incomplete",
+  Configured = "configured",
+}
+
 export enum AnalyticsPeriod {
   DATE = "date",
   MONTH = "month",
@@ -267,6 +274,9 @@ export interface ExpenseItemRead {
   tamil_name: string;
   sort_order: number;
   is_active: boolean;
+  image_path?: string | null;
+  image_thumb_path?: string | null;
+  image_content_type?: string | null;
   created_at: string;
   updated_at?: string | null;
   allocated_shop_count: number;
@@ -344,6 +354,9 @@ export interface ExpenseEntryRead {
   expense_item_id: UUID;
   expense_name: string;
   expense_tamil_name: string;
+  image_path?: string | null;
+  image_thumb_path?: string | null;
+  image_content_type?: string | null;
   amount: string;
   spent_at: string;
   note?: string | null;
@@ -354,6 +367,7 @@ export interface ExpenseEntryPage {
   items: ExpenseEntryRead[];
   limit: number;
   has_more: boolean;
+  total_amount: string;
   next_cursor_spent_at?: string | null;
   next_cursor_id?: UUID | null;
 }
@@ -388,6 +402,10 @@ export interface ItemRead {
   created_at: string;
   updated_at?: string | null;
   custom_attributes: Record<string, string | number | boolean | null>;
+  assumption_percent?: string | null;
+  assumption_inventory_item_id?: UUID | null;
+  assumption_inventory_category_id?: UUID | null;
+  assumption_status?: ItemAssumptionStatus;
   image_path?: string | null;
   image_thumb_path?: string | null;
   image_content_type?: string | null;
@@ -412,6 +430,12 @@ export interface ItemMetadataUpdate {
   category_id?: UUID | null;
   category?: string | null;
   custom_attributes?: Record<string, string | number | boolean | null>;
+}
+
+export interface ItemAssumptionUpdate {
+  assumption_percent?: string | null;
+  assumption_inventory_item_id?: UUID | null;
+  assumption_inventory_category_id?: UUID | null;
 }
 
 export interface ShopItemAllocationUpdate {

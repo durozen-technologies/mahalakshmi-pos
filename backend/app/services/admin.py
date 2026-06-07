@@ -20,7 +20,10 @@ from app.models import (
     Bill,
     BillItem,
     DailyPrice,
+    InventoryItem,
+    InventoryItemCategory,
     Item,
+    ItemAssumptionStatus,
     ItemCategory,
     ItemChangeEvent,
     Payment,
@@ -37,6 +40,7 @@ from app.schemas.admin import (
     AdminDashboardBootstrap,
     AdminItemRowsPage,
     AnalyticsPeriod,
+    ItemAssumptionUpdate,
     ItemCategoryCreate,
     ItemCategoryRead,
     ItemCategoryUpdate,
@@ -72,6 +76,43 @@ def _shop_to_read(shop: Shop) -> ShopRead:
     )
 
 
+def _item_assumption_status(
+    base_unit: BaseUnit,
+    assumption_percent,
+    assumption_inventory_item_id: UUID | None,
+    assumption_inventory_category_id: UUID | None,
+) -> ItemAssumptionStatus:
+    if base_unit != BaseUnit.KG:
+        return ItemAssumptionStatus.NOT_APPLICABLE
+    if (
+        assumption_percent is None
+        and assumption_inventory_item_id is None
+        and assumption_inventory_category_id is None
+    ):
+        return ItemAssumptionStatus.NOT_SET
+    if (
+        assumption_percent is not None
+        and assumption_inventory_item_id is not None
+        and assumption_inventory_category_id is not None
+    ):
+        return ItemAssumptionStatus.CONFIGURED
+    return ItemAssumptionStatus.INCOMPLETE
+
+
+def _item_assumption_read_kwargs(row) -> dict[str, object | None]:
+    return {
+        "assumption_percent": row.assumption_percent,
+        "assumption_inventory_item_id": row.assumption_inventory_item_id,
+        "assumption_inventory_category_id": row.assumption_inventory_category_id,
+        "assumption_status": _item_assumption_status(
+            row.base_unit,
+            row.assumption_percent,
+            row.assumption_inventory_item_id,
+            row.assumption_inventory_category_id,
+        ),
+    }
+
+
 def _item_to_read(item: Item) -> ItemRead:
     loaded_category = item.__dict__.get("category_ref")
     return ItemRead(
@@ -88,6 +129,7 @@ def _item_to_read(item: Item) -> ItemRead:
         created_at=item.created_at,
         updated_at=item.updated_at,
         custom_attributes=item.custom_attributes or {},
+        **_item_assumption_read_kwargs(item),
         image_path=build_item_image_path(item.id, item.image_object_key, item.image_content_type),
         image_thumb_path=build_item_image_thumb_path(
             item.id,
@@ -163,6 +205,13 @@ def _json_safe_item_state(item: Item | None) -> dict[str, object | None]:
         "category": item.category,
         "is_active": item.is_active,
         "custom_attributes": dict(item.custom_attributes or {}),
+        "assumption_percent": str(item.assumption_percent) if item.assumption_percent is not None else None,
+        "assumption_inventory_item_id": (
+            str(item.assumption_inventory_item_id) if item.assumption_inventory_item_id else None
+        ),
+        "assumption_inventory_category_id": (
+            str(item.assumption_inventory_category_id) if item.assumption_inventory_category_id else None
+        ),
         "image_object_key": item.image_object_key,
         "image_content_type": item.image_content_type,
         "image_thumbnail_object_key": item.image_thumbnail_object_key,
@@ -430,6 +479,9 @@ async def list_shop_items(
             Item.created_at,
             Item.updated_at,
             Item.custom_attributes,
+            Item.assumption_percent,
+            Item.assumption_inventory_item_id,
+            Item.assumption_inventory_category_id,
             Item.image_object_key,
             Item.image_content_type,
             Item.image_thumbnail_object_key,
@@ -668,6 +720,7 @@ async def list_shop_items(
                     row.allocation_custom_attributes,
                     is_allocated=is_allocated,
                 ),
+                **_item_assumption_read_kwargs(row),
                 image_path=build_item_image_path(
                     row.id, row.image_object_key, row.image_content_type
                 ),
@@ -777,6 +830,9 @@ async def get_shop_item(db: AsyncSession, shop: Shop, item_id: UUID) -> ShopItem
                 Item.created_at,
                 Item.updated_at,
                 Item.custom_attributes,
+                Item.assumption_percent,
+                Item.assumption_inventory_item_id,
+                Item.assumption_inventory_category_id,
                 Item.image_object_key,
                 Item.image_content_type,
                 Item.image_thumbnail_object_key,
@@ -840,6 +896,7 @@ async def get_shop_item(db: AsyncSession, shop: Shop, item_id: UUID) -> ShopItem
             row.allocation_custom_attributes,
             is_allocated=is_allocated,
         ),
+        **_item_assumption_read_kwargs(row),
         image_path=build_item_image_path(row.id, row.image_object_key, row.image_content_type),
         image_thumb_path=build_item_image_thumb_path(
             row.id,
@@ -901,6 +958,7 @@ def _compact_shop_item_from_row(row, shop: Shop, *, allocated: bool) -> ShopItem
             getattr(row, "allocation_custom_attributes", None),
             is_allocated=allocated,
         ),
+        **_item_assumption_read_kwargs(row),
         image_path=build_item_image_path(row.id, row.image_object_key, row.image_content_type),
         image_thumb_path=build_item_image_thumb_path(
             row.id,
@@ -962,6 +1020,9 @@ def _selected_shop_items_source(shop: Shop):
         Item.created_at.label("created_at"),
         Item.updated_at.label("updated_at"),
         Item.custom_attributes.label("custom_attributes"),
+        Item.assumption_percent.label("assumption_percent"),
+        Item.assumption_inventory_item_id.label("assumption_inventory_item_id"),
+        Item.assumption_inventory_category_id.label("assumption_inventory_category_id"),
         Item.image_object_key.label("image_object_key"),
         Item.image_content_type.label("image_content_type"),
         Item.image_thumbnail_object_key.label("image_thumbnail_object_key"),
@@ -990,6 +1051,9 @@ def _selected_shop_items_source(shop: Shop):
             Item.created_at.label("created_at"),
             Item.updated_at.label("updated_at"),
             Item.custom_attributes.label("custom_attributes"),
+            Item.assumption_percent.label("assumption_percent"),
+            Item.assumption_inventory_item_id.label("assumption_inventory_item_id"),
+            Item.assumption_inventory_category_id.label("assumption_inventory_category_id"),
             Item.image_object_key.label("image_object_key"),
             Item.image_content_type.label("image_content_type"),
             Item.image_thumbnail_object_key.label("image_thumbnail_object_key"),
@@ -1303,6 +1367,9 @@ def _shop_item_import_candidates_query(shop: Shop, q: str | None = None):
             Item.created_at,
             Item.updated_at,
             Item.custom_attributes,
+            Item.assumption_percent,
+            Item.assumption_inventory_item_id,
+            Item.assumption_inventory_category_id,
             Item.image_object_key,
             Item.image_content_type,
             Item.image_thumbnail_object_key,
@@ -1434,6 +1501,9 @@ def _catalogue_rows_query(q: str | None = None, active: bool | None = None):
         Item.created_at,
         Item.updated_at,
         Item.custom_attributes,
+        Item.assumption_percent,
+        Item.assumption_inventory_item_id,
+        Item.assumption_inventory_category_id,
         Item.image_object_key,
         Item.image_content_type,
         Item.image_thumbnail_object_key,
@@ -1469,6 +1539,7 @@ def _catalogue_row_to_shop_item(row) -> ShopItemRead:
         created_at=row.created_at,
         updated_at=row.updated_at,
         custom_attributes=row.custom_attributes or {},
+        **_item_assumption_read_kwargs(row),
         image_path=build_item_image_path(row.id, row.image_object_key, row.image_content_type),
         image_thumb_path=build_item_image_thumb_path(
             row.id,
@@ -1627,6 +1698,9 @@ async def list_catalogue_items(
         Item.created_at,
         Item.updated_at,
         Item.custom_attributes,
+        Item.assumption_percent,
+        Item.assumption_inventory_item_id,
+        Item.assumption_inventory_category_id,
         Item.image_object_key,
         Item.image_content_type,
         Item.image_thumbnail_object_key,
@@ -1725,6 +1799,7 @@ async def list_catalogue_items(
             created_at=row.created_at,
             updated_at=row.updated_at,
             custom_attributes=row.custom_attributes or {},
+            **_item_assumption_read_kwargs(row),
             image_path=build_item_image_path(row.id, row.image_object_key, row.image_content_type),
             image_thumb_path=build_item_image_thumb_path(
                 row.id,
@@ -1805,6 +1880,9 @@ async def get_catalogue_item(db: AsyncSession, item_id: UUID) -> ShopItemRead:
                 Item.created_at,
                 Item.updated_at,
                 Item.custom_attributes,
+                Item.assumption_percent,
+                Item.assumption_inventory_item_id,
+                Item.assumption_inventory_category_id,
                 Item.image_object_key,
                 Item.image_content_type,
                 Item.image_thumbnail_object_key,
@@ -1832,6 +1910,7 @@ async def get_catalogue_item(db: AsyncSession, item_id: UUID) -> ShopItemRead:
         created_at=row.created_at,
         updated_at=row.updated_at,
         custom_attributes=row.custom_attributes or {},
+        **_item_assumption_read_kwargs(row),
         image_path=build_item_image_path(row.id, row.image_object_key, row.image_content_type),
         image_thumb_path=build_item_image_thumb_path(
             row.id,
@@ -2631,6 +2710,100 @@ async def update_item_metadata(
         item_id=item.id,
         shop_id=item.shop_id,
         event_type="item.metadata_updated",
+        before=previous_state,
+        after=_json_safe_item_state(item),
+    )
+    await db.commit()
+    return _item_to_read(item)
+
+
+async def update_item_assumption(
+    db: AsyncSession,
+    item_id: UUID,
+    payload: ItemAssumptionUpdate,
+) -> ItemRead:
+    item = await db.scalar(
+        select(Item).where(Item.id == item_id, Item.shop_id.is_(None)).with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+
+    is_clear = (
+        payload.assumption_percent is None
+        and payload.assumption_inventory_item_id is None
+        and payload.assumption_inventory_category_id is None
+    )
+    previous_state = _json_safe_item_state(item)
+
+    if is_clear:
+        if (
+            item.assumption_percent is None
+            and item.assumption_inventory_item_id is None
+            and item.assumption_inventory_category_id is None
+        ):
+            return _item_to_read(item)
+        item.assumption_percent = None
+        item.assumption_inventory_item_id = None
+        item.assumption_inventory_category_id = None
+        await db.flush()
+        _record_item_event(
+            db,
+            item_id=item.id,
+            shop_id=item.shop_id,
+            event_type="item.assumption_cleared",
+            before=previous_state,
+            after=_json_safe_item_state(item),
+        )
+        await db.commit()
+        return _item_to_read(item)
+
+    if item.base_unit != BaseUnit.KG or item.unit_type != UnitType.WEIGHT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Assumptions can only be configured for kg items",
+        )
+
+    inventory_item = await db.get(InventoryItem, payload.assumption_inventory_item_id)
+    if inventory_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item not found",
+        )
+    if inventory_item.base_unit != BaseUnit.KG or inventory_item.unit_type != UnitType.WEIGHT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Assumption inventory item must be a kg item",
+        )
+
+    category_link = await db.scalar(
+        select(InventoryItemCategory.id).where(
+            InventoryItemCategory.inventory_item_id == inventory_item.id,
+            InventoryItemCategory.category_id == payload.assumption_inventory_category_id,
+        )
+    )
+    if category_link is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inventory category is not linked to this item",
+        )
+
+    changed = (
+        item.assumption_percent != payload.assumption_percent
+        or item.assumption_inventory_item_id != payload.assumption_inventory_item_id
+        or item.assumption_inventory_category_id != payload.assumption_inventory_category_id
+    )
+    if not changed:
+        return _item_to_read(item)
+
+    item.assumption_percent = payload.assumption_percent
+    item.assumption_inventory_item_id = payload.assumption_inventory_item_id
+    item.assumption_inventory_category_id = payload.assumption_inventory_category_id
+    await db.flush()
+    _record_item_event(
+        db,
+        item_id=item.id,
+        shop_id=item.shop_id,
+        event_type="item.assumption_updated",
         before=previous_state,
         after=_json_safe_item_state(item),
     )

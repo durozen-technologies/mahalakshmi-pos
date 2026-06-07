@@ -22,6 +22,7 @@ import {
   InventoryMovementPage,
   InventoryStockRowsPage,
   InventorySummaryRead,
+  ItemAssumptionUpdate,
   ItemCategoryCreate,
   ItemCategoryRead,
   ItemCategoryUpdate,
@@ -73,7 +74,7 @@ export type AnalyticsDateRange = {
   startDate?: string | null;
   endDate?: string | null;
 };
-export type AdminReportSection = "sales" | "billing" | "items" | "inventory";
+export type AdminReportSection = "sales" | "billing" | "items" | "inventory" | "assumptions" | "over_report";
 export type AdminReportDetailLevel = "summary" | "full";
 export type DownloadAdminReportPdfParams = {
   sections: AdminReportSection[];
@@ -746,6 +747,11 @@ export async function updateItemMetadata(itemId: UUID, payload: ItemMetadataUpda
   return data;
 }
 
+export async function updateItemAssumption(itemId: UUID, payload: ItemAssumptionUpdate) {
+  const { data } = await apiClient.patch<ItemRead>(`/api/v1/admin/items/${itemId}/assumption`, payload);
+  return data;
+}
+
 export async function deleteItem(itemId: UUID) {
   await apiClient.delete(`/api/v1/admin/items/${itemId}`);
 }
@@ -968,6 +974,17 @@ export async function fetchShopPriceBootstrap(shopId: UUID, options: ApiRequestO
   const { data } = await apiClient.get<ShopBootstrapResponse>(
     `/api/v1/admin/shops/${shopId}/prices/bootstrap`,
     { signal: options.signal },
+  );
+  return data;
+}
+
+export async function fetchShopPriceHistory(shopId: UUID, priceDate: string, options: ApiRequestOptions = {}) {
+  const { data } = await apiClient.get<ShopBootstrapResponse>(
+    `/api/v1/admin/shops/${shopId}/prices/history`,
+    {
+      params: { price_date: priceDate },
+      signal: options.signal,
+    },
   );
   return data;
 }

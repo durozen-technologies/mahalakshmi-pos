@@ -70,6 +70,8 @@ const getAdminDashboardScreen = () =>
   require("@/screens/admin/admin-dashboard-screen").AdminDashboardScreen;
 const getAdminItemsCatalogueScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminItemsCatalogueScreen;
+const getAdminItemAssumptionScreen = () =>
+  require("@/screens/admin/admin-items-route-screen").AdminItemAssumptionScreen;
 const getAdminShopItemsScreen = () =>
   require("@/screens/admin/admin-items-route-screen").AdminShopItemsScreen;
 const getAdminShopItemsOrderScreen = () =>
@@ -342,6 +344,11 @@ function AdminStack() {
       <Stack.Screen
         name="AdminItemsCatalogue"
         getComponent={getAdminItemsCatalogueScreen}
+        options={HEADER_HIDDEN_OPTIONS}
+      />
+      <Stack.Screen
+        name="AdminItemAssumption"
+        getComponent={getAdminItemAssumptionScreen}
         options={HEADER_HIDDEN_OPTIONS}
       />
       <Stack.Screen

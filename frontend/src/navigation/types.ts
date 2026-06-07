@@ -12,6 +12,7 @@ export type AppStackParamList = {
   Login: undefined;
   AdminDashboard: undefined;
   AdminItemsCatalogue: undefined;
+  AdminItemAssumption: undefined;
   AdminShopItems: { shopId?: UUID } | undefined;
   AdminShopItemsOrder: { shopId: UUID; shopName?: string };
   AdminItemPrices: { shopId?: UUID } | undefined;
@@ -43,6 +44,7 @@ export type AppStackParamList = {
 export type LoginScreenProps = NativeStackScreenProps<AppStackParamList, "Login">;
 export type AdminDashboardScreenProps = NativeStackScreenProps<AppStackParamList, "AdminDashboard">;
 export type AdminItemsCatalogueScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemsCatalogue">;
+export type AdminItemAssumptionScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemAssumption">;
 export type AdminShopItemsScreenProps = NativeStackScreenProps<AppStackParamList, "AdminShopItems">;
 export type AdminShopItemsOrderScreenProps = NativeStackScreenProps<AppStackParamList, "AdminShopItemsOrder">;
 export type AdminItemPricesScreenProps = NativeStackScreenProps<AppStackParamList, "AdminItemPrices">;

@@ -14,8 +14,12 @@ import { Button as TButton, Input, Spinner, XStack, YStack } from "tamagui";
 
 import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import {
+  BaseUnit,
+  ItemAssumptionStatus,
   UnitType,
   type DailyPriceCreate,
+  type InventoryItemRead,
+  type ItemAssumptionUpdate,
   type ItemPriceRead,
   type ShopItemCounts,
   type ShopItemRead,
@@ -47,6 +51,56 @@ export type CategoryFilterOption = {
   key: string;
   label: string;
 };
+export type AssumptionDraft = ItemAssumptionUpdate;
+
+const PRICE_HISTORY_WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const priceHistoryDateFormatter = new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+const priceHistoryMonthFormatter = new Intl.DateTimeFormat("en-IN", {
+  month: "long",
+  year: "numeric",
+});
+
+function toDateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateInputValue(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function shiftMonthValue(value: string, offset: number) {
+  const date = parseDateInputValue(value);
+  return toDateInputValue(new Date(date.getFullYear(), date.getMonth() + offset, 1));
+}
+
+function formatHistoryDate(value: string) {
+  return priceHistoryDateFormatter.format(parseDateInputValue(value));
+}
+
+function buildHistoryCalendarDays(monthValue: string) {
+  const visibleMonth = parseDateInputValue(monthValue);
+  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+  const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+  const days: (string | null)[] = Array.from({ length: firstDay.getDay() }, () => null);
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    days.push(toDateInputValue(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day)));
+  }
+
+  while (days.length % 7 !== 0) {
+    days.push(null);
+  }
+
+  return days;
+}
 
 function buttonColors(palette: ThemePalette, tone: "primary" | "neutral" | "danger" = "neutral", active = false) {
   if (tone === "danger") {
@@ -206,17 +260,20 @@ export function WorkspaceTabs({
   workspace,
   palette,
   onCatalogue,
+  onAssumption,
   onShopItems,
   onPrices,
 }: {
   workspace: AdminItemWorkspace;
   palette: ThemePalette;
   onCatalogue: () => void;
+  onAssumption: () => void;
   onShopItems: () => void;
   onPrices: () => void;
 }) {
   const items: { value: AdminItemWorkspace; label: string; icon: IconName; onPress: () => void }[] = [
     { value: AdminItemWorkspace.Catalogue, label: "Catalogue", icon: "shape-outline", onPress: onCatalogue },
+    { value: AdminItemWorkspace.Assumption, label: "Assumption", icon: "percent", onPress: onAssumption },
     { value: AdminItemWorkspace.Shop, label: "Shop items", icon: "storefront-outline", onPress: onShopItems },
     { value: AdminItemWorkspace.Prices, label: "Prices", icon: "cash-edit", onPress: onPrices },
   ];
@@ -885,6 +942,392 @@ function LoadingRow({ palette }: { palette: ThemePalette }) {
   );
 }
 
+function sanitizePercentInput(value: string) {
+  const cleaned = value.replace(/[^\d.]/g, "");
+  const [whole, ...rest] = cleaned.split(".");
+  if (rest.length === 0) {
+    return whole;
+  }
+  return `${whole}.${rest.join("").slice(0, 2)}`;
+}
+
+function isValidAssumptionPercent(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) && numeric > 0 && numeric <= 100;
+}
+
+function getAssumptionStatus(item: ShopItemRead) {
+  return item.assumption_status ?? (
+    item.base_unit === BaseUnit.KG ? ItemAssumptionStatus.NotSet : ItemAssumptionStatus.NotApplicable
+  );
+}
+
+function assumptionStatusLabel(status: ItemAssumptionStatus) {
+  if (status === ItemAssumptionStatus.Configured) return "Configured";
+  if (status === ItemAssumptionStatus.Incomplete) return "Incomplete";
+  if (status === ItemAssumptionStatus.NotSet) return "Not set";
+  return "Not applicable";
+}
+
+function getDraftValue<TValue>(
+  draft: AssumptionDraft | undefined,
+  key: keyof AssumptionDraft,
+  fallback: TValue,
+) {
+  return draft && Object.prototype.hasOwnProperty.call(draft, key)
+    ? (draft[key] as TValue)
+    : fallback;
+}
+
+function AssumptionRow({
+  item,
+  inventoryItems,
+  draft,
+  saving,
+  inventoryLoading,
+  palette,
+  onChangeDraft,
+  onSaveRow,
+  onClearRow,
+}: {
+  item: ShopItemRead;
+  inventoryItems: InventoryItemRead[];
+  draft?: AssumptionDraft;
+  saving: boolean;
+  inventoryLoading: boolean;
+  palette: ThemePalette;
+  onChangeDraft: (item: ShopItemRead, patch: AssumptionDraft) => void;
+  onSaveRow: (item: ShopItemRead, payload: ItemAssumptionUpdate) => void;
+  onClearRow: (item: ShopItemRead) => void;
+}) {
+  const [openPicker, setOpenPicker] = useState<"inventory" | "category" | null>(null);
+  const imageUri = getItemThumbnailUri(item);
+  const status = getAssumptionStatus(item);
+  const editable = item.base_unit === BaseUnit.KG;
+  const percent = getDraftValue(draft, "assumption_percent", item.assumption_percent ?? "") ?? "";
+  const inventoryItemId = getDraftValue(
+    draft,
+    "assumption_inventory_item_id",
+    item.assumption_inventory_item_id ?? null,
+  ) ?? null;
+  const categoryId = getDraftValue(
+    draft,
+    "assumption_inventory_category_id",
+    item.assumption_inventory_category_id ?? null,
+  ) ?? null;
+  const selectedInventoryItem = inventoryItems.find((inventoryItem) => inventoryItem.id === inventoryItemId) ?? null;
+  const selectedCategory = selectedInventoryItem?.categories.find((category) => category.id === categoryId) ?? null;
+  const valid = editable && isValidAssumptionPercent(percent) && Boolean(inventoryItemId && categoryId);
+  const dirty = Boolean(draft);
+  const canClear = editable && Boolean(
+    item.assumption_percent || item.assumption_inventory_item_id || item.assumption_inventory_category_id || dirty,
+  );
+  const statusColors = status === ItemAssumptionStatus.Configured
+    ? { fg: palette.success, bg: palette.successSoft }
+    : status === ItemAssumptionStatus.Incomplete
+      ? { fg: palette.gold, bg: palette.goldSoft }
+      : status === ItemAssumptionStatus.NotSet
+        ? { fg: palette.textMuted, bg: palette.surfaceMuted }
+        : { fg: palette.textMuted, bg: palette.surfaceMuted };
+
+  const changeInventoryItem = (inventoryItem: InventoryItemRead) => {
+    const nextCategoryId = inventoryItem.categories.some((category) => category.id === categoryId)
+      ? categoryId
+      : null;
+    onChangeDraft(item, {
+      assumption_inventory_item_id: inventoryItem.id,
+      assumption_inventory_category_id: nextCategoryId,
+    });
+    setOpenPicker(null);
+  };
+
+  return (
+    <View style={[styles.assumptionRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
+      <View style={styles.assumptionMain}>
+        <ItemThumbnail
+          uri={imageUri}
+          recyclingKey={item.id}
+          size={54}
+          borderRadius={13}
+          backgroundColor={palette.surfaceMuted}
+          iconColor={palette.textMuted}
+          iconSize={23}
+        />
+        <View style={styles.assumptionText}>
+          <View style={styles.assumptionTitleLine}>
+            <Text numberOfLines={1} style={[styles.itemName, { color: palette.textPrimary }]}>
+              {item.name}
+            </Text>
+            <View style={[styles.assumptionPill, { backgroundColor: statusColors.bg }]}>
+              <Text style={[styles.assumptionPillText, { color: statusColors.fg }]}>
+                {assumptionStatusLabel(status)}
+              </Text>
+            </View>
+          </View>
+          <Text numberOfLines={1} style={[styles.itemTamilName, { color: palette.textSecondary }]}>
+            {item.tamil_name ?? "Tamil missing"}
+          </Text>
+          <Text numberOfLines={1} style={[styles.itemMeta, { color: palette.textMuted }]}>
+            {item.base_unit.toUpperCase()} · {item.category?.trim() || "Uncategorized"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.assumptionControls}>
+        <View style={styles.assumptionInputRow}>
+          <Input
+            value={percent}
+            onChangeText={(value) => onChangeDraft(item, { assumption_percent: sanitizePercentInput(value) })}
+            disabled={!editable || saving}
+            placeholder="78"
+            placeholderTextColor={palette.textMuted as never}
+            keyboardType="decimal-pad"
+            minHeight={42}
+            flex={1}
+            borderRadius={10}
+            borderWidth={1}
+            borderColor={!percent || isValidAssumptionPercent(percent) ? palette.border : palette.danger}
+            backgroundColor={editable ? palette.surfaceMuted : palette.background}
+            color={palette.textPrimary}
+            fontSize={15}
+            fontWeight="900"
+            textAlign="right"
+          />
+          <Text style={[styles.assumptionPercentMark, { color: palette.textMuted }]}>%</Text>
+        </View>
+
+        <View style={styles.assumptionSelectorRow}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={!editable || saving || inventoryLoading}
+            onPress={() => setOpenPicker((current) => current === "inventory" ? null : "inventory")}
+            style={[
+              styles.assumptionSelector,
+              { borderColor: palette.border, backgroundColor: editable ? palette.surfaceMuted : palette.background },
+            ]}
+          >
+            <Text numberOfLines={1} style={[styles.assumptionSelectorText, { color: selectedInventoryItem ? palette.textPrimary : palette.textMuted }]}>
+              {selectedInventoryItem?.name ?? (inventoryLoading ? "Loading items" : "Inventory item")}
+            </Text>
+            <MaterialCommunityIcons name={openPicker === "inventory" ? "chevron-up" : "chevron-down"} size={16} color={palette.textMuted} />
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={!editable || saving || !selectedInventoryItem}
+            onPress={() => setOpenPicker((current) => current === "category" ? null : "category")}
+            style={[
+              styles.assumptionSelector,
+              { borderColor: palette.border, backgroundColor: editable ? palette.surfaceMuted : palette.background },
+            ]}
+          >
+            <Text numberOfLines={1} style={[styles.assumptionSelectorText, { color: selectedCategory ? palette.textPrimary : palette.textMuted }]}>
+              {selectedCategory?.name ?? "Category"}
+            </Text>
+            <MaterialCommunityIcons name={openPicker === "category" ? "chevron-up" : "chevron-down"} size={16} color={palette.textMuted} />
+          </Pressable>
+        </View>
+
+        {openPicker === "inventory" ? (
+          <View style={[styles.assumptionMenu, { borderColor: palette.border, backgroundColor: palette.card }]}>
+            <ScrollView style={styles.assumptionMenuScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+              {inventoryItems.length === 0 ? (
+                <Text style={[styles.assumptionMenuEmpty, { color: palette.textMuted }]}>No kg inventory items</Text>
+              ) : inventoryItems.map((inventoryItem) => (
+                <Pressable
+                  key={inventoryItem.id}
+                  accessibilityRole="button"
+                  onPress={() => changeInventoryItem(inventoryItem)}
+                  style={[
+                    styles.assumptionMenuOption,
+                    {
+                      backgroundColor: inventoryItem.id === inventoryItemId ? palette.itemsSoft : "transparent",
+                    },
+                  ]}
+                >
+                  <Text numberOfLines={1} style={[styles.assumptionMenuText, { color: palette.textPrimary }]}>
+                    {inventoryItem.name}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.assumptionMenuSubtext, { color: palette.textMuted }]}>
+                    {inventoryItem.categories.map((category) => category.name).join(", ") || "No categories"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {openPicker === "category" ? (
+          <View style={[styles.assumptionMenu, { borderColor: palette.border, backgroundColor: palette.card }]}>
+            <ScrollView style={styles.assumptionMenuScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+              {!selectedInventoryItem || selectedInventoryItem.categories.length === 0 ? (
+                <Text style={[styles.assumptionMenuEmpty, { color: palette.textMuted }]}>No linked categories</Text>
+              ) : selectedInventoryItem.categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    onChangeDraft(item, { assumption_inventory_category_id: category.id });
+                    setOpenPicker(null);
+                  }}
+                  style={[
+                    styles.assumptionMenuOption,
+                    {
+                      backgroundColor: category.id === categoryId ? palette.itemsSoft : "transparent",
+                    },
+                  ]}
+                >
+                  <Text numberOfLines={1} style={[styles.assumptionMenuText, { color: palette.textPrimary }]}>
+                    {category.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        <View style={styles.assumptionActionRow}>
+          <ActionButton
+            label="Clear"
+            icon="close-circle-outline"
+            palette={palette}
+            tone="neutral"
+            compact
+            disabled={!canClear || saving}
+            onPress={() => onClearRow(item)}
+          />
+          <ActionButton
+            label={saving ? "Saving..." : "Save"}
+            icon="content-save-outline"
+            palette={palette}
+            tone={dirty ? "primary" : "neutral"}
+            compact
+            disabled={!dirty || !valid || saving}
+            loading={saving}
+            onPress={() => onSaveRow(item, {
+              assumption_percent: percent.trim(),
+              assumption_inventory_item_id: inventoryItemId,
+              assumption_inventory_category_id: categoryId,
+            })}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+export function AssumptionGrid({
+  items,
+  inventoryItems,
+  loading,
+  refreshing,
+  inventoryLoading,
+  drafts,
+  savingItemId,
+  error,
+  palette,
+  bottomPadding,
+  onRefresh,
+  onChangeDraft,
+  onSaveRow,
+  onClearRow,
+}: {
+  items: ShopItemRead[];
+  inventoryItems: InventoryItemRead[];
+  loading: boolean;
+  refreshing: boolean;
+  inventoryLoading: boolean;
+  drafts: Record<UUID, AssumptionDraft>;
+  savingItemId: UUID | null;
+  error: string | null;
+  palette: ThemePalette;
+  bottomPadding: number;
+  onRefresh: () => void;
+  onChangeDraft: (item: ShopItemRead, patch: AssumptionDraft) => void;
+  onSaveRow: (item: ShopItemRead, payload: ItemAssumptionUpdate) => void;
+  onClearRow: (item: ShopItemRead) => void;
+}) {
+  const kgInventoryItems = useMemo(
+    () => inventoryItems.filter((item) => item.base_unit === BaseUnit.KG && item.is_active),
+    [inventoryItems],
+  );
+  const summary = useMemo(() => {
+    const configured = items.filter((item) => getAssumptionStatus(item) === ItemAssumptionStatus.Configured).length;
+    const incomplete = items.filter((item) => getAssumptionStatus(item) === ItemAssumptionStatus.Incomplete).length;
+    return `${items.length} catalogue items · ${configured} configured${incomplete ? ` · ${incomplete} incomplete` : ""}`;
+  }, [items]);
+
+  const renderAssumptionRow = useCallback(({ item }: { item: ShopItemRead }) => (
+    <AssumptionRow
+      item={item}
+      inventoryItems={kgInventoryItems}
+      draft={drafts[item.id]}
+      saving={savingItemId === item.id}
+      inventoryLoading={inventoryLoading}
+      palette={palette}
+      onChangeDraft={onChangeDraft}
+      onSaveRow={onSaveRow}
+      onClearRow={onClearRow}
+    />
+  ), [drafts, inventoryLoading, kgInventoryItems, onChangeDraft, onClearRow, onSaveRow, palette, savingItemId]);
+
+  return (
+    <FlatList
+      data={loading ? [] : items}
+      keyExtractor={(item) => item.id}
+      keyboardShouldPersistTaps="handled"
+      initialNumToRender={10}
+      maxToRenderPerBatch={8}
+      updateCellsBatchingPeriod={40}
+      windowSize={7}
+      removeClippedSubviews
+      ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+      style={{ flex: 1, backgroundColor: palette.background }}
+      contentContainerStyle={{ padding: 14, paddingBottom: bottomPadding, gap: 10 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.items} />}
+      ListHeaderComponent={
+        <YStack gap={12} marginBottom={4}>
+          <ErrorState message={error} palette={palette} onRetry={onRefresh} />
+          <View style={[styles.priceSummary, { borderColor: palette.border, backgroundColor: palette.card }]}>
+            <XStack alignItems="center" justifyContent="space-between" gap={10}>
+              <YStack flex={1} minWidth={0}>
+                <Text numberOfLines={1} style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                  Assumption
+                </Text>
+                <Text numberOfLines={1} style={[styles.sectionSubtitle, { color: palette.textMuted }]}>
+                  {inventoryLoading ? "Loading inventory mappings..." : summary}
+                </Text>
+              </YStack>
+              {inventoryLoading ? <Spinner color={palette.items} /> : null}
+            </XStack>
+          </View>
+        </YStack>
+      }
+      renderItem={renderAssumptionRow}
+      ListEmptyComponent={
+        loading ? (
+          <YStack gap={8}>
+            <LoadingRow palette={palette} />
+            <LoadingRow palette={palette} />
+            <LoadingRow palette={palette} />
+          </YStack>
+        ) : (
+          <EmptyState
+            title="No catalogue items"
+            message="Create catalogue items before setting assumptions."
+            icon="percent"
+            palette={palette}
+          />
+        )
+      }
+    />
+  );
+}
+
 const PriceRow = memo(function PriceRow({
   item,
   value,
@@ -980,6 +1423,174 @@ const PriceRow = memo(function PriceRow({
   previous.palette === next.palette
 ));
 
+const PriceHistoryRow = memo(function PriceHistoryRow({
+  item,
+  palette,
+  thumbnailSize = 60,
+}: {
+  item: ItemPriceRead;
+  palette: ThemePalette;
+  thumbnailSize?: number;
+}) {
+  const imageUri = getItemThumbnailUri(item);
+  const thumbnailRadius = Math.round(thumbnailSize * 0.24);
+  const thumbnailIconSize = Math.round(thumbnailSize * 0.43);
+  const hasPrice = Boolean(item.current_price);
+
+  return (
+    <View style={[styles.priceHistoryRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
+      <ItemThumbnail
+        uri={imageUri}
+        recyclingKey={item.item_id}
+        size={thumbnailSize}
+        borderRadius={thumbnailRadius}
+        backgroundColor={palette.surfaceMuted}
+        iconColor={palette.textMuted}
+        iconSize={thumbnailIconSize}
+      />
+      <View style={styles.priceText}>
+        <Text style={[styles.itemName, { color: palette.textPrimary }]}>
+          {item.item_name}
+        </Text>
+        <Text style={[styles.itemTamilName, { color: palette.textSecondary }]}>
+          {item.item_tamil_name ?? "Tamil missing"}
+        </Text>
+        <Text style={[styles.itemMeta, { color: palette.textMuted }]}>
+          {item.base_unit.toUpperCase()}
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.priceHistoryValue,
+          {
+            borderColor: hasPrice ? palette.success : palette.border,
+            backgroundColor: hasPrice ? palette.successSoft : palette.surfaceMuted,
+          },
+        ]}
+      >
+        <Text
+          numberOfLines={1}
+          style={[styles.priceHistoryValueText, { color: hasPrice ? palette.success : palette.textMuted }]}
+        >
+          {item.current_price ? `Rs. ${toMoneyString(item.current_price)}` : "No price"}
+        </Text>
+      </View>
+    </View>
+  );
+}, (previous, next) => (
+  previous.item.item_id === next.item.item_id &&
+  previous.item.item_name === next.item.item_name &&
+  previous.item.item_tamil_name === next.item.item_tamil_name &&
+  previous.item.base_unit === next.item.base_unit &&
+  previous.item.current_price === next.item.current_price &&
+  previous.item.image_path === next.item.image_path &&
+  previous.item.image_thumb_path === next.item.image_thumb_path &&
+  previous.thumbnailSize === next.thumbnailSize &&
+  previous.palette === next.palette
+));
+
+function PriceHistoryCalendar({
+  selectedDate,
+  visibleMonth,
+  loading,
+  palette,
+  onChangeMonth,
+  onSelectDate,
+  onRefresh,
+}: {
+  selectedDate: string;
+  visibleMonth: string;
+  loading: boolean;
+  palette: ThemePalette;
+  onChangeMonth: (month: string) => void;
+  onSelectDate: (dateValue: string) => void;
+  onRefresh: () => void;
+}) {
+  const days = useMemo(() => buildHistoryCalendarDays(visibleMonth), [visibleMonth]);
+  const visibleMonthDate = parseDateInputValue(visibleMonth);
+  const todayValue = toDateInputValue(new Date());
+
+  return (
+    <View style={[styles.priceHistoryPanel, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}>
+      <XStack alignItems="center" justifyContent="space-between" gap={8}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => onChangeMonth(shiftMonthValue(visibleMonth, -1))}
+          style={[styles.historyIconButton, { borderColor: palette.border, backgroundColor: palette.card }]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={20} color={palette.textPrimary} />
+        </Pressable>
+        <YStack flex={1} minWidth={0} alignItems="center">
+          <Text numberOfLines={1} style={[styles.historyMonthTitle, { color: palette.textPrimary }]}>
+            {priceHistoryMonthFormatter.format(visibleMonthDate)}
+          </Text>
+          <Text numberOfLines={1} style={[styles.historySelectedDate, { color: palette.textMuted }]}>
+            {formatHistoryDate(selectedDate)}
+          </Text>
+        </YStack>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => onChangeMonth(shiftMonthValue(visibleMonth, 1))}
+          style={[styles.historyIconButton, { borderColor: palette.border, backgroundColor: palette.card }]}
+        >
+          <MaterialCommunityIcons name="chevron-right" size={20} color={palette.textPrimary} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={loading}
+          onPress={onRefresh}
+          style={[
+            styles.historyIconButton,
+            { borderColor: palette.items, backgroundColor: palette.itemsSoft, opacity: loading ? 0.62 : 1 },
+          ]}
+        >
+          {loading ? (
+            <Spinner color={palette.itemsStrong} size="small" />
+          ) : (
+            <MaterialCommunityIcons name="refresh" size={18} color={palette.itemsStrong} />
+          )}
+        </Pressable>
+      </XStack>
+      <View style={styles.historyWeekdayRow}>
+        {PRICE_HISTORY_WEEKDAYS.map((weekday, index) => (
+          <Text key={`${weekday}-${index}`} style={[styles.historyWeekdayText, { color: palette.textMuted }]}>
+            {weekday}
+          </Text>
+        ))}
+      </View>
+      <View style={styles.historyDayGrid}>
+        {days.map((dateValue, index) => {
+          if (!dateValue) {
+            return <View key={`empty-${index}`} style={styles.historyDayCell} />;
+          }
+          const selected = dateValue === selectedDate;
+          const isToday = dateValue === todayValue;
+          const dayNumber = parseDateInputValue(dateValue).getDate();
+          return (
+            <Pressable
+              key={dateValue}
+              accessibilityRole="button"
+              onPress={() => onSelectDate(dateValue)}
+              style={[
+                styles.historyDayCell,
+                styles.historyDayButton,
+                {
+                  borderColor: selected ? palette.items : isToday ? palette.success : palette.border,
+                  backgroundColor: selected ? palette.items : isToday ? palette.successSoft : palette.card,
+                },
+              ]}
+            >
+              <Text style={[styles.historyDayText, { color: selected ? palette.onPrimary : palette.textPrimary }]}>
+                {dayNumber}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 export function PriceGrid({
   items,
   loading,
@@ -989,10 +1600,20 @@ export function PriceGrid({
   savingItemId,
   error,
   selectedShop,
+  historyOpen,
+  historyDate,
+  historyMonth,
+  historyItems,
+  historyLoading,
+  historyError,
   palette,
   bottomPadding,
   onRefresh,
   onBackToItems,
+  onToggleHistory,
+  onChangeHistoryMonth,
+  onSelectHistoryDate,
+  onRefreshHistory,
   onChangeDraftPrice,
   onSaveRow,
   onSaveEdited,
@@ -1006,10 +1627,20 @@ export function PriceGrid({
   savingItemId: UUID | null;
   error: string | null;
   selectedShop: ShopRead | null;
+  historyOpen: boolean;
+  historyDate: string;
+  historyMonth: string;
+  historyItems: ItemPriceRead[];
+  historyLoading: boolean;
+  historyError: string | null;
   palette: ThemePalette;
   bottomPadding: number;
   onRefresh: () => void;
   onBackToItems: () => void;
+  onToggleHistory: () => void;
+  onChangeHistoryMonth: (month: string) => void;
+  onSelectHistoryDate: (dateValue: string) => void;
+  onRefreshHistory: () => void;
   onChangeDraftPrice: (itemId: UUID, value: string) => void;
   onSaveRow: (item: ItemPriceRead, value: string) => void;
   onSaveEdited: (entries: DailyPriceCreate["entries"]) => void;
@@ -1076,6 +1707,9 @@ export function PriceGrid({
   const priceSummaryText = `${selectedShop?.name ?? "Select a shop"} · ${items.length} items · ${priceState.dirtyCount} unsaved${
     priceState.incompleteCount > 0 ? ` · ${priceState.incompleteCount} need price` : ""
   }`;
+  const historySummaryText = `${selectedShop?.name ?? "Select a shop"} · ${formatHistoryDate(historyDate)} · ${
+    historyItems.length
+  } items`;
 
   const renderPriceRow = useCallback(({ item }: { item: ItemPriceRead }) => {
     const draftValue = draftPrices[item.item_id];
@@ -1096,11 +1730,27 @@ export function PriceGrid({
       />
     );
   }, [draftPrices, onChangeDraftPrice, onSaveRow, palette, savingItemId]);
-  const priceListExtraData = useMemo(() => ({ draftPrices, savingItemId }), [draftPrices, savingItemId]);
+  const renderHistoryRow = useCallback(({ item }: { item: ItemPriceRead }) => (
+    <PriceHistoryRow item={item} palette={palette} />
+  ), [palette]);
+  const priceListExtraData = useMemo(
+    () => ({
+      draftPrices,
+      historyDate,
+      historyOpen,
+      historyLoading,
+      historyItems,
+      savingItemId,
+    }),
+    [draftPrices, historyDate, historyItems, historyLoading, historyOpen, savingItemId],
+  );
+  const listItems = historyOpen ? historyItems : items;
+  const listLoading = historyOpen ? historyLoading : loading;
+  const activeError = historyOpen ? historyError : error;
 
   return (
     <FlatList
-      data={loading ? [] : items}
+      data={listLoading ? [] : listItems}
       extraData={priceListExtraData}
       keyExtractor={(item) => item.item_id}
       keyboardShouldPersistTaps="handled"
@@ -1115,51 +1765,74 @@ export function PriceGrid({
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.items} />}
       ListHeaderComponent={
         <YStack gap={12} marginBottom={4}>
-          <ErrorState message={error} palette={palette} onRetry={onRefresh} />
+          <ErrorState message={activeError} palette={palette} onRetry={historyOpen ? onRefreshHistory : onRefresh} />
           <View style={[styles.priceSummary, { borderColor: palette.border, backgroundColor: palette.card }]}>
             <XStack alignItems="center" justifyContent="space-between" gap={10}>
               <YStack flex={1} minWidth={0}>
                 <Text numberOfLines={1} style={[styles.sectionTitle, { color: palette.textPrimary }]}>
-                  Daily prices
+                  {historyOpen ? "Price history" : "Daily prices"}
                 </Text>
                 <Text numberOfLines={1} style={[styles.sectionSubtitle, { color: palette.textMuted }]}>
-                  {priceSummaryText}
+                  {historyOpen ? historySummaryText : priceSummaryText}
                 </Text>
               </YStack>
-              <ActionButton
-                label="Items"
-                icon="arrow-left"
-                palette={palette}
-                tone="neutral"
-                onPress={onBackToItems}
-                compact
-              />
+              <XStack gap={8}>
+                <ActionButton
+                  label="Items"
+                  icon="arrow-left"
+                  palette={palette}
+                  tone="neutral"
+                  onPress={onBackToItems}
+                  compact
+                />
+                <ActionButton
+                  label={historyOpen ? "Today" : "History"}
+                  icon={historyOpen ? "calendar-today" : "history"}
+                  palette={palette}
+                  tone={historyOpen ? "primary" : "neutral"}
+                  active={historyOpen}
+                  onPress={onToggleHistory}
+                  compact
+                />
+              </XStack>
             </XStack>
-            <XStack gap={8} flexWrap="wrap">
-              <ActionButton
-                label={savingAll ? "Saving..." : "Save edited prices"}
-                icon="content-save-outline"
+            {historyOpen ? (
+              <PriceHistoryCalendar
+                selectedDate={historyDate}
+                visibleMonth={historyMonth}
+                loading={historyLoading}
                 palette={palette}
-                tone="primary"
-                loading={savingAll}
-                disabled={priceState.dirtyCount === 0 || priceState.invalidDirtyCount > 0}
-                onPress={() => onSaveEdited(priceState.dirtyEntries)}
+                onChangeMonth={onChangeHistoryMonth}
+                onSelectDate={onSelectHistoryDate}
+                onRefresh={onRefreshHistory}
               />
-              <ActionButton
-                label="Save"
-                icon="calendar-check-outline"
-                palette={palette}
-                tone="neutral"
-                disabled={items.length === 0 || priceState.incompleteCount > 0 || savingAll}
-                onPress={completeToday}
-              />
-            </XStack>
+            ) : (
+              <XStack gap={8} flexWrap="wrap">
+                <ActionButton
+                  label={savingAll ? "Saving..." : "Save edited prices"}
+                  icon="content-save-outline"
+                  palette={palette}
+                  tone="primary"
+                  loading={savingAll}
+                  disabled={priceState.dirtyCount === 0 || priceState.invalidDirtyCount > 0}
+                  onPress={() => onSaveEdited(priceState.dirtyEntries)}
+                />
+                <ActionButton
+                  label="Save"
+                  icon="calendar-check-outline"
+                  palette={palette}
+                  tone="neutral"
+                  disabled={items.length === 0 || priceState.incompleteCount > 0 || savingAll}
+                  onPress={completeToday}
+                />
+              </XStack>
+            )}
           </View>
         </YStack>
       }
-      renderItem={renderPriceRow}
+      renderItem={historyOpen ? renderHistoryRow : renderPriceRow}
       ListEmptyComponent={
-        loading ? (
+        listLoading ? (
           <YStack gap={8}>
             <LoadingRow palette={palette} />
             <LoadingRow palette={palette} />
@@ -1167,10 +1840,18 @@ export function PriceGrid({
           </YStack>
         ) : (
           <EmptyState
-            title="No allocated items"
-            message="Allocate items to this shop before setting daily prices."
-            icon="link-variant-off"
-            action={{ label: "Back to items", icon: "arrow-left", onPress: onBackToItems }}
+            title={historyOpen ? "No prices found" : "No allocated items"}
+            message={
+              historyOpen
+                ? "No item prices were saved on the selected day."
+                : "Allocate items to this shop before setting daily prices."
+            }
+            icon={historyOpen ? "calendar-remove-outline" : "link-variant-off"}
+            action={
+              historyOpen
+                ? { label: "Refresh", icon: "refresh", onPress: onRefreshHistory }
+                : { label: "Back to items", icon: "arrow-left", onPress: onBackToItems }
+            }
             palette={palette}
           />
         )
@@ -1682,5 +2363,188 @@ const styles = StyleSheet.create({
   priceEdit: {
     width: 116,
     gap: 6,
+  },
+  priceHistoryRow: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  priceHistoryValue: {
+    width: 104,
+    minHeight: 42,
+    borderWidth: 1,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  priceHistoryValueText: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "900",
+  },
+  priceHistoryPanel: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 10,
+  },
+  historyIconButton: {
+    width: 36,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyMonthTitle: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+  },
+  historySelectedDate: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+  },
+  historyWeekdayRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  historyWeekdayText: {
+    width: "13%",
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+  },
+  historyDayGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 6,
+  },
+  historyDayCell: {
+    width: "13%",
+    height: 34,
+  },
+  historyDayButton: {
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyDayText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "900",
+  },
+  assumptionRow: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+  },
+  assumptionMain: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  assumptionText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  assumptionTitleLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  assumptionPill: {
+    borderRadius: 99,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  assumptionPillText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  assumptionControls: {
+    gap: 8,
+  },
+  assumptionInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  assumptionPercentMark: {
+    width: 22,
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  assumptionSelectorRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  assumptionSelector: {
+    minHeight: 42,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  assumptionSelectorText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "900",
+  },
+  assumptionMenu: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 6,
+  },
+  assumptionMenuScroll: {
+    maxHeight: 184,
+  },
+  assumptionMenuOption: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    gap: 2,
+  },
+  assumptionMenuText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "900",
+  },
+  assumptionMenuSubtext: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "700",
+  },
+  assumptionMenuEmpty: {
+    padding: 12,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  assumptionActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
   },
 });

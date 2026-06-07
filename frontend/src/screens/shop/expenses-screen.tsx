@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +12,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,25 +24,53 @@ import {
   fetchShopExpenseHistory,
 } from "@/api/expenses";
 import { Button } from "@/components/ui/button";
+import {
+  CalendarDateField,
+  CalendarDatePickerModal,
+  type CalendarPickerColors,
+} from "@/components/ui/calendar-date-picker";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import { LoadingState } from "@/components/ui/loading-state";
 import { TextField } from "@/components/ui/text-field";
+import { useApiConnection } from "@/hooks/use-api-connection";
 import {
   getLocalizedItemName,
   useShopTranslation,
 } from "@/hooks/use-shop-translation";
 import type { ShopExpensesScreenProps } from "@/navigation/types";
 import type { ExpenseEntryRead, ShopExpenseItemRead, UUID } from "@/types/api";
+import {
+  buildExpenseHistoryRange,
+  createExpenseHistoryFilterDraft,
+  EXPENSE_HISTORY_INTERVAL_OPTIONS,
+  type ExpenseHistoryFilterDraft,
+  type ExpenseHistoryRange,
+} from "@/utils/expense-history-filters";
 import { formatCurrency, formatDateTime } from "@/utils/format";
+import { getItemThumbnailUri } from "@/utils/item-images";
 
 type CursorState = {
   sortOrder: number | null;
   name: string | null;
   id: UUID | null;
 };
+type HistoryCalendarTarget = "date" | "startDate" | "endDate";
 
 const PAGE_LIMIT = 50;
 const EMPTY_CURSOR: CursorState = { sortOrder: null, name: null, id: null };
+const SHOP_CALENDAR_COLORS: CalendarPickerColors = {
+  overlay: "rgba(30,43,34,0.38)",
+  card: "#FFFFFF",
+  surface: "#F7F3E8",
+  border: "#D8E0D8",
+  textPrimary: "#1E2B22",
+  textSecondary: "#4B5C50",
+  textMuted: "#6C7A70",
+  accent: "#9A6700",
+  accentSoft: "#FAEFD8",
+  onAccent: "#FFFFFF",
+};
 
 function pageCursor(page: {
   next_cursor_sort_order?: number | null;
@@ -77,6 +106,7 @@ function ExpenseRow({
   displayName: string;
   onPress: (item: ShopExpenseItemRead) => void;
 }) {
+  const thumbnailUri = getItemThumbnailUri(item);
   return (
     <Pressable
       accessibilityRole="button"
@@ -85,9 +115,17 @@ function ExpenseRow({
       className="mb-3 rounded-[18px] border border-border bg-card p-4 shadow-soft"
     >
       <View className="flex-row items-center gap-3">
-        <View className="h-12 w-12 items-center justify-center rounded-[15px] bg-[#FAEFD8]">
-          <MaterialCommunityIcons name="cash-minus" size={22} color="#9A6700" />
-        </View>
+        <ItemThumbnail
+          uri={thumbnailUri}
+          recyclingKey={item.id}
+          size={48}
+          borderRadius={15}
+          backgroundColor="#FAEFD8"
+          borderColor="#E7D8B2"
+          icon="cash-minus"
+          iconColor="#9A6700"
+          iconSize={22}
+        />
         <View className="min-w-0 flex-1">
           <Text className="text-base font-extrabold leading-6 text-ink" numberOfLines={1}>
             {displayName}
@@ -135,8 +173,231 @@ function HistoryRow({ entry }: { entry: ExpenseEntryRead }) {
   );
 }
 
+function ShopHistoryFilterControls({
+  filter,
+  range,
+  totalAmount,
+  onChange,
+}: {
+  filter: ExpenseHistoryFilterDraft;
+  range: ExpenseHistoryRange;
+  totalAmount: string;
+  onChange: (filter: ExpenseHistoryFilterDraft) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [calendarTarget, setCalendarTarget] = useState<HistoryCalendarTarget | null>(null);
+  const selectedOption = EXPENSE_HISTORY_INTERVAL_OPTIONS.find((option) => option.key === filter.interval)
+    ?? EXPENSE_HISTORY_INTERVAL_OPTIONS[0];
+  const updateFilter = (patch: Partial<ExpenseHistoryFilterDraft>) => onChange({ ...filter, ...patch });
+  const calendarValue =
+    calendarTarget === "date"
+      ? filter.date
+      : calendarTarget === "startDate"
+        ? filter.startDate
+        : calendarTarget === "endDate"
+          ? filter.endDate
+          : null;
+  const calendarTitle =
+    calendarTarget === "date"
+      ? "Select date"
+      : calendarTarget === "startDate"
+        ? "Select start date"
+        : "Select end date";
+  const selectCalendarDate = (date: string) => {
+    if (calendarTarget === "date") {
+      updateFilter({ date });
+    } else if (calendarTarget === "startDate") {
+      updateFilter({ startDate: date });
+    } else if (calendarTarget === "endDate") {
+      updateFilter({ endDate: date });
+    }
+    setCalendarTarget(null);
+  };
+
+  const inputForInterval = (() => {
+    if (filter.interval === "date") {
+      return (
+        <CalendarDateField
+          label="Date"
+          value={filter.date}
+          colors={SHOP_CALENDAR_COLORS}
+          onPress={() => setCalendarTarget("date")}
+        />
+      );
+    }
+    if (filter.interval === "range") {
+      return (
+        <View className="flex-row flex-wrap gap-2">
+          <CalendarDateField
+            label="From"
+            value={filter.startDate}
+            colors={SHOP_CALENDAR_COLORS}
+            icon="calendar-start"
+            onPress={() => setCalendarTarget("startDate")}
+          />
+          <CalendarDateField
+            label="To"
+            value={filter.endDate}
+            colors={SHOP_CALENDAR_COLORS}
+            icon="calendar-end"
+            onPress={() => setCalendarTarget("endDate")}
+          />
+        </View>
+      );
+    }
+    if (filter.interval === "week") {
+      return (
+        <ShopHistoryInput
+          label="Week date"
+          value={filter.weekDate}
+          placeholder="YYYY-MM-DD"
+          onChangeText={(weekDate) => updateFilter({ weekDate })}
+        />
+      );
+    }
+    if (filter.interval === "month") {
+      return (
+        <ShopHistoryInput
+          label="Month"
+          value={filter.month}
+          placeholder="YYYY-MM"
+          onChangeText={(month) => updateFilter({ month })}
+        />
+      );
+    }
+    if (filter.interval === "year") {
+      return (
+        <ShopHistoryInput
+          label="Year"
+          value={filter.year}
+          placeholder="YYYY"
+          onChangeText={(year) => updateFilter({ year })}
+        />
+      );
+    }
+    return null;
+  })();
+
+  return (
+    <View className="mb-3 gap-3 rounded-[18px] border border-border bg-card p-3">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Select history interval"
+        onPress={() => setOpen(true)}
+        className="min-h-[58px] flex-row items-center gap-2 rounded-[14px] border border-border bg-cream px-3"
+      >
+        <View className="min-w-0 flex-1">
+          <Text className="text-[11px] font-black uppercase leading-4 text-muted">Interval</Text>
+          <Text className="text-[15px] font-extrabold leading-5 text-ink" numberOfLines={1}>
+            {selectedOption.label}
+          </Text>
+        </View>
+        <MaterialCommunityIcons
+          name={selectedOption.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
+          size={20}
+          color="#9A6700"
+        />
+        <MaterialCommunityIcons name="chevron-down" size={22} color="#6C7A70" />
+      </Pressable>
+
+      {inputForInterval}
+
+      <View className="min-h-[68px] flex-row items-center gap-3 rounded-[14px] border border-[#9A6700] bg-[#FAEFD8] p-3">
+        <View className="min-w-0 flex-1">
+          <Text className="text-xs font-extrabold leading-4 text-muted">
+            Total for {range.isValid ? range.label : selectedOption.label}
+          </Text>
+          <Text className={range.isValid ? "mt-0.5 text-[11px] font-bold text-muted" : "mt-0.5 text-[11px] font-bold text-[#B42318]"}>
+            {range.isValid ? "Filtered expense amount" : range.validationMessage}
+          </Text>
+        </View>
+        <Text className="text-base font-black text-[#9A6700]">{formatCurrency(totalAmount)}</Text>
+      </View>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={styles.dropdownBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+          <View className="max-h-[82%] w-full max-w-[520px] gap-2 rounded-[18px] border border-border bg-card p-4">
+            <View className="min-h-10 flex-row items-center justify-between gap-3">
+              <Text className="min-w-0 flex-1 text-lg font-extrabold text-ink">Select interval</Text>
+              <Pressable accessibilityRole="button" onPress={() => setOpen(false)} className="h-10 w-10 items-center justify-center">
+                <MaterialCommunityIcons name="close" size={20} color="#1E2B22" />
+              </Pressable>
+            </View>
+            {EXPENSE_HISTORY_INTERVAL_OPTIONS.map((option) => {
+              const selected = option.key === filter.interval;
+              return (
+                <Pressable
+                  key={option.key}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    updateFilter({ interval: option.key });
+                    setOpen(false);
+                  }}
+                  className={`min-h-12 flex-row items-center gap-2 rounded-[12px] border px-3 ${
+                    selected ? "border-[#9A6700] bg-[#FAEFD8]" : "border-border bg-cream"
+                  }`}
+                >
+                  <MaterialCommunityIcons
+                    name={option.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
+                    size={18}
+                    color={selected ? "#9A6700" : "#6C7A70"}
+                  />
+                  <Text className="min-w-0 flex-1 text-sm font-extrabold text-ink" numberOfLines={1}>
+                    {option.label}
+                  </Text>
+                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#9A6700" /> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
+      <CalendarDatePickerModal
+        visible={calendarTarget !== null}
+        title={calendarTitle}
+        value={calendarValue}
+        rangeStartDate={filter.interval === "range" ? filter.startDate : null}
+        rangeEndDate={filter.interval === "range" ? filter.endDate : null}
+        colors={SHOP_CALENDAR_COLORS}
+        onSelect={selectCalendarDate}
+        onClose={() => setCalendarTarget(null)}
+      />
+    </View>
+  );
+}
+
+function ShopHistoryInput({
+  label,
+  value,
+  placeholder,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View style={styles.historyInputWrap}>
+      <Text className="text-[11px] font-black uppercase leading-4 text-muted">{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#6C7A70"
+        autoCapitalize="none"
+        keyboardType="numbers-and-punctuation"
+        className="min-h-[46px] rounded-[12px] border border-border bg-cream px-3 text-sm font-bold text-ink"
+      />
+    </View>
+  );
+}
+
 export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
   const insets = useSafeAreaInsets();
+  const apiConnection = useApiConnection();
   const { language } = useShopTranslation();
   const [items, setItems] = useState<ShopExpenseItemRead[]>([]);
   const [cursor, setCursor] = useState<CursorState>(EMPTY_CURSOR);
@@ -152,6 +413,9 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyRows, setHistoryRows] = useState<ExpenseEntryRead[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<ExpenseHistoryFilterDraft>(() => createExpenseHistoryFilterDraft());
+  const historyRange = useMemo(() => buildExpenseHistoryRange(historyFilter), [historyFilter]);
+  const [historyTotalAmount, setHistoryTotalAmount] = useState("0.00");
   const [historyCursor, setHistoryCursor] = useState<{ spentAt: string | null; id: UUID | null }>({
     spentAt: null,
     id: null,
@@ -210,12 +474,25 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
   }, [cursor, hasMore, loading, loadingMore]);
 
   const loadHistory = useCallback(async () => {
+    if (!historyRange.isValid) {
+      setHistoryRows([]);
+      setHistoryHasMore(false);
+      setHistoryTotalAmount("0.00");
+      setHistoryCursor({ spentAt: null, id: null });
+      setHistoryLoaded(true);
+      return;
+    }
     setHistoryLoading(true);
     setErrorMessage(null);
     try {
-      const page = await fetchShopExpenseHistory({ limit: 30 });
+      const page = await fetchShopExpenseHistory({
+        range_start_date: historyRange.rangeStartDate,
+        range_end_date: historyRange.rangeEndDate,
+        limit: 30,
+      });
       setHistoryRows(page.items);
       setHistoryHasMore(page.has_more);
+      setHistoryTotalAmount(page.total_amount);
       setHistoryCursor({
         spentAt: page.next_cursor_spent_at ?? null,
         id: page.next_cursor_id ?? null,
@@ -226,21 +503,24 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [historyRange.isValid, historyRange.rangeEndDate, historyRange.rangeStartDate]);
 
   const loadMoreHistory = useCallback(async () => {
-    if (!historyHasMore || historyLoading || historyLoadingMore) {
+    if (!historyRange.isValid || !historyHasMore || historyLoading || historyLoadingMore) {
       return;
     }
     setHistoryLoadingMore(true);
     try {
       const page = await fetchShopExpenseHistory({
+        range_start_date: historyRange.rangeStartDate,
+        range_end_date: historyRange.rangeEndDate,
         limit: 30,
         cursor_spent_at: historyCursor.spentAt,
         cursor_id: historyCursor.id,
       });
       setHistoryRows((current) => mergeById(current, page.items));
       setHistoryHasMore(page.has_more);
+      setHistoryTotalAmount(page.total_amount);
       setHistoryCursor({
         spentAt: page.next_cursor_spent_at ?? null,
         id: page.next_cursor_id ?? null,
@@ -250,13 +530,27 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
     } finally {
       setHistoryLoadingMore(false);
     }
-  }, [historyCursor, historyHasMore, historyLoading, historyLoadingMore]);
+  }, [
+    historyCursor,
+    historyHasMore,
+    historyLoading,
+    historyLoadingMore,
+    historyRange.isValid,
+    historyRange.rangeEndDate,
+    historyRange.rangeStartDate,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
       void loadItems();
     }, [loadItems]),
   );
+
+  useEffect(() => {
+    if (historyOpen) {
+      void loadHistory();
+    }
+  }, [historyOpen, loadHistory]);
 
   const openExpenseModal = useCallback((item: ShopExpenseItemRead) => {
     setSelectedItem(item);
@@ -281,31 +575,25 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
     }
     setSaving(true);
     try {
-      const entry = await createShopExpenseEntry({
+      await createShopExpenseEntry({
         expense_item_id: selectedItem.id,
         amount: Number(amountDraft).toFixed(2),
         note: noteDraft.trim() || null,
       });
       setSelectedItem(null);
       if (historyLoaded) {
-        setHistoryRows((current) => mergeById([entry], current).slice(0, 30));
+        await loadHistory();
       }
     } catch (error) {
       Alert.alert("Save failed", toApiError(error).message || "Unable to record expense.");
     } finally {
       setSaving(false);
     }
-  }, [amountDraft, historyLoaded, noteDraft, selectedItem]);
+  }, [amountDraft, historyLoaded, loadHistory, noteDraft, selectedItem]);
 
   const toggleHistory = useCallback(() => {
-    setHistoryOpen((current) => {
-      const nextOpen = !current;
-      if (nextOpen && !historyLoaded && !historyLoading) {
-        void loadHistory();
-      }
-      return nextOpen;
-    });
-  }, [historyLoaded, historyLoading, loadHistory]);
+    setHistoryOpen((current) => !current);
+  }, []);
 
   const renderListHeader = () => (
     <View className="mb-4 gap-4">
@@ -337,10 +625,34 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
           <Text className="min-w-0 flex-1 text-sm font-semibold text-[#B42318]">{errorMessage}</Text>
         </View>
       ) : null}
+      {apiConnection.status === "offline" ? (
+        <View className="flex-row items-center gap-2 rounded-[16px] border border-[#B42318] bg-[#FEE4E2] px-4 py-3">
+          <MaterialCommunityIcons name="database-alert-outline" size={18} color="#B42318" />
+          <Text className="min-w-0 flex-1 text-sm font-semibold text-[#B42318]">
+            Backend offline at {apiConnection.baseUrl || "configured API URL"}. {apiConnection.message}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={apiConnection.checking}
+            onPress={() => void apiConnection.retry()}
+            hitSlop={10}
+          >
+            <Text className="text-xs font-extrabold text-[#B42318]">
+              {apiConnection.checking ? "Checking" : "Retry"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {historyOpen ? (
         <View>
           <Text className="mb-3 text-base font-extrabold text-ink">Recent history</Text>
+          <ShopHistoryFilterControls
+            filter={historyFilter}
+            range={historyRange}
+            totalAmount={historyTotalAmount}
+            onChange={setHistoryFilter}
+          />
           {historyLoading && historyRows.length === 0 ? (
             <ActivityIndicator color="#244734" />
           ) : historyRows.length === 0 ? (
@@ -454,6 +766,18 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
 const styles = StyleSheet.create({
   footerLoader: {
     paddingVertical: 18,
+  },
+  dropdownBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+    backgroundColor: "rgba(30,43,34,0.38)",
+  },
+  historyInputWrap: {
+    flex: 1,
+    minWidth: 138,
+    gap: 5,
   },
   modalBackdrop: {
     flex: 1,

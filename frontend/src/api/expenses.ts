@@ -1,4 +1,6 @@
-import { apiClient } from "@/api/client";
+import * as FileSystem from "expo-file-system/legacy";
+
+import { apiClient, getApiAuthHeaders, resolveReachableApiUrlCandidates } from "@/api/client";
 import type {
   ExpenseEntryCreate,
   ExpenseEntryPage,
@@ -17,6 +19,12 @@ import type {
   ShopExpenseItemsOrderUpdate,
   UUID,
 } from "@/types/api";
+
+export type ExpenseItemImageUploadFile = {
+  uri: string;
+  name: string;
+  type: string;
+};
 
 export type ExpenseCursorParams = {
   q?: string;
@@ -58,6 +66,69 @@ function historyParams(params?: ExpenseHistoryParams) {
   };
 }
 
+function parseUploadResponseBody(body: string) {
+  try {
+    return body ? JSON.parse(body) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getUploadResponseMessage(body: unknown) {
+  if (!body || typeof body !== "object") {
+    return "";
+  }
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  const message = (body as { message?: unknown }).message;
+  return typeof message === "string" ? message : "";
+}
+
+async function assertUploadFileReady(file: ExpenseItemImageUploadFile) {
+  const info = await FileSystem.getInfoAsync(file.uri);
+  if (!info.exists || info.isDirectory) {
+    throw new Error("Selected image file is no longer available. Pick the image again and save.");
+  }
+}
+
+async function uploadExpenseItemImageFile(path: string, file: ExpenseItemImageUploadFile) {
+  const uploadUrls = await resolveReachableApiUrlCandidates(path);
+  if (uploadUrls.length === 0) {
+    throw new Error("API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL and restart Expo.");
+  }
+  await assertUploadFileReady(file);
+
+  let lastError: unknown = null;
+  for (const uploadUrl of uploadUrls) {
+    try {
+      const response = await FileSystem.uploadAsync(uploadUrl, file.uri, {
+        fieldName: "image",
+        headers: {
+          Accept: "application/json",
+          ...getApiAuthHeaders(),
+        },
+        httpMethod: "PUT",
+        mimeType: file.type,
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      });
+      const body = parseUploadResponseBody(response.body);
+      if (response.status >= 200 && response.status < 300) {
+        return body as ExpenseItemRead;
+      }
+      throw new Error(getUploadResponseMessage(body) || `Image upload failed with status ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("Image upload failed before the backend responded.");
+}
+
 export async function fetchExpenseItemRows(
   params?: ExpenseCursorParams,
   options: { signal?: AbortSignal } = {},
@@ -92,6 +163,15 @@ export async function updateExpenseItem(itemId: UUID, payload: ExpenseItemUpdate
 
 export async function deleteExpenseItem(itemId: UUID) {
   await apiClient.delete(`/api/v1/admin/expenses/items/${itemId}`);
+}
+
+export async function replaceExpenseItemImageFile(itemId: UUID, file: ExpenseItemImageUploadFile) {
+  return uploadExpenseItemImageFile(`/api/v1/admin/expenses/items/${itemId}/image`, file);
+}
+
+export async function deleteExpenseItemImage(itemId: UUID) {
+  const { data } = await apiClient.delete<ExpenseItemRead>(`/api/v1/admin/expenses/items/${itemId}/image`);
+  return data;
 }
 
 export async function fetchShopExpenseItemRows(

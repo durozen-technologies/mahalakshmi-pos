@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -11,11 +11,24 @@ from test.support import AsyncSessionAdapter, BackendTestCase
 
 from fastapi import HTTPException
 from PIL import Image
+from pydantic import ValidationError
 from sqlalchemy import select, text
 
 from app.db import storage as item_storage
-from app.models import BaseUnit, Bill, DailyPrice, Item, Shop, UnitType, User
-from app.schemas.admin import ItemCreate, ShopCreate
+from app.models import (
+    BaseUnit,
+    Bill,
+    DailyPrice,
+    ExpenseEntry,
+    ExpenseItem,
+    InventoryMovementType,
+    Item,
+    ItemAssumptionStatus,
+    Shop,
+    UnitType,
+    User,
+)
+from app.schemas.admin import ItemAssumptionUpdate, ItemCreate, PriceStatus, ShopCreate
 from app.schemas.auth import RegisterRequest
 from app.schemas.billing import (
     BillCheckoutCommitRequest,
@@ -33,7 +46,7 @@ from app.schemas.inventory import (
     InventoryUseSplitRequest,
 )
 from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry
-from app.services.admin import create_shop_account
+from app.services.admin import allocate_catalogue_item, create_shop_account, update_item_assumption
 from app.services.auth import register_admin
 from app.services.billing import create_bill, preview_bill
 from app.services.inventory import (
@@ -54,7 +67,13 @@ from app.services.inventory import (
     use_shop_inventory_stock,
     use_shop_inventory_stock_split,
 )
-from app.services.pricing import create_daily_prices, create_global_daily_prices, get_global_bootstrap
+from app.services.pricing import (
+    create_daily_prices,
+    create_global_daily_prices,
+    get_global_bootstrap,
+    get_shop_price_history,
+)
+from app.services.reports import generate_admin_report_pdf
 
 
 def _square_image_bytes(size: int = 400, image_format: str = "PNG") -> bytes:
@@ -115,6 +134,255 @@ class ServiceUnitTests(BackendTestCase):
                 self.assertIsNotNone(chicken)
                 self.assertIsNone(chicken.image_object_key)
                 self.assertIsNone(chicken.image_content_type)
+
+        self.run_async(scenario())
+
+    def test_item_assumption_validation_and_status(self) -> None:
+        self.run_async(self.harness.create_catalogue_items(("Chicken", "Duck")))
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                category = await create_inventory_category(
+                    db,
+                    InventoryCategoryCreate(name="Kitchen Use"),
+                )
+                other_category = await create_inventory_category(
+                    db,
+                    InventoryCategoryCreate(name="Other Use"),
+                )
+                inventory_item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Chicken Stock",
+                        tamil_name="கோழி இருப்பு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                chicken = session.scalar(select(Item).where(Item.name == "Chicken"))
+                duck = session.scalar(select(Item).where(Item.name == "Duck"))
+
+                saved = await update_item_assumption(
+                    db,
+                    chicken.id,
+                    ItemAssumptionUpdate(
+                        assumption_percent=Decimal("78"),
+                        assumption_inventory_item_id=inventory_item.id,
+                        assumption_inventory_category_id=category.id,
+                    ),
+                )
+                self.assertEqual(saved.assumption_percent, Decimal("78"))
+                self.assertEqual(saved.assumption_status, ItemAssumptionStatus.CONFIGURED)
+
+                with self.assertRaises(ValidationError):
+                    ItemAssumptionUpdate(
+                        assumption_percent=Decimal("101"),
+                        assumption_inventory_item_id=inventory_item.id,
+                        assumption_inventory_category_id=category.id,
+                    )
+                with self.assertRaises(ValidationError):
+                    ItemAssumptionUpdate(assumption_percent=Decimal("78"))
+
+                with self.assertRaises(HTTPException) as count_ctx:
+                    await update_item_assumption(
+                        db,
+                        duck.id,
+                        ItemAssumptionUpdate(
+                            assumption_percent=Decimal("78"),
+                            assumption_inventory_item_id=inventory_item.id,
+                            assumption_inventory_category_id=category.id,
+                        ),
+                    )
+                self.assertEqual(count_ctx.exception.status_code, 422)
+
+                with self.assertRaises(HTTPException) as category_ctx:
+                    await update_item_assumption(
+                        db,
+                        chicken.id,
+                        ItemAssumptionUpdate(
+                            assumption_percent=Decimal("78"),
+                            assumption_inventory_item_id=inventory_item.id,
+                            assumption_inventory_category_id=other_category.id,
+                        ),
+                    )
+                self.assertEqual(category_ctx.exception.status_code, 422)
+
+                cleared = await update_item_assumption(
+                    db,
+                    chicken.id,
+                    ItemAssumptionUpdate(),
+                )
+                self.assertIsNone(cleared.assumption_percent)
+                self.assertEqual(cleared.assumption_status, ItemAssumptionStatus.NOT_SET)
+
+        self.run_async(scenario())
+
+    def test_admin_report_pdf_can_include_item_assumptions(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        self.run_async(self.harness.create_catalogue_items(("Chicken",)))
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                category = await create_inventory_category(
+                    db,
+                    InventoryCategoryCreate(name="Kitchen Use"),
+                )
+                inventory_item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Chicken Stock",
+                        tamil_name="கோழி இருப்பு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                chicken = session.scalar(select(Item).where(Item.name == "Chicken"))
+                await update_item_assumption(
+                    db,
+                    chicken.id,
+                    ItemAssumptionUpdate(
+                        assumption_percent=Decimal("78"),
+                        assumption_inventory_item_id=inventory_item.id,
+                        assumption_inventory_category_id=category.id,
+                    ),
+                )
+                session.add(
+                    DailyPrice(
+                        shop_id=shop.id,
+                        item_id=chicken.id,
+                        price_per_unit=Decimal("120.00"),
+                        unit=chicken.base_unit,
+                        price_date=date.today(),
+                    )
+                )
+                session.commit()
+
+                report = await generate_admin_report_pdf(
+                    db,
+                    sections=["assumptions"],
+                    period="date",
+                )
+                try:
+                    data = report.file.read()
+                    self.assertGreater(len(data), 0)
+                    self.assertIn(b"Assumptions", data)
+                    self.assertIn(b"Chicken Stock", data)
+                    self.assertIn(b"Rs. 120.00", data)
+                    self.assertIn(b"Rs. 93.60", data)
+                finally:
+                    report.file.close()
+
+        self.run_async(scenario())
+
+    def test_admin_report_pdf_can_include_over_report_statement(self) -> None:
+        _actor, shop = self.run_async(
+            self.harness.create_shop_user(shop_name="SK Nagar")
+        )
+        self.run_async(self.harness.create_catalogue_items(("Chicken",)))
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.get(Shop, shop.id)
+                chicken = session.scalar(
+                    select(Item).where(Item.name == "Chicken", Item.shop_id.is_(None))
+                )
+                await allocate_catalogue_item(db, current_shop, chicken.id)
+                category = await create_inventory_category(
+                    db,
+                    InventoryCategoryCreate(name="Chicken Without Skin"),
+                )
+                inventory_item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Chicken Stock",
+                        tamil_name="கோழி இருப்பு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [inventory_item.id])
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    inventory_item.id,
+                    InventoryAddRequest(quantity=Decimal("20")),
+                )
+                await update_item_assumption(
+                    db,
+                    chicken.id,
+                    ItemAssumptionUpdate(
+                        assumption_percent=Decimal("78"),
+                        assumption_inventory_item_id=inventory_item.id,
+                        assumption_inventory_category_id=category.id,
+                    ),
+                )
+                await create_daily_prices(
+                    db,
+                    current_shop,
+                    DailyPriceCreate(
+                        entries=[
+                            DailyPriceEntry(
+                                item_id=chicken.id,
+                                price_per_unit=Decimal("120.00"),
+                            )
+                        ]
+                    ),
+                )
+                payload = BillCheckoutRequest(
+                    items=[BillItemInput(item_id=chicken.id, quantity=Decimal("10"))],
+                    payment=CheckoutPaymentInput(
+                        cash_amount=Decimal("1200.00"),
+                        upi_amount=Decimal("0.00"),
+                    ),
+                )
+                preview = await preview_bill(db, current_shop, payload)
+                await create_bill(
+                    db,
+                    current_shop,
+                    BillCheckoutCommitRequest(
+                        items=payload.items,
+                        payment=payload.payment,
+                        checkout_token=preview.checkout_token,
+                    ),
+                )
+                expense_item = ExpenseItem(name="Coolie", tamil_name="கூலி")
+                session.add(expense_item)
+                session.flush()
+                session.add(
+                    ExpenseEntry(
+                        shop_id=current_shop.id,
+                        expense_item_id=expense_item.id,
+                        expense_name=expense_item.name,
+                        expense_tamil_name=expense_item.tamil_name,
+                        amount=Decimal("100.00"),
+                        spent_at=datetime.now(UTC),
+                    )
+                )
+                session.commit()
+
+                report = await generate_admin_report_pdf(
+                    db,
+                    sections=["over_report"],
+                    period="date",
+                )
+                try:
+                    data = report.file.read()
+                    self.assertGreater(len(data), 0)
+                    self.assertIn(b"Over Report", data)
+                    self.assertIn(b"SRI MAHALAKSHMI BROILERS", data)
+                    self.assertIn(b"SK NAGAR - BRANCH", data)
+                    self.assertIn(b"Total Available Stock", data)
+                    self.assertIn(b"Rs. 1200.00", data)
+                    self.assertIn(b"Rs. 936.00", data)
+                    self.assertIn(b"Rs. 264.00", data)
+                finally:
+                    report.file.close()
 
         self.run_async(scenario())
 
@@ -1236,6 +1504,66 @@ class ServiceUnitTests(BackendTestCase):
 
         self.run_async(scenario())
 
+    def test_shop_price_history_uses_exact_selected_date(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        self.run_async(self.harness.create_items_for_shop(shop.id, ("Chicken", "Duck")))
+        target_date = date.today() - timedelta(days=1)
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                chicken = session.scalar(
+                    select(Item).where(Item.name == "Chicken", Item.shop_id == shop.id)
+                )
+                duck = session.scalar(
+                    select(Item).where(Item.name == "Duck", Item.shop_id == shop.id)
+                )
+                session.add_all(
+                    [
+                        DailyPrice(
+                            shop_id=shop.id,
+                            item_id=chicken.id,
+                            price_per_unit=Decimal("120.00"),
+                            unit=chicken.base_unit,
+                            price_date=target_date,
+                        ),
+                        DailyPrice(
+                            shop_id=shop.id,
+                            item_id=chicken.id,
+                            price_per_unit=Decimal("140.00"),
+                            unit=chicken.base_unit,
+                            price_date=date.today(),
+                        ),
+                        DailyPrice(
+                            shop_id=shop.id,
+                            item_id=duck.id,
+                            price_per_unit=Decimal("220.00"),
+                            unit=duck.base_unit,
+                            price_date=date.today(),
+                        ),
+                    ]
+                )
+                session.commit()
+
+                history = await get_shop_price_history(
+                    AsyncSessionAdapter(session), shop, target_date
+                )
+                items_by_name = {item.item_name: item for item in history.items}
+
+                self.assertEqual(history.price_date, target_date)
+                self.assertFalse(history.prices_set)
+                self.assertEqual(
+                    items_by_name["Chicken"].current_price, Decimal("120.00")
+                )
+                self.assertEqual(
+                    items_by_name["Chicken"].latest_price_date, target_date
+                )
+                self.assertEqual(items_by_name["Chicken"].price_status, PriceStatus.STALE)
+                self.assertIsNone(items_by_name["Duck"].current_price)
+                self.assertIsNone(items_by_name["Duck"].latest_price_date)
+                self.assertEqual(items_by_name["Duck"].price_status, PriceStatus.MISSING)
+
+        self.run_async(scenario())
+
     def test_create_global_daily_prices_requires_active_shops(self) -> None:
         self.run_async(self.harness.create_admin_user())
         self.run_async(self.harness.create_catalogue_items(("Chicken",)))
@@ -1397,5 +1725,105 @@ class ServiceUnitTests(BackendTestCase):
                 stored_actor = session.get(User, actor.id)
                 self.assertIsNotNone(stored_shop)
                 self.assertIsNotNone(stored_actor)
+
+        self.run_async(scenario())
+
+    def test_create_bill_records_assumption_inventory_use_after_preview(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        self.run_async(self.harness.create_catalogue_items(("Chicken",)))
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.get(Shop, shop.id)
+                chicken = session.scalar(select(Item).where(Item.name == "Chicken", Item.shop_id.is_(None)))
+                await allocate_catalogue_item(db, current_shop, chicken.id)
+                category = await create_inventory_category(
+                    db,
+                    InventoryCategoryCreate(name="Kitchen Use"),
+                )
+                inventory_item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Chicken Stock",
+                        tamil_name="கோழி இருப்பு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [inventory_item.id])
+                await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    inventory_item.id,
+                    InventoryAddRequest(quantity=Decimal("20")),
+                )
+                await update_item_assumption(
+                    db,
+                    chicken.id,
+                    ItemAssumptionUpdate(
+                        assumption_percent=Decimal("78"),
+                        assumption_inventory_item_id=inventory_item.id,
+                        assumption_inventory_category_id=category.id,
+                    ),
+                )
+                await create_daily_prices(
+                    db,
+                    current_shop,
+                    DailyPriceCreate(
+                        entries=[
+                            DailyPriceEntry(
+                                item_id=chicken.id,
+                                price_per_unit=Decimal("120.00"),
+                            )
+                        ]
+                    ),
+                )
+
+                payload = BillCheckoutRequest(
+                    items=[BillItemInput(item_id=chicken.id, quantity=Decimal("10"))],
+                    payment=CheckoutPaymentInput(
+                        cash_amount=Decimal("1200.00"),
+                        upi_amount=Decimal("0.00"),
+                    ),
+                )
+                preview = await preview_bill(db, current_shop, payload)
+                movements_after_preview = await list_inventory_movements(
+                    db,
+                    shop_id=current_shop.id,
+                    limit=10,
+                )
+                self.assertFalse(
+                    any(
+                        movement.movement_type == InventoryMovementType.USE
+                        for movement in movements_after_preview.items
+                    )
+                )
+
+                created = await create_bill(
+                    db,
+                    current_shop,
+                    BillCheckoutCommitRequest(
+                        items=payload.items,
+                        payment=payload.payment,
+                        checkout_token=preview.checkout_token,
+                    ),
+                )
+                self.assertEqual(created.items[0].quantity, Decimal("10"))
+                movements_after_commit = await list_inventory_movements(
+                    db,
+                    shop_id=current_shop.id,
+                    limit=10,
+                )
+                use_movements = [
+                    movement
+                    for movement in movements_after_commit.items
+                    if movement.movement_type == InventoryMovementType.USE
+                ]
+                self.assertEqual(len(use_movements), 1)
+                self.assertEqual(use_movements[0].quantity, Decimal("7.800"))
+                self.assertEqual(use_movements[0].inventory_item_id, inventory_item.id)
+                self.assertEqual(use_movements[0].category_id, category.id)
 
         self.run_async(scenario())

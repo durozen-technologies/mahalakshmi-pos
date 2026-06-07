@@ -6,12 +6,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ..models import BaseUnit, UnitType
+from ..models import BaseUnit, ItemAssumptionStatus, UnitType
 from .auth import normalize_username, require_non_blank_password
 from .common import ORMModel
 
 AnalyticsPeriod = Literal["date", "week", "month", "year", "range"]
-AdminReportSection = Literal["sales", "billing", "items", "inventory"]
+AdminReportSection = Literal[
+    "sales",
+    "billing",
+    "items",
+    "inventory",
+    "assumptions",
+    "over_report",
+]
 AdminReportDetailLevel = Literal["summary", "full"]
 JsonScalar = str | int | float | bool | None
 JsonObject = dict[str, JsonScalar]
@@ -149,6 +156,23 @@ class ItemMetadataUpdate(BaseModel):
         return self
 
 
+class ItemAssumptionUpdate(BaseModel):
+    assumption_percent: Decimal | None = Field(default=None, gt=0, le=100)
+    assumption_inventory_item_id: UUID | None = None
+    assumption_inventory_category_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_complete_or_clear(self) -> "ItemAssumptionUpdate":
+        values = (
+            self.assumption_percent,
+            self.assumption_inventory_item_id,
+            self.assumption_inventory_category_id,
+        )
+        if all(value is None for value in values) or all(value is not None for value in values):
+            return self
+        raise ValueError("Assumption percent, inventory item, and category must be saved together")
+
+
 class ItemRead(ORMModel):
     id: UUID
     shop_id: UUID | None = None
@@ -163,6 +187,10 @@ class ItemRead(ORMModel):
     created_at: datetime
     updated_at: datetime | None = None
     custom_attributes: JsonObject = Field(default_factory=dict)
+    assumption_percent: Decimal | None = None
+    assumption_inventory_item_id: UUID | None = None
+    assumption_inventory_category_id: UUID | None = None
+    assumption_status: ItemAssumptionStatus = ItemAssumptionStatus.NOT_APPLICABLE
     image_path: str | None = None
     image_thumb_path: str | None = None
     image_content_type: str | None = None

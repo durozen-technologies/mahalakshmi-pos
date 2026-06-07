@@ -2,6 +2,7 @@ export { ItemScope, PriceStatus } from "@/types/api";
 
 export enum AdminItemWorkspace {
   Catalogue = "catalogue",
+  Assumption = "assumption",
   Shop = "shop",
   Prices = "prices",
 }

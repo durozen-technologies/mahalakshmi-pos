@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -10,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     text,
 )
@@ -31,6 +33,11 @@ class Item(Base, BaseModelMixin):
             "(unit_type = 'WEIGHT' AND base_unit = 'KG') OR "
             "(unit_type = 'COUNT' AND base_unit = 'UNIT')",
             name="ck_items_unit_pair",
+        ),
+        CheckConstraint(
+            "assumption_percent IS NULL OR "
+            "(assumption_percent > 0 AND assumption_percent <= 100)",
+            name="ck_items_assumption_percent_range",
         ),
         Index("ix_items_sort_name", "sort_order", "name", "id"),
         Index(
@@ -72,6 +79,19 @@ class Item(Base, BaseModelMixin):
         default=dict,
         server_default=text("'{}'"),
         nullable=False,
+    )
+    assumption_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    assumption_inventory_item_id: Mapped[UUID | None] = mapped_column(
+        UUID_SQL_TYPE,
+        ForeignKey("inventory_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    assumption_inventory_category_id: Mapped[UUID | None] = mapped_column(
+        UUID_SQL_TYPE,
+        ForeignKey("inventory_categories.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

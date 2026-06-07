@@ -6,15 +6,24 @@ import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from "
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { YStack } from "tamagui";
 
-import { fetchItemCategories, type FetchShopItemsParams } from "@/api/admin";
+import {
+  fetchInventoryItems,
+  fetchItemCategories,
+  fetchShopPriceHistory,
+  updateItemAssumption,
+  type FetchShopItemsParams,
+} from "@/api/admin";
 import { isApiRequestCanceled, toApiError } from "@/api/client";
 import { useApiConnection } from "@/hooks/use-api-connection";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useAdminItemsStore } from "@/store/admin-items-store";
 import type {
   DailyPriceCreate,
+  InventoryItemRead,
+  ItemAssumptionUpdate,
   ItemCategoryRead,
   ItemPriceRead,
+  ShopBootstrapResponse,
   ShopItemRead,
   UUID,
 } from "@/types/api";
@@ -22,6 +31,7 @@ import { isPositiveNumber, toMoneyString } from "@/utils/decimal";
 import { prefetchItemThumbnails } from "@/utils/item-images";
 import type {
   AdminItemPricesScreenProps,
+  AdminItemAssumptionScreenProps,
   AdminItemsCatalogueScreenProps,
   AdminShopItemsScreenProps,
 } from "@/navigation/types";
@@ -36,6 +46,7 @@ import {
 import {
   EmptyState,
   ErrorState,
+  AssumptionGrid,
   FilterBar,
   ImportCatalogueToolbar,
   ItemList,
@@ -49,6 +60,7 @@ import {
   type ShopItemsTab,
   StatsStrip,
   WorkspaceTabs,
+  type AssumptionDraft,
 } from "./components/admin-items-management";
 import { ToastBanner } from "./components/admin-dashboard-primitives";
 import { AdminHeaderActions } from "./components/admin-header-actions";
@@ -63,11 +75,19 @@ import { triggerHaptic, type ToastTone } from "./admin-dashboard-utils";
 
 type ItemsRouteProps =
   | AdminItemsCatalogueScreenProps
+  | AdminItemAssumptionScreenProps
   | AdminShopItemsScreenProps
   | AdminItemPricesScreenProps;
 
 const ALL_CATEGORY_FILTER_KEY = "all";
 const UNCATEGORIZED_CATEGORY_FILTER_KEY = "uncategorized";
+
+function toDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 function buildSelectedShopItemQuery(search: string, categoryKey: string): FetchShopItemsParams {
   const query: FetchShopItemsParams = {
@@ -113,20 +133,34 @@ function AdminItemsRoute({
   const [selectedImportIds, setSelectedImportIds] = useState<Set<UUID>>(() => new Set());
   const [itemCategories, setItemCategories] = useState<ItemCategoryRead[]>([]);
   const [itemCategoriesLoading, setItemCategoriesLoading] = useState(false);
+  const [assumptionInventoryItems, setAssumptionInventoryItems] = useState<InventoryItemRead[]>([]);
+  const [assumptionInventoryLoading, setAssumptionInventoryLoading] = useState(false);
+  const [assumptionInventoryError, setAssumptionInventoryError] = useState<string | null>(null);
+  const [assumptionDrafts, setAssumptionDrafts] = useState<Record<UUID, AssumptionDraft>>({});
+  const [savingAssumptionId, setSavingAssumptionId] = useState<UUID | null>(null);
   const [categoryFilterKey, setCategoryFilterKey] = useState(ALL_CATEGORY_FILTER_KEY);
   const [toast, setToast] = useState<{ tone: ToastTone; message: string } | null>(null);
   const toastAnimation = useMemo(() => new Animated.Value(0), []);
   const isCatalogueWorkspace = workspace === AdminItemWorkspace.Catalogue;
+  const isAssumptionWorkspace = workspace === AdminItemWorkspace.Assumption;
   const isShopItemsWorkspace = workspace === AdminItemWorkspace.Shop;
   const isPricesWorkspace = workspace === AdminItemWorkspace.Prices;
-  const shopsState = useAdminItemShops(isFocused && !isCatalogueWorkspace);
-  const catalogueState = useCatalogueItems(isFocused && isCatalogueWorkspace);
+  const isCatalogueLikeWorkspace = isCatalogueWorkspace || isAssumptionWorkspace;
+  const workspaceNeedsShop = isShopItemsWorkspace || isPricesWorkspace;
+  const shopsState = useAdminItemShops(isFocused && workspaceNeedsShop);
+  const catalogueState = useCatalogueItems(isFocused && isCatalogueLikeWorkspace);
   const shopItemsState = useSelectedShopItems(selectedShopId, isFocused && isShopItemsWorkspace);
   const availableCatalogueState = useAvailableCatalogueItems(
     selectedShopId,
     isFocused && isShopItemsWorkspace && shopItemsTab === "available",
   );
   const priceState = useShopPrices(selectedShopId, isFocused && isPricesWorkspace);
+  const [priceHistoryOpen, setPriceHistoryOpen] = useState(false);
+  const [priceHistoryDate, setPriceHistoryDate] = useState(() => toDateInputValue());
+  const [priceHistoryMonth, setPriceHistoryMonth] = useState(() => toDateInputValue());
+  const [priceHistoryBootstrap, setPriceHistoryBootstrap] = useState<ShopBootstrapResponse | null>(null);
+  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
+  const [priceHistoryError, setPriceHistoryError] = useState<string | null>(null);
   const apiConnection = useApiConnection();
 
   const selectedShop = useMemo(
@@ -156,6 +190,42 @@ function AdminItemsRoute({
   );
   const showToast = useCallback((tone: ToastTone, message: string) => {
     setToast({ tone, message });
+  }, []);
+
+  const loadPriceHistory = useCallback(async (dateValue = priceHistoryDate) => {
+    if (!selectedShopId) {
+      setPriceHistoryBootstrap(null);
+      return;
+    }
+    setPriceHistoryLoading(true);
+    setPriceHistoryError(null);
+    setPriceHistoryBootstrap(null);
+    try {
+      const nextBootstrap = await fetchShopPriceHistory(selectedShopId, dateValue);
+      setPriceHistoryBootstrap(nextBootstrap);
+    } catch (error) {
+      const message = toApiError(error).message || "Unable to load price history.";
+      setPriceHistoryError(message);
+      showToast("error", message);
+    } finally {
+      setPriceHistoryLoading(false);
+    }
+  }, [priceHistoryDate, selectedShopId, showToast]);
+
+  const loadAssumptionInventoryItems = useCallback(async () => {
+    setAssumptionInventoryLoading(true);
+    setAssumptionInventoryError(null);
+    try {
+      const nextItems = await fetchInventoryItems({ active: true });
+      setAssumptionInventoryItems(nextItems);
+      return nextItems;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to load inventory items.";
+      setAssumptionInventoryError(message);
+      throw new Error(message);
+    } finally {
+      setAssumptionInventoryLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -227,30 +297,40 @@ function AdminItemsRoute({
       setStoredShopId(selectedShopId);
       return;
     }
-    if (workspace !== AdminItemWorkspace.Catalogue && shopsState.shops[0]?.id) {
+    if (workspaceNeedsShop && shopsState.shops[0]?.id) {
       setSelectedShopId(shopsState.shops[0].id);
     }
-  }, [adminItemsHydrated, isFocused, selectedShopId, setStoredShopId, shopsState.shops, workspace]);
+  }, [adminItemsHydrated, isFocused, selectedShopId, setStoredShopId, shopsState.shops, workspaceNeedsShop]);
 
   useEffect(() => {
     setShopItemsTab("selected");
     setImportSearch("");
     setSelectedImportIds(new Set());
+    setAssumptionDrafts({});
   }, [workspace]);
 
   useEffect(() => {
-    if (isFocused && workspace === AdminItemWorkspace.Catalogue) {
+    if (isFocused && isCatalogueLikeWorkspace) {
       void catalogueState.load(buildCatalogueItemQuery(debouncedSearch)).catch((error) => {
         showToast("error", error instanceof Error ? error.message : "Unable to load catalogue.");
       });
     }
-  }, [catalogueState.load, debouncedSearch, isFocused, showToast, workspace]);
+  }, [catalogueState.load, debouncedSearch, isCatalogueLikeWorkspace, isFocused, showToast]);
 
   useEffect(() => {
-    if (isFocused && workspace === AdminItemWorkspace.Catalogue) {
+    if (isFocused && isCatalogueLikeWorkspace) {
       prefetchItemThumbnails(catalogueState.items);
     }
-  }, [catalogueState.items, isFocused, workspace]);
+  }, [catalogueState.items, isCatalogueLikeWorkspace, isFocused]);
+
+  useEffect(() => {
+    if (!isFocused || !isAssumptionWorkspace) {
+      return;
+    }
+    void loadAssumptionInventoryItems().catch((error) => {
+      showToast("error", error instanceof Error ? error.message : "Unable to load inventory items.");
+    });
+  }, [isAssumptionWorkspace, isFocused, loadAssumptionInventoryItems, showToast]);
 
   useEffect(() => {
     if (!isFocused || workspace !== AdminItemWorkspace.Shop || !selectedShopId) {
@@ -300,10 +380,19 @@ function AdminItemsRoute({
   }, [isFocused, priceState.bootstrap?.items, workspace]);
 
   useEffect(() => {
+    if (isFocused && workspace === AdminItemWorkspace.Prices && priceHistoryOpen) {
+      prefetchItemThumbnails(priceHistoryBootstrap?.items ?? []);
+    }
+  }, [isFocused, priceHistoryBootstrap?.items, priceHistoryOpen, workspace]);
+
+  useEffect(() => {
     setSelectedImportIds(new Set());
     setImportSearch("");
     setShopItemsTab("selected");
     setCategoryFilterKey(ALL_CATEGORY_FILTER_KEY);
+    setPriceHistoryOpen(false);
+    setPriceHistoryBootstrap(null);
+    setPriceHistoryError(null);
   }, [selectedShopId]);
 
   const selectShop = useCallback((shopId: UUID) => {
@@ -508,14 +597,25 @@ function AdminItemsRoute({
   }, [availableCatalogueState, showToast]);
 
   const refreshCurrentItemsPage = useCallback(() => {
-    if (workspace !== AdminItemWorkspace.Catalogue) {
+    if (workspaceNeedsShop) {
       void shopsState.reload().catch(() => undefined);
     }
     if (workspace === AdminItemWorkspace.Catalogue) {
       refreshCatalogue();
       return;
     }
+    if (workspace === AdminItemWorkspace.Assumption) {
+      refreshCatalogue();
+      void loadAssumptionInventoryItems().catch((error) => {
+        showToast("error", error instanceof Error ? error.message : "Unable to refresh inventory items.");
+      });
+      return;
+    }
     if (workspace === AdminItemWorkspace.Prices) {
+      if (priceHistoryOpen) {
+        void loadPriceHistory(priceHistoryDate);
+        return;
+      }
       refreshPrices();
       return;
     }
@@ -532,16 +632,85 @@ function AdminItemsRoute({
     shopItemsTab,
     shopsState,
     workspace,
+    workspaceNeedsShop,
+    loadAssumptionInventoryItems,
+    loadPriceHistory,
+    priceHistoryDate,
+    priceHistoryOpen,
+    showToast,
   ]);
 
   const headerRefreshing =
     workspace === AdminItemWorkspace.Catalogue
       ? catalogueState.refreshing
-      : workspace === AdminItemWorkspace.Prices
-        ? priceState.refreshing || shopsState.loading
+      : workspace === AdminItemWorkspace.Assumption
+        ? catalogueState.refreshing || assumptionInventoryLoading
+        : workspace === AdminItemWorkspace.Prices
+        ? priceState.refreshing || priceHistoryLoading || shopsState.loading
         : shopItemsTab === "available"
           ? availableCatalogueState.refreshing || shopsState.loading
           : shopItemsState.refreshing || shopsState.loading;
+
+  const changeAssumptionDraft = useCallback((item: ShopItemRead, patch: AssumptionDraft) => {
+    setAssumptionDrafts((current) => {
+      const previous = current[item.id] ?? {
+        assumption_percent: item.assumption_percent ?? "",
+        assumption_inventory_item_id: item.assumption_inventory_item_id ?? null,
+        assumption_inventory_category_id: item.assumption_inventory_category_id ?? null,
+      };
+      return {
+        ...current,
+        [item.id]: {
+          ...previous,
+          ...patch,
+        },
+      };
+    });
+  }, []);
+
+  const saveAssumptionRow = useCallback((item: ShopItemRead, payload: ItemAssumptionUpdate) => {
+    setSavingAssumptionId(item.id);
+    void updateItemAssumption(item.id, payload)
+      .then(() => {
+        setAssumptionDrafts((current) => {
+          const next = { ...current };
+          delete next[item.id];
+          return next;
+        });
+        showToast("success", `${item.name} assumption saved.`);
+        void catalogueState.refresh().catch(() => undefined);
+      })
+      .catch((error) => {
+        showToast("error", error instanceof Error ? error.message : "Unable to save assumption.");
+      })
+      .finally(() => {
+        setSavingAssumptionId(null);
+      });
+  }, [catalogueState, showToast]);
+
+  const clearAssumptionRow = useCallback((item: ShopItemRead) => {
+    setSavingAssumptionId(item.id);
+    void updateItemAssumption(item.id, {
+      assumption_percent: null,
+      assumption_inventory_item_id: null,
+      assumption_inventory_category_id: null,
+    })
+      .then(() => {
+        setAssumptionDrafts((current) => {
+          const next = { ...current };
+          delete next[item.id];
+          return next;
+        });
+        showToast("success", `${item.name} assumption cleared.`);
+        void catalogueState.refresh().catch(() => undefined);
+      })
+      .catch((error) => {
+        showToast("error", error instanceof Error ? error.message : "Unable to clear assumption.");
+      })
+      .finally(() => {
+        setSavingAssumptionId(null);
+      });
+  }, [catalogueState, showToast]);
 
   const savePriceRow = useCallback((item: ItemPriceRead, rawValue: string) => {
     if (!isPositiveNumber(rawValue)) {
@@ -589,6 +758,25 @@ function AdminItemsRoute({
       .catch((error) => showToast("error", error instanceof Error ? error.message : "Unable to save prices."));
   }, [priceState, shopItemsState, showToast]);
 
+  const togglePriceHistory = useCallback(() => {
+    if (priceHistoryOpen) {
+      setPriceHistoryOpen(false);
+      return;
+    }
+    setPriceHistoryOpen(true);
+    void loadPriceHistory(priceHistoryDate);
+  }, [loadPriceHistory, priceHistoryDate, priceHistoryOpen]);
+
+  const selectPriceHistoryDate = useCallback((dateValue: string) => {
+    setPriceHistoryDate(dateValue);
+    setPriceHistoryMonth(dateValue);
+    void loadPriceHistory(dateValue);
+  }, [loadPriceHistory]);
+
+  const refreshPriceHistory = useCallback(() => {
+    void loadPriceHistory(priceHistoryDate);
+  }, [loadPriceHistory, priceHistoryDate]);
+
   const commonHeader = (
     <YStack gap={10}>
       <ErrorState
@@ -600,17 +788,18 @@ function AdminItemsRoute({
         palette={palette}
         onRetry={() => void apiConnection.retry()}
       />
-      {workspace !== AdminItemWorkspace.Catalogue ? (
+      {workspaceNeedsShop ? (
         <ErrorState message={shopsState.error} palette={palette} onRetry={() => void shopsState.reload().catch(() => undefined)} />
       ) : null}
       <WorkspaceTabs
         workspace={workspace}
         palette={palette}
         onCatalogue={() => navigation.navigate("AdminItemsCatalogue")}
+        onAssumption={() => navigation.navigate("AdminItemAssumption")}
         onShopItems={() => navigation.navigate("AdminShopItems", { shopId: selectedShopId ?? undefined })}
         onPrices={navigatePrices}
       />
-      {workspace !== AdminItemWorkspace.Catalogue ? (
+      {workspaceNeedsShop ? (
         <ShopPicker
           shops={shopsState.shops}
           selectedShop={selectedShop}
@@ -676,6 +865,30 @@ function AdminItemsRoute({
         );
       }}
     />
+  );
+
+  const renderAssumption = () => (
+    <>
+      <View style={[styles.fixedHeader, { backgroundColor: palette.background }]}>
+        {commonHeader}
+      </View>
+      <AssumptionGrid
+        items={catalogueState.items}
+        inventoryItems={assumptionInventoryItems}
+        loading={catalogueState.loading}
+        refreshing={catalogueState.refreshing || assumptionInventoryLoading}
+        inventoryLoading={assumptionInventoryLoading}
+        drafts={assumptionDrafts}
+        savingItemId={savingAssumptionId}
+        error={catalogueState.error ?? assumptionInventoryError}
+        palette={palette}
+        bottomPadding={42 + insets.bottom}
+        onRefresh={refreshCurrentItemsPage}
+        onChangeDraft={changeAssumptionDraft}
+        onSaveRow={saveAssumptionRow}
+        onClearRow={clearAssumptionRow}
+      />
+    </>
   );
 
   const renderShopItems = () => {
@@ -877,16 +1090,26 @@ function AdminItemsRoute({
         <PriceGrid
           items={priceState.bootstrap?.items ?? []}
           loading={priceState.loading}
-          refreshing={priceState.refreshing}
+          refreshing={priceHistoryOpen ? priceHistoryLoading : priceState.refreshing}
           draftPrices={priceState.draftPrices}
           savingAll={priceState.savingAll}
           savingItemId={priceState.savingItemId}
           error={priceState.error}
           selectedShop={selectedShop}
+          historyOpen={priceHistoryOpen}
+          historyDate={priceHistoryDate}
+          historyMonth={priceHistoryMonth}
+          historyItems={priceHistoryBootstrap?.items ?? []}
+          historyLoading={priceHistoryLoading}
+          historyError={priceHistoryError}
           palette={palette}
           bottomPadding={42 + insets.bottom}
-          onRefresh={refreshPrices}
+          onRefresh={priceHistoryOpen ? refreshPriceHistory : refreshPrices}
           onBackToItems={() => navigation.navigate("AdminShopItems", { shopId: selectedShop.id })}
+          onToggleHistory={togglePriceHistory}
+          onChangeHistoryMonth={setPriceHistoryMonth}
+          onSelectHistoryDate={selectPriceHistoryDate}
+          onRefreshHistory={refreshPriceHistory}
           onChangeDraftPrice={priceState.setDraftPrice}
           onSaveRow={savePriceRow}
           onSaveEdited={saveEditedPrices}
@@ -899,11 +1122,13 @@ function AdminItemsRoute({
   const title =
     workspace === AdminItemWorkspace.Catalogue
       ? "Catalogue"
+      : workspace === AdminItemWorkspace.Assumption
+        ? "Assumption"
       : workspace === AdminItemWorkspace.Prices
         ? "Prices"
         : "Shop items";
   const subtitle =
-    workspace === AdminItemWorkspace.Catalogue
+    workspace === AdminItemWorkspace.Catalogue || workspace === AdminItemWorkspace.Assumption
       ? "Global item workspace"
       : selectedShop?.name ?? "Choose a shop";
 
@@ -929,6 +1154,8 @@ function AdminItemsRoute({
       </View>
       {workspace === AdminItemWorkspace.Catalogue
         ? renderCatalogue()
+        : workspace === AdminItemWorkspace.Assumption
+          ? renderAssumption()
         : workspace === AdminItemWorkspace.Prices
           ? renderPrices()
           : renderShopItems()}
@@ -939,6 +1166,10 @@ function AdminItemsRoute({
 
 export function AdminItemsCatalogueScreen(props: AdminItemsCatalogueScreenProps) {
   return <AdminItemsRoute {...props} workspace={AdminItemWorkspace.Catalogue} />;
+}
+
+export function AdminItemAssumptionScreen(props: AdminItemAssumptionScreenProps) {
+  return <AdminItemsRoute {...props} workspace={AdminItemWorkspace.Assumption} />;
 }
 
 export function AdminShopItemsScreen(props: AdminShopItemsScreenProps) {

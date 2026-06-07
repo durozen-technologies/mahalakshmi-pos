@@ -21,6 +21,8 @@ from app.models import (
     BillItem,
     BillStatus,
     DailyPrice,
+    InventoryMovement,
+    InventoryMovementType,
     Item,
     MonthlyBillSequence,
     Payment,
@@ -39,6 +41,7 @@ from app.schemas.billing import (
 )
 
 TWOPLACES = Decimal("0.01")
+THREEPLACES = Decimal("0.001")
 CHECKOUT_TOKEN_MAX_AGE_SECONDS = 15 * 60
 
 
@@ -53,6 +56,9 @@ class PreparedBillLine:
     unit: Any
     price_per_unit: Decimal
     line_total: Decimal
+    assumption_percent: Decimal | None = None
+    assumption_inventory_item_id: UUID | None = None
+    assumption_inventory_category_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +209,30 @@ def _line_to_read(line: PreparedBillLine) -> BillLineRead:
     )
 
 
+def _inventory_movement_for_assumption(shop: Shop, line: PreparedBillLine) -> InventoryMovement | None:
+    if (
+        line.unit.value != "kg"
+        or line.assumption_percent is None
+        or line.assumption_inventory_item_id is None
+        or line.assumption_inventory_category_id is None
+    ):
+        return None
+
+    quantity = (
+        line.quantity * line.assumption_percent / Decimal("100")
+    ).quantize(THREEPLACES, rounding=ROUND_HALF_UP)
+    if quantity <= 0:
+        return None
+
+    return InventoryMovement(
+        shop_id=shop.id,
+        inventory_item_id=line.assumption_inventory_item_id,
+        category_id=line.assumption_inventory_category_id,
+        movement_type=InventoryMovementType.USE,
+        quantity=quantity,
+    )
+
+
 async def _prepare_checkout(
     db: AsyncSession,
     shop: Shop,
@@ -236,6 +266,9 @@ async def _prepare_checkout(
                 Item.tamil_name,
                 Item.unit_type,
                 Item.base_unit,
+                Item.assumption_percent,
+                Item.assumption_inventory_item_id,
+                Item.assumption_inventory_category_id,
                 ShopItemAllocation.display_name,
                 ShopItemAllocation.tamil_name.label("allocation_tamil_name"),
             )
@@ -306,6 +339,9 @@ async def _prepare_checkout(
                 unit=item.base_unit,
                 price_per_unit=price_per_unit,
                 line_total=line_total,
+                assumption_percent=item.assumption_percent,
+                assumption_inventory_item_id=item.assumption_inventory_item_id,
+                assumption_inventory_category_id=item.assumption_inventory_category_id,
             )
         )
 
@@ -468,7 +504,12 @@ async def create_bill(
             receipt_number=f"RCT-{bill.bill_no}",
             printed_at=datetime.now(UTC),
         )
-        db.add_all([payment, receipt])
+        assumption_movements = [
+            movement
+            for line in prepared.lines
+            if (movement := _inventory_movement_for_assumption(shop, line)) is not None
+        ]
+        db.add_all([payment, receipt, *assumption_movements])
         await db.flush()
         await db.commit()
     except IntegrityError:

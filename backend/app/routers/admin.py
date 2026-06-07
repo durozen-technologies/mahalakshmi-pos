@@ -36,6 +36,7 @@ from app.schemas.admin import (
     AdminReportDetailLevel,
     AdminReportSection,
     AnalyticsPeriod,
+    ItemAssumptionUpdate,
     ItemCategoryCreate,
     ItemCategoryRead,
     ItemCategoryUpdate,
@@ -137,6 +138,7 @@ from app.services.admin import (
     set_shop_active_state,
     update_catalogue_item_allocation,
     update_item,
+    update_item_assumption,
     update_item_category,
     update_item_metadata,
     update_selected_shop_items_order,
@@ -154,9 +156,11 @@ from app.services.expenses import (
     list_expense_item_rows,
     list_shop_expense_candidate_rows,
     list_shop_expense_item_rows,
+    remove_expense_item_image,
     update_expense_item,
     update_shop_expense_allocation,
     update_shop_expense_items_order,
+    upload_expense_item_image,
 )
 from app.services.inventory import (
     allocate_shop_inventory_items,
@@ -194,6 +198,7 @@ from app.services.pricing import (
     create_partial_daily_prices,
     get_global_bootstrap,
     get_shop_bootstrap,
+    get_shop_price_history,
     upsert_shop_daily_price,
 )
 from app.services.reports import generate_admin_report_pdf, iter_admin_report_file
@@ -224,6 +229,10 @@ ShopIdParam = Annotated[
 ShopIdsParam = Annotated[
     list[UUID] | None,
     Query(description="Filter reports to one or more shop branches. Omit for all branches."),
+]
+PriceHistoryDateParam = Annotated[
+    date,
+    Query(description="Exact price date to look up for a shop branch."),
 ]
 ReportSectionsParam = Annotated[
     list[AdminReportSection],
@@ -819,6 +828,30 @@ async def update_admin_expense_item(
 async def delete_admin_expense_item(expense_item_id: UUID, db: DBSession) -> Response:
     await delete_expense_item(db, expense_item_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/expenses/items/{expense_item_id}/image",
+    response_model=ExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Upload Expense Item Image",
+)
+async def upload_admin_expense_item_image(
+    expense_item_id: UUID,
+    db: DBSession,
+    image: ItemImageUploadRequired,
+) -> ExpenseItemRead:
+    return await upload_expense_item_image(db, expense_item_id, image)
+
+
+@router.delete(
+    "/expenses/items/{expense_item_id}/image",
+    response_model=ExpenseItemRead,
+    response_model_exclude_unset=True,
+    summary="Delete Expense Item Image",
+)
+async def delete_admin_expense_item_image(expense_item_id: UUID, db: DBSession) -> ExpenseItemRead:
+    return await remove_expense_item_image(db, expense_item_id)
 
 
 @router.get(
@@ -1750,6 +1783,21 @@ async def patch_inventory_item_metadata(
 
 
 @router.patch(
+    "/items/{item_id}/assumption",
+    response_model=ItemRead,
+    response_model_exclude_unset=True,
+    summary="Patch Catalogue Item Assumption",
+)
+async def patch_inventory_item_assumption(
+    item_id: UUID,
+    payload: ItemAssumptionUpdate,
+    db: DBSession,
+) -> ItemRead:
+    """Configure or clear the inventory deduction assumption for a catalogue item."""
+    return await update_item_assumption(db, item_id, payload)
+
+
+@router.patch(
     "/shops/{shop_id}/items/{item_id}/metadata",
     response_model=ItemRead,
     response_model_exclude_unset=True,
@@ -2013,6 +2061,21 @@ async def shop_prices_bootstrap(
 ) -> ShopBootstrapResponse:
     """Allocated active items with current prices for the shop price and billing screens."""
     return await get_shop_bootstrap(db, shop)
+
+
+@router.get(
+    "/shops/{shop_id}/prices/history",
+    response_model=ShopBootstrapResponse,
+    response_model_exclude_unset=True,
+    summary="Get Shop Price History",
+)
+async def shop_price_history(
+    shop: ShopDep,
+    db: DBSession,
+    price_date: PriceHistoryDateParam,
+) -> ShopBootstrapResponse:
+    """Allocated active items with prices saved on one exact day."""
+    return await get_shop_price_history(db, shop, price_date)
 
 
 @router.post(
