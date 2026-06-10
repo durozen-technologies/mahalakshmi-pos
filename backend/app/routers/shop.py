@@ -142,12 +142,22 @@ async def shop_inventory_rows(
     summary="List Shop Inventory Movements",
 )
 async def shop_inventory_movements(
+    reference_date: date | None = Query(None),
+    range_start_date: date | None = Query(None),
+    range_end_date: date | None = Query(None),
     limit: int = Query(30, ge=1, le=100),
     shop: Shop = Depends(get_current_shop),
     db: AsyncSession = Depends(get_db),
 ) -> InventoryMovementPage:
-    """Return recent inventory movements for the signed-in shop."""
-    return await list_inventory_movements(db, shop_id=shop.id, limit=limit)
+    """Return inventory movements for the signed-in shop."""
+    return await list_inventory_movements(
+        db,
+        shop_id=shop.id,
+        reference_date=reference_date,
+        range_start_date=range_start_date,
+        range_end_date=range_end_date,
+        limit=limit,
+    )
 
 
 @router.get(

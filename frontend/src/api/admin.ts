@@ -18,6 +18,7 @@ import {
   InventoryItemImageRead,
   InventoryItemRead,
   InventoryItemRowsPage,
+  InventoryBillingItemMappingWrite,
   InventoryItemStockRead,
   InventoryMovementPage,
   InventoryStockRowsPage,
@@ -69,7 +70,9 @@ export type InventoryItemMetadataPayload = {
   is_active: boolean;
   sort_order: number;
   category_ids: UUID[];
+  billing_item_id?: UUID | null;
   billing_item_ids: UUID[];
+  billing_mappings: InventoryBillingItemMappingWrite[];
 };
 
 export type AnalyticsDateRange = {
@@ -922,7 +925,15 @@ export async function fetchAdminInventorySummary(shopId: UUID, options: ApiReque
 }
 
 export async function fetchAdminInventoryMovements(
-  params?: { shop_id?: UUID | null; item_id?: UUID | null; category_id?: UUID | null; limit?: number },
+  params?: {
+    shop_id?: UUID | null;
+    item_id?: UUID | null;
+    category_id?: UUID | null;
+    reference_date?: string | null;
+    range_start_date?: string | null;
+    range_end_date?: string | null;
+    limit?: number;
+  },
   options: ApiRequestOptions = {},
 ) {
   const { data } = await apiClient.get<InventoryMovementPage>("/api/v1/admin/inventory/movements", {
@@ -930,6 +941,9 @@ export async function fetchAdminInventoryMovements(
       shop_id: params?.shop_id ?? undefined,
       item_id: params?.item_id ?? undefined,
       category_id: params?.category_id ?? undefined,
+      reference_date: params?.reference_date ?? undefined,
+      range_start_date: params?.range_start_date ?? undefined,
+      range_end_date: params?.range_end_date ?? undefined,
       limit: params?.limit ?? 100,
     },
     signal: options.signal,

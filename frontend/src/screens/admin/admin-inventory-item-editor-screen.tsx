@@ -29,6 +29,7 @@ import { toApiError } from "@/api/client";
 import {
   BaseUnit,
   UnitType,
+  type InventoryBillingItemMappingWrite,
   type InventoryCategoryRead,
   type InventoryItemRead,
   type InventoryBillingItemMappingRead,
@@ -44,6 +45,7 @@ import { AdminHeaderActions } from "./components/admin-header-actions";
 import { useAdminTheme } from "./use-admin-theme";
 
 type ImageDraft = ItemImageUploadFile;
+const ITEM_MAPPING_KEY = "__item__";
 
 type InventoryEditorValues = {
   name: string;
@@ -52,7 +54,7 @@ type InventoryEditorValues = {
   baseUnit: BaseUnit;
   sortOrder: string;
   isActive: boolean;
-  billingItemIds: Set<UUID>;
+  billingMappingIds: Record<string, UUID | null>;
   categoryIds: Set<UUID>;
 };
 
@@ -63,11 +65,18 @@ const EMPTY_VALUES: InventoryEditorValues = {
   baseUnit: BaseUnit.KG,
   sortOrder: "0",
   isActive: true,
-  billingItemIds: new Set<UUID>(),
+  billingMappingIds: {},
   categoryIds: new Set(),
 };
 
 function valuesFromItem(item: InventoryItemRead): InventoryEditorValues {
+  const billingMappingIds: Record<string, UUID | null> = {};
+  for (const mapping of item.billing_items ?? []) {
+    billingMappingIds[mapping.inventory_category_id ?? ITEM_MAPPING_KEY] = mapping.billing_item_id;
+  }
+  if (item.billing_item_id && !billingMappingIds[ITEM_MAPPING_KEY]) {
+    billingMappingIds[ITEM_MAPPING_KEY] = item.billing_item_id;
+  }
   return {
     name: item.name,
     tamilName: item.tamil_name,
@@ -75,12 +84,21 @@ function valuesFromItem(item: InventoryItemRead): InventoryEditorValues {
     baseUnit: item.base_unit,
     sortOrder: String(item.sort_order ?? 0),
     isActive: item.is_active,
-    billingItemIds: new Set(item.billing_item_ids ?? []),
+    billingMappingIds,
     categoryIds: new Set(item.category_ids),
   };
 }
 
 function buildInventoryPayload(values: InventoryEditorValues): InventoryItemMetadataPayload {
+  const categoryIds = [...values.categoryIds];
+  const billingMappings = categoryIds.reduce<InventoryBillingItemMappingWrite[]>((mappings, categoryId) => {
+    const billingItemId = values.billingMappingIds[categoryId];
+    if (billingItemId) {
+      mappings.push({ inventory_category_id: categoryId, billing_item_id: billingItemId });
+    }
+    return mappings;
+  }, []);
+  const itemBillingItemId = categoryIds.length === 0 ? values.billingMappingIds[ITEM_MAPPING_KEY] ?? null : null;
   return {
     name: values.name.trim(),
     tamil_name: values.tamilName.trim(),
@@ -88,8 +106,10 @@ function buildInventoryPayload(values: InventoryEditorValues): InventoryItemMeta
     base_unit: values.baseUnit,
     sort_order: Number(values.sortOrder.trim() || 0),
     is_active: values.isActive,
-    billing_item_ids: [...values.billingItemIds],
-    category_ids: [...values.categoryIds],
+    billing_item_id: itemBillingItemId,
+    billing_item_ids: itemBillingItemId ? [itemBillingItemId] : [],
+    billing_mappings: billingMappings,
+    category_ids: categoryIds,
   };
 }
 
@@ -150,7 +170,7 @@ export function AdminInventoryItemEditorScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [itemMappingOpen, setItemMappingOpen] = useState(false);
+  const [openMappingKey, setOpenMappingKey] = useState<string | null>(null);
 
   const currentImageUri =
     imageDraft?.uri || (!removeImage && item ? getItemThumbnailUri(item) : "");
@@ -161,6 +181,17 @@ export function AdminInventoryItemEditorScreen({
     () => billingItems.filter((billingItem) => billingItem.base_unit === values.baseUnit),
     [billingItems, values.baseUnit],
   );
+  const selectedCategories = useMemo(
+    () => categories.filter((category) => values.categoryIds.has(category.id)),
+    [categories, values.categoryIds],
+  );
+  const existingMappedItemsByKey = useMemo(() => {
+    const mappedItems = new Map<string, InventoryBillingItemMappingRead>();
+    for (const mappedItem of item?.billing_items ?? []) {
+      mappedItems.set(mappedItem.inventory_category_id ?? ITEM_MAPPING_KEY, mappedItem);
+    }
+    return mappedItems;
+  }, [item]);
   const loadEditorData = useCallback(async (refresh = false) => {
     if (refresh) {
       setRefreshing(true);
@@ -183,7 +214,7 @@ export function AdminInventoryItemEditorScreen({
         setItem(null);
         setValues(EMPTY_VALUES);
       }
-      setItemMappingOpen(false);
+      setOpenMappingKey(null);
       setImageDraft(null);
       setRemoveImage(false);
     } catch (error) {
@@ -222,30 +253,49 @@ export function AdminInventoryItemEditorScreen({
   const toggleCategory = useCallback((categoryId: UUID) => {
     setValues((current) => {
       const next = new Set(current.categoryIds);
+      const billingMappingIds = { ...current.billingMappingIds };
       if (next.has(categoryId)) {
         next.delete(categoryId);
+        delete billingMappingIds[categoryId];
       } else {
         next.add(categoryId);
       }
-      return { ...current, categoryIds: next };
+      return { ...current, billingMappingIds, categoryIds: next };
     });
   }, []);
 
-  const toggleItemMappedBillingItem = useCallback((billingItemId: UUID) => {
+  const setBillingMapping = useCallback((mappingKey: string, billingItemId: UUID) => {
     setValues((current) => {
-      const nextIds = new Set(current.billingItemIds);
-      if (nextIds.has(billingItemId)) {
-        nextIds.delete(billingItemId);
-      } else {
-        nextIds.add(billingItemId);
-      }
-      return { ...current, billingItemIds: nextIds };
+      return {
+        ...current,
+        billingMappingIds: { ...current.billingMappingIds, [mappingKey]: billingItemId },
+      };
     });
   }, []);
 
-  const clearItemMappedBillingItems = useCallback(() => {
-    setValues((current) => ({ ...current, billingItemIds: new Set<UUID>() }));
+  const clearBillingMapping = useCallback((mappingKey: string) => {
+    setValues((current) => {
+      const billingMappingIds = { ...current.billingMappingIds };
+      delete billingMappingIds[mappingKey];
+      return { ...current, billingMappingIds };
+    });
   }, []);
+
+  const activeMappingKeys = useMemo(
+    () => selectedCategories.length > 0 ? selectedCategories.map((category) => category.id) : [ITEM_MAPPING_KEY],
+    [selectedCategories],
+  );
+
+  const getBillingItemIdsMappedElsewhere = useCallback((mappingKey: string) => {
+    const selectedElsewhere = new Set<UUID>();
+    for (const activeKey of activeMappingKeys) {
+      const mappedBillingItemId = values.billingMappingIds[activeKey];
+      if (activeKey !== mappingKey && mappedBillingItemId) {
+        selectedElsewhere.add(mappedBillingItemId);
+      }
+    }
+    return selectedElsewhere;
+  }, [activeMappingKeys, values.billingMappingIds]);
 
   const removeOrUndoImage = useCallback(() => {
     if (imageDraft) {
@@ -390,8 +440,8 @@ export function AdminInventoryItemEditorScreen({
                     ...current,
                     unitType: UnitType.WEIGHT,
                     baseUnit: BaseUnit.KG,
-                    billingItemIds:
-                      current.baseUnit === BaseUnit.KG ? current.billingItemIds : new Set<UUID>(),
+                    billingMappingIds:
+                      current.baseUnit === BaseUnit.KG ? current.billingMappingIds : {},
                   }))
                 }
               />
@@ -405,27 +455,12 @@ export function AdminInventoryItemEditorScreen({
                     ...current,
                     unitType: UnitType.COUNT,
                     baseUnit: BaseUnit.UNIT,
-                    billingItemIds:
-                      current.baseUnit === BaseUnit.UNIT ? current.billingItemIds : new Set<UUID>(),
+                    billingMappingIds:
+                      current.baseUnit === BaseUnit.UNIT ? current.billingMappingIds : {},
                   }))
                 }
               />
             </View>
-
-            <InventoryBillingMappingDropdown
-              label="Inventory item"
-              existingMappedItems={item?.billing_items ?? []}
-              open={itemMappingOpen}
-              options={matchingBillingItems}
-              palette={palette}
-              selectedIds={values.billingItemIds}
-              unit={values.baseUnit}
-              onClear={clearItemMappedBillingItems}
-              onToggle={() => {
-                setItemMappingOpen((current) => !current);
-              }}
-              onToggleItem={toggleItemMappedBillingItem}
-            />
 
             <View style={styles.categoryChips}>
               {categories.map((category) => {
@@ -448,6 +483,45 @@ export function AdminInventoryItemEditorScreen({
                 );
               })}
             </View>
+
+            {selectedCategories.length > 0 ? (
+              <View style={styles.mappingList}>
+                {selectedCategories.map((category) => (
+                  <InventoryBillingMappingDropdown
+                    key={category.id}
+                    label={category.name}
+                    existingMappedItem={existingMappedItemsByKey.get(category.id)}
+                    open={openMappingKey === category.id}
+                    options={matchingBillingItems}
+                    palette={palette}
+                    selectedId={values.billingMappingIds[category.id] ?? null}
+                    selectedElsewhereIds={getBillingItemIdsMappedElsewhere(category.id)}
+                    unit={values.baseUnit}
+                    onClear={() => clearBillingMapping(category.id)}
+                    onToggle={() => {
+                      setOpenMappingKey((current) => current === category.id ? null : category.id);
+                    }}
+                    onSelect={(billingItemId) => setBillingMapping(category.id, billingItemId)}
+                  />
+                ))}
+              </View>
+            ) : (
+              <InventoryBillingMappingDropdown
+                label="Inventory item"
+                existingMappedItem={existingMappedItemsByKey.get(ITEM_MAPPING_KEY)}
+                open={openMappingKey === ITEM_MAPPING_KEY}
+                options={matchingBillingItems}
+                palette={palette}
+                selectedId={values.billingMappingIds[ITEM_MAPPING_KEY] ?? null}
+                selectedElsewhereIds={getBillingItemIdsMappedElsewhere(ITEM_MAPPING_KEY)}
+                unit={values.baseUnit}
+                onClear={() => clearBillingMapping(ITEM_MAPPING_KEY)}
+                onToggle={() => {
+                  setOpenMappingKey((current) => current === ITEM_MAPPING_KEY ? null : ITEM_MAPPING_KEY);
+                }}
+                onSelect={(billingItemId) => setBillingMapping(ITEM_MAPPING_KEY, billingItemId)}
+              />
+            )}
             <Pressable
               onPress={() => setValues((current) => ({ ...current, isActive: !current.isActive }))}
               style={[styles.toggleRow, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}
@@ -469,32 +543,36 @@ export function AdminInventoryItemEditorScreen({
 
 function InventoryBillingMappingDropdown({
   label,
-  existingMappedItems,
+  existingMappedItem,
   open,
   options,
   palette,
-  selectedIds,
+  selectedId,
+  selectedElsewhereIds,
   unit,
   onClear,
   onToggle,
-  onToggleItem,
+  onSelect,
 }: {
   label: string;
-  existingMappedItems: InventoryBillingItemMappingRead[];
+  existingMappedItem?: InventoryBillingItemMappingRead;
   open: boolean;
   options: ShopItemRead[];
   palette: ThemePalette;
-  selectedIds: Set<UUID>;
+  selectedId: UUID | null;
+  selectedElsewhereIds: Set<UUID>;
   unit: BaseUnit;
   onClear: () => void;
   onToggle: () => void;
-  onToggleItem: (billingItemId: UUID) => void;
+  onSelect: (billingItemId: UUID) => void;
 }) {
   const optionIds = new Set(options.map((option) => option.id));
-  const inactiveSelectedItems = existingMappedItems.filter(
-    (mappedItem) => selectedIds.has(mappedItem.billing_item_id) && !optionIds.has(mappedItem.billing_item_id),
-  );
-  const selectedCount = selectedIds.size;
+  const selectedOption = options.find((option) => option.id === selectedId);
+  const inactiveSelectedItem =
+    existingMappedItem && selectedId === existingMappedItem.billing_item_id && !optionIds.has(existingMappedItem.billing_item_id)
+      ? existingMappedItem
+      : null;
+  const selectedLabel = selectedOption?.name ?? inactiveSelectedItem?.billing_item_name ?? "No billing item";
   return (
     <View style={styles.dropdownWrap}>
       <Pressable
@@ -515,7 +593,7 @@ function InventoryBillingMappingDropdown({
         <View style={styles.dropdownText}>
           <Text style={[styles.dropdownLabel, { color: palette.textMuted }]}>{label}</Text>
           <Text numberOfLines={1} style={[styles.dropdownValue, { color: palette.textPrimary }]}>
-            {selectedCount === 0 ? "No billing items" : `${selectedCount} billing item${selectedCount === 1 ? "" : "s"}`}
+            {selectedLabel}
           </Text>
         </View>
         <MaterialCommunityIcons name={open ? "chevron-up" : "chevron-down"} size={20} color={palette.textMuted} />
@@ -527,22 +605,21 @@ function InventoryBillingMappingDropdown({
             style={[
               styles.dropdownOption,
               {
-                borderColor: selectedCount === 0 ? palette.inventory : palette.border,
-                backgroundColor: selectedCount === 0 ? palette.inventorySoft : palette.surfaceMuted,
+                borderColor: selectedId === null ? palette.inventory : palette.border,
+                backgroundColor: selectedId === null ? palette.inventorySoft : palette.surfaceMuted,
               },
             ]}
           >
             <MaterialCommunityIcons
-              name={selectedCount === 0 ? "check-circle" : "close-circle-outline"}
+              name={selectedId === null ? "check-circle" : "close-circle-outline"}
               size={16}
-              color={selectedCount === 0 ? palette.inventory : palette.textMuted}
+              color={selectedId === null ? palette.inventory : palette.textMuted}
             />
-            <Text style={[styles.dropdownOptionText, { color: palette.textPrimary }]}>No mapped billing items</Text>
+            <Text style={[styles.dropdownOptionText, { color: palette.textPrimary }]}>No mapped billing item</Text>
           </Pressable>
-          {inactiveSelectedItems.map((billingItem) => (
+          {inactiveSelectedItem ? (
             <Pressable
-              key={billingItem.billing_item_id}
-              onPress={() => onToggleItem(billingItem.billing_item_id)}
+              onPress={() => onSelect(inactiveSelectedItem.billing_item_id)}
               style={[
                 styles.dropdownOption,
                 {
@@ -554,35 +631,38 @@ function InventoryBillingMappingDropdown({
               <MaterialCommunityIcons name="check-circle" size={16} color={palette.inventory} />
               <View style={styles.dropdownOptionTextWrap}>
                 <Text numberOfLines={1} style={[styles.dropdownOptionText, { color: palette.textPrimary }]}>
-                  {billingItem.billing_item_name}
+                  {inactiveSelectedItem.billing_item_name}
                 </Text>
                 <Text numberOfLines={1} style={[styles.dropdownOptionSubtext, { color: palette.textMuted }]}>
                   Existing mapping
                 </Text>
               </View>
             </Pressable>
-          ))}
+          ) : null}
           {options.length === 0 ? (
             <Text style={[styles.dropdownEmpty, { color: palette.textMuted }]}>
               No active {unit} billing items found.
             </Text>
           ) : (
             options.map((billingItem) => {
-              const active = selectedIds.has(billingItem.id);
+              const active = selectedId === billingItem.id;
+              const disabled = !active && selectedElsewhereIds.has(billingItem.id);
               return (
                 <Pressable
                   key={billingItem.id}
-                  onPress={() => onToggleItem(billingItem.id)}
+                  disabled={disabled}
+                  onPress={() => onSelect(billingItem.id)}
                   style={[
                     styles.dropdownOption,
                     {
                       borderColor: active ? palette.inventory : palette.border,
                       backgroundColor: active ? palette.inventorySoft : palette.surfaceMuted,
+                      opacity: disabled ? 0.48 : 1,
                     },
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name={active ? "check-circle" : "circle-outline"}
+                    name={active ? "check-circle" : disabled ? "lock-outline" : "circle-outline"}
                     size={16}
                     color={active ? palette.inventory : palette.textMuted}
                   />
@@ -592,7 +672,11 @@ function InventoryBillingMappingDropdown({
                     </Text>
                     {billingItem.tamil_name ? (
                       <Text numberOfLines={1} style={[styles.dropdownOptionSubtext, { color: palette.textMuted }]}>
-                        {billingItem.tamil_name}
+                        {disabled ? "Already mapped" : billingItem.tamil_name}
+                      </Text>
+                    ) : disabled ? (
+                      <Text numberOfLines={1} style={[styles.dropdownOptionSubtext, { color: palette.textMuted }]}>
+                        Already mapped
                       </Text>
                     ) : null}
                   </View>
@@ -713,6 +797,7 @@ const styles = StyleSheet.create({
   dropdownOptionText: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "900", letterSpacing: 0 },
   dropdownOptionSubtext: { fontSize: 11, fontWeight: "700", letterSpacing: 0 },
   dropdownEmpty: { paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontWeight: "800", letterSpacing: 0 },
+  mappingList: { gap: 10 },
   categoryChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   categoryChip: { minHeight: 36, borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 6 },
   chipText: { fontSize: 12, fontWeight: "900", letterSpacing: 0 },

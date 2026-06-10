@@ -1,8 +1,9 @@
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,6 +32,7 @@ from app.models import (
 from app.schemas.inventory import (
     InventoryAddRequest,
     InventoryBillingItemMappingRead,
+    InventoryBillingItemMappingWrite,
     InventoryCategoryCreate,
     InventoryCategoryRead,
     InventoryCategoryUpdate,
@@ -139,6 +141,10 @@ def _inventory_item_to_read_with_categories(
     sorted_categories = sorted(categories, key=lambda category: (category.name.lower(), str(category.id)))
     mapping_rows = item.__dict__.get("billing_mappings") or []
     item_mappings = _item_mapping_reads_from_links(mapping_rows)
+    item_level_mapping = next(
+        (mapping for mapping in item_mappings if mapping.inventory_category_id is None),
+        None,
+    )
     return InventoryItemRead(
         id=item.id,
         name=item.name,
@@ -147,9 +153,17 @@ def _inventory_item_to_read_with_categories(
         base_unit=item.base_unit,
         sort_order=item.sort_order,
         is_active=item.is_active,
+        billing_item_id=(
+            item_level_mapping.billing_item_id if item_level_mapping is not None else None
+        ),
         billing_item_ids=[mapping.billing_item_id for mapping in item_mappings],
         billing_items=item_mappings,
         category_ids=[category.id for category in sorted_categories],
+        category_billing_item_ids={
+            mapping.inventory_category_id: mapping.billing_item_id
+            for mapping in item_mappings
+            if mapping.inventory_category_id is not None
+        },
         categories=[_category_to_read(category) for category in sorted_categories],
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -173,6 +187,10 @@ def _inventory_item_row_to_read(
 ) -> InventoryItemRead:
     categories = categories_by_item_id.get(row.id, [])
     item_mappings = item_mappings_by_item_id.get(row.id, [])
+    item_level_mapping = next(
+        (mapping for mapping in item_mappings if mapping.inventory_category_id is None),
+        None,
+    )
     return InventoryItemRead(
         id=row.id,
         name=row.name,
@@ -181,9 +199,17 @@ def _inventory_item_row_to_read(
         base_unit=row.base_unit,
         sort_order=row.sort_order,
         is_active=row.is_active,
+        billing_item_id=(
+            item_level_mapping.billing_item_id if item_level_mapping is not None else None
+        ),
         billing_item_ids=[mapping.billing_item_id for mapping in item_mappings],
         billing_items=item_mappings,
         category_ids=[category.id for category in categories],
+        category_billing_item_ids={
+            mapping.inventory_category_id: mapping.billing_item_id
+            for mapping in item_mappings
+            if mapping.inventory_category_id is not None
+        },
         categories=categories,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -217,8 +243,15 @@ async def _ensure_unique_inventory_item_name(
         )
 
 
-def _billing_mapping_read_from_item(item: Item) -> InventoryBillingItemMappingRead:
+def _billing_mapping_read_from_item(
+    item: Item,
+    *,
+    inventory_category_id: UUID | None = None,
+    inventory_category_name: str | None = None,
+) -> InventoryBillingItemMappingRead:
     return InventoryBillingItemMappingRead(
+        inventory_category_id=inventory_category_id,
+        inventory_category_name=inventory_category_name,
         billing_item_id=item.id,
         billing_item_name=item.name,
         billing_item_tamil_name=item.tamil_name,
@@ -233,16 +266,113 @@ def _item_mapping_reads_from_links(
         billing_item = mapping.billing_item
         if billing_item is None:
             continue
-        item_mappings.append(_billing_mapping_read_from_item(billing_item))
+        inventory_category = mapping.inventory_category
+        item_mappings.append(
+            _billing_mapping_read_from_item(
+                billing_item,
+                inventory_category_id=mapping.inventory_category_id,
+                inventory_category_name=(
+                    inventory_category.name if inventory_category is not None else None
+                ),
+            )
+        )
     return item_mappings
 
 
-async def _resolve_billing_item_ids(
+def _billing_mapping_specs_from_payload(
+    payload: InventoryItemCreate | InventoryItemUpdate,
+) -> list[InventoryBillingItemMappingWrite]:
+    if payload.billing_mappings:
+        return [
+            InventoryBillingItemMappingWrite(
+                inventory_category_id=mapping.inventory_category_id,
+                billing_item_id=mapping.billing_item_id,
+            )
+            for mapping in payload.billing_mappings
+        ]
+
+    legacy_billing_item_ids = list(dict.fromkeys(payload.billing_item_ids))
+    if payload.billing_item_id is not None and payload.billing_item_id not in legacy_billing_item_ids:
+        legacy_billing_item_ids.insert(0, payload.billing_item_id)
+    if not legacy_billing_item_ids:
+        return []
+    if len(legacy_billing_item_ids) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only one billing item can be mapped to an inventory item without categories",
+        )
+    return [
+        InventoryBillingItemMappingWrite(
+            inventory_category_id=None,
+            billing_item_id=legacy_billing_item_ids[0],
+        )
+    ]
+
+
+async def _resolve_billing_mappings(
     db: AsyncSession,
-    billing_item_ids: list[UUID],
+    payload: InventoryItemCreate | InventoryItemUpdate,
+    categories: list[InventoryCategory],
     base_unit: BaseUnit,
-) -> list[UUID]:
-    unique_billing_item_ids = list(dict.fromkeys(billing_item_ids))
+    *,
+    item_id: UUID | None = None,
+) -> list[InventoryBillingItemMappingWrite]:
+    mapping_specs = _billing_mapping_specs_from_payload(payload)
+    category_ids = {category.id for category in categories}
+    if category_ids and len(category_ids) == 1:
+        only_category_id = next(iter(category_ids))
+        mapping_specs = [
+            InventoryBillingItemMappingWrite(
+                inventory_category_id=(
+                    only_category_id if mapping.inventory_category_id is None else mapping.inventory_category_id
+                ),
+                billing_item_id=mapping.billing_item_id,
+            )
+            for mapping in mapping_specs
+        ]
+    if not category_ids:
+        category_mapping = next(
+            (mapping for mapping in mapping_specs if mapping.inventory_category_id is not None),
+            None,
+        )
+        if category_mapping is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Inventory category mappings require a selected inventory category",
+            )
+    else:
+        item_level_mapping = next(
+            (mapping for mapping in mapping_specs if mapping.inventory_category_id is None),
+            None,
+        )
+        if item_level_mapping is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Inventory items with categories must map billing items per category",
+            )
+
+    seen_category_ids: set[UUID | None] = set()
+    seen_billing_item_ids: set[UUID] = set()
+    for mapping in mapping_specs:
+        if mapping.inventory_category_id not in category_ids and mapping.inventory_category_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Mapped inventory category must be linked to this inventory item",
+            )
+        if mapping.inventory_category_id in seen_category_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Only one billing item can be mapped to each inventory category",
+            )
+        if mapping.billing_item_id in seen_billing_item_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="A billing item can only be mapped once",
+            )
+        seen_category_ids.add(mapping.inventory_category_id)
+        seen_billing_item_ids.add(mapping.billing_item_id)
+
+    unique_billing_item_ids = list(seen_billing_item_ids)
     if not unique_billing_item_ids:
         return []
 
@@ -267,13 +397,33 @@ async def _resolve_billing_item_ids(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Mapped billing item unit must match the inventory item unit",
             )
-    return unique_billing_item_ids
+    existing_mapping_rows = (
+        await db.scalars(
+            select(InventoryItemBillingMapping).where(
+                InventoryItemBillingMapping.billing_item_id.in_(unique_billing_item_ids)
+            )
+        )
+    ).all()
+    conflicting_mapping = next(
+        (
+            mapping
+            for mapping in existing_mapping_rows
+            if item_id is None or mapping.inventory_item_id != item_id
+        ),
+        None,
+    )
+    if conflicting_mapping is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Billing item is already mapped to another inventory item",
+        )
+    return mapping_specs
 
 
 async def _replace_billing_mappings(
     db: AsyncSession,
     item_id: UUID,
-    billing_item_ids: list[UUID],
+    mapping_specs: list[InventoryBillingItemMappingWrite],
 ) -> None:
     existing_rows = (
         await db.scalars(
@@ -285,11 +435,12 @@ async def _replace_billing_mappings(
     for existing_row in existing_rows:
         await db.delete(existing_row)
     await db.flush()
-    for billing_item_id in billing_item_ids:
+    for mapping in mapping_specs:
         db.add(
             InventoryItemBillingMapping(
                 inventory_item_id=item_id,
-                billing_item_id=billing_item_id,
+                inventory_category_id=mapping.inventory_category_id,
+                billing_item_id=mapping.billing_item_id,
             )
         )
 
@@ -541,14 +692,22 @@ async def _billing_mappings_by_inventory_item_id(
         await db.execute(
             select(
                 InventoryItemBillingMapping.inventory_item_id,
+                InventoryItemBillingMapping.inventory_category_id,
+                InventoryCategory.name.label("inventory_category_name"),
                 Item.id.label("billing_item_id"),
                 Item.name.label("billing_item_name"),
                 Item.tamil_name.label("billing_item_tamil_name"),
             )
             .join(Item, Item.id == InventoryItemBillingMapping.billing_item_id)
+            .outerjoin(
+                InventoryCategory,
+                InventoryCategory.id == InventoryItemBillingMapping.inventory_category_id,
+            )
             .where(InventoryItemBillingMapping.inventory_item_id.in_(item_ids))
             .order_by(
                 InventoryItemBillingMapping.inventory_item_id,
+                InventoryCategory.name.is_(None),
+                func.lower(InventoryCategory.name),
                 Item.sort_order,
                 func.lower(Item.name),
                 Item.id,
@@ -559,6 +718,8 @@ async def _billing_mappings_by_inventory_item_id(
     for row in rows:
         item_mappings_by_item_id.setdefault(row.inventory_item_id, []).append(
             InventoryBillingItemMappingRead(
+                inventory_category_id=row.inventory_category_id,
+                inventory_category_name=row.inventory_category_name,
                 billing_item_id=row.billing_item_id,
                 billing_item_name=row.billing_item_name,
                 billing_item_tamil_name=row.billing_item_tamil_name,
@@ -694,6 +855,9 @@ async def get_inventory_item(db: AsyncSession, item_id: UUID) -> InventoryItemRe
             selectinload(InventoryItem.billing_mappings).selectinload(
                 InventoryItemBillingMapping.billing_item
             ),
+            selectinload(InventoryItem.billing_mappings).selectinload(
+                InventoryItemBillingMapping.inventory_category
+            ),
             selectinload(InventoryItem.category_links).selectinload(InventoryItemCategory.category),
         )
     )
@@ -711,9 +875,10 @@ async def create_inventory_item(
     tamil_name = _normalize_tamil_inventory_item_name(payload.tamil_name)
     await _ensure_unique_inventory_item_name(db, item_name)
     categories = await _resolve_inventory_categories(db, payload.category_ids)
-    billing_item_ids = await _resolve_billing_item_ids(
+    billing_mappings = await _resolve_billing_mappings(
         db,
-        payload.billing_item_ids,
+        payload,
+        categories,
         payload.base_unit,
     )
 
@@ -732,7 +897,7 @@ async def create_inventory_item(
         await db.flush()
         for category in categories:
             db.add(InventoryItemCategory(inventory_item_id=item.id, category_id=category.id))
-        await _replace_billing_mappings(db, item.id, billing_item_ids)
+        await _replace_billing_mappings(db, item.id, billing_mappings)
         if image is not None:
             await save_inventory_item_image_upload(db, item, image, commit=False)
             uploaded_image_object_key = item.image_object_key
@@ -773,10 +938,12 @@ async def update_inventory_item(
     if item.name.lower() != item_name.lower():
         await _ensure_unique_inventory_item_name(db, item_name, exclude_item_id=item_id)
     categories = await _resolve_inventory_categories(db, payload.category_ids)
-    billing_item_ids = await _resolve_billing_item_ids(
+    billing_mappings = await _resolve_billing_mappings(
         db,
-        payload.billing_item_ids,
+        payload,
+        categories,
         payload.base_unit,
+        item_id=item_id,
     )
     next_category_ids = {category.id for category in categories}
     removed_category_ids = {
@@ -823,7 +990,7 @@ async def update_inventory_item(
         await db.flush()
         for category in categories:
             db.add(InventoryItemCategory(inventory_item_id=item.id, category_id=category.id))
-        await _replace_billing_mappings(db, item.id, billing_item_ids)
+        await _replace_billing_mappings(db, item.id, billing_mappings)
         if image is not None:
             await save_inventory_item_image_upload(db, item, image, commit=False)
             uploaded_image_object_key = item.image_object_key
@@ -892,21 +1059,19 @@ async def delete_inventory_item(db: AsyncSession, item_id: UUID) -> None:
     )
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
-    has_allocation = await db.scalar(
-        select(ShopInventoryAllocation.id)
-        .where(ShopInventoryAllocation.inventory_item_id == item_id)
-        .limit(1)
-    )
-    has_movement = await db.scalar(
-        select(InventoryMovement.id).where(InventoryMovement.inventory_item_id == item_id).limit(1)
-    )
-    if has_allocation is not None or has_movement is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete an inventory item with shop allocation or movement history",
-        )
     image_object_key = item.image_object_key
     thumbnail_object_key = item.image_thumbnail_object_key
+    await db.execute(
+        update(Item)
+        .where(Item.assumption_inventory_item_id == item_id)
+        .values(
+            assumption_inventory_item_id=None,
+            assumption_inventory_category_id=None,
+        )
+    )
+    await db.execute(
+        delete(InventoryMovement).where(InventoryMovement.inventory_item_id == item_id)
+    )
     await db.delete(item)
     await db.commit()
     await delete_item_image_storage(image_object_key, thumbnail_object_key)
@@ -1360,6 +1525,9 @@ async def list_inventory_movements(
     shop_id: UUID | None = None,
     item_id: UUID | None = None,
     category_id: UUID | None = None,
+    reference_date: date | None = None,
+    range_start_date: date | None = None,
+    range_end_date: date | None = None,
     limit: int = 100,
 ) -> InventoryMovementPage:
     query = select(InventoryMovement).options(
@@ -1373,6 +1541,24 @@ async def list_inventory_movements(
         query = query.where(InventoryMovement.inventory_item_id == item_id)
     if category_id is not None:
         query = query.where(InventoryMovement.category_id == category_id)
+    if range_start_date is not None or range_end_date is not None:
+        if range_start_date is not None:
+            query = query.where(
+                InventoryMovement.created_at
+                >= datetime.combine(range_start_date, time.min, tzinfo=UTC)
+            )
+        if range_end_date is not None:
+            query = query.where(
+                InventoryMovement.created_at
+                < datetime.combine(range_end_date + timedelta(days=1), time.min, tzinfo=UTC)
+            )
+    elif reference_date is not None:
+        query = query.where(
+            InventoryMovement.created_at
+            >= datetime.combine(reference_date, time.min, tzinfo=UTC),
+            InventoryMovement.created_at
+            < datetime.combine(reference_date + timedelta(days=1), time.min, tzinfo=UTC),
+        )
     rows = (
         await db.scalars(
             query.order_by(InventoryMovement.created_at.desc(), InventoryMovement.id.desc()).limit(limit + 1)

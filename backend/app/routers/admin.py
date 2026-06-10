@@ -80,6 +80,7 @@ from app.schemas.expenses import (
     ShopExpenseItemsOrderUpdate,
 )
 from app.schemas.inventory import (
+    InventoryBillingItemMappingWrite,
     InventoryCategoryCreate,
     InventoryCategoryRead,
     InventoryCategoryUpdate,
@@ -414,6 +415,44 @@ def _parse_inventory_billing_item_ids(raw_value: str | None) -> list[UUID]:
         ) from exc
 
 
+def _parse_inventory_billing_mappings(raw_value: str | None) -> list[InventoryBillingItemMappingWrite]:
+    if raw_value is None or not raw_value.strip():
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="billing_mappings must be a valid JSON array",
+        ) from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="billing_mappings must be a valid JSON array",
+        )
+    mappings: list[InventoryBillingItemMappingWrite] = []
+    try:
+        for row in parsed:
+            if not isinstance(row, dict):
+                raise TypeError("billing mapping row must be an object")
+            mappings.append(
+                InventoryBillingItemMappingWrite(
+                    inventory_category_id=(
+                        UUID(str(row["inventory_category_id"]))
+                        if row.get("inventory_category_id") is not None
+                        else None
+                    ),
+                    billing_item_id=UUID(str(row["billing_item_id"])),
+                )
+            )
+        return mappings
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="billing_mappings must contain inventory_category_id and billing_item_id UUID values",
+        ) from exc
+
+
 # ── Shop CRUD ──────────────────────────────────────────────────────────────────
 
 
@@ -657,6 +696,7 @@ async def create_admin_inventory_management_item(
     sort_order: Annotated[int, Form()] = 0,
     category_ids: Annotated[str, Form()] = "[]",
     billing_item_ids: Annotated[str, Form()] = "[]",
+    billing_mappings: Annotated[str, Form()] = "[]",
     image: ItemImageUploadOptional = None,
 ) -> InventoryItemRead:
     payload = InventoryItemCreate(
@@ -668,6 +708,7 @@ async def create_admin_inventory_management_item(
         sort_order=sort_order,
         category_ids=_parse_inventory_category_ids(category_ids),
         billing_item_ids=_parse_inventory_billing_item_ids(billing_item_ids),
+        billing_mappings=_parse_inventory_billing_mappings(billing_mappings),
     )
     return await create_inventory_management_item(db, payload, image=image)
 
@@ -703,6 +744,7 @@ async def update_admin_inventory_management_item(
     sort_order: Annotated[int, Form()] = 0,
     category_ids: Annotated[str, Form()] = "[]",
     billing_item_ids: Annotated[str, Form()] = "[]",
+    billing_mappings: Annotated[str, Form()] = "[]",
     remove_image: Annotated[bool, Form()] = False,
     image: ItemImageUploadOptional = None,
 ) -> InventoryItemRead:
@@ -715,6 +757,7 @@ async def update_admin_inventory_management_item(
         sort_order=sort_order,
         category_ids=_parse_inventory_category_ids(category_ids),
         billing_item_ids=_parse_inventory_billing_item_ids(billing_item_ids),
+        billing_mappings=_parse_inventory_billing_mappings(billing_mappings),
     )
     return await update_inventory_management_item(
         db,
@@ -1156,6 +1199,9 @@ async def get_admin_inventory_movements(
     shop_id: ShopIdParam = None,
     item_id: ItemCursorIdParam = None,
     category_id: ItemCategoryIdParam = None,
+    reference_date: ReferenceDateParam = None,
+    range_start_date: RangeStartDateParam = None,
+    range_end_date: RangeEndDateParam = None,
     limit: ItemsLimitParam = 100,
 ) -> InventoryMovementPage:
     return await list_inventory_movements(
@@ -1163,6 +1209,9 @@ async def get_admin_inventory_movements(
         shop_id=shop_id,
         item_id=item_id,
         category_id=category_id,
+        reference_date=reference_date,
+        range_start_date=range_start_date,
+        range_end_date=range_end_date,
         limit=limit,
     )
 

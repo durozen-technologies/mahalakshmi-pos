@@ -158,9 +158,23 @@ class InventoryItemBillingMapping(Base, BaseModelMixin):
     __tablename__ = "inventory_item_billing_mappings"
     __table_args__ = (
         UniqueConstraint(
-            "inventory_item_id",
             "billing_item_id",
-            name="uq_inventory_item_billing_mappings",
+            name="uq_inventory_item_billing_map_billing",
+        ),
+        Index(
+            "ux_inventory_item_billing_map_item_category",
+            "inventory_item_id",
+            "inventory_category_id",
+            unique=True,
+            postgresql_where=text("inventory_category_id IS NOT NULL"),
+            sqlite_where=text("inventory_category_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_inventory_item_billing_map_item_uncategorized",
+            "inventory_item_id",
+            unique=True,
+            postgresql_where=text("inventory_category_id IS NULL"),
+            sqlite_where=text("inventory_category_id IS NULL"),
         ),
         Index(
             "ix_inventory_item_billing_mappings_billing_item",
@@ -175,6 +189,11 @@ class InventoryItemBillingMapping(Base, BaseModelMixin):
         ForeignKey("inventory_items.id", ondelete="CASCADE"),
         nullable=False,
     )
+    inventory_category_id: Mapped[UUID | None] = mapped_column(
+        UUID_SQL_TYPE,
+        ForeignKey("inventory_categories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     billing_item_id: Mapped[UUID] = mapped_column(
         UUID_SQL_TYPE,
         ForeignKey("items.id", ondelete="CASCADE"),
@@ -182,6 +201,7 @@ class InventoryItemBillingMapping(Base, BaseModelMixin):
     )
 
     inventory_item = relationship("InventoryItem", back_populates="billing_mappings")
+    inventory_category = relationship("InventoryCategory", foreign_keys=[inventory_category_id])
     billing_item = relationship("Item", foreign_keys=[billing_item_id])
 
 

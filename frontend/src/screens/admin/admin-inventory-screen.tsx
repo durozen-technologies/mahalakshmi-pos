@@ -31,6 +31,11 @@ import {
   updateShopInventoryAllocation,
 } from "@/api/admin";
 import { isApiRequestCanceled, toApiError } from "@/api/client";
+import {
+  CalendarDateField,
+  CalendarDatePickerModal,
+  type CalendarPickerColors,
+} from "@/components/ui/calendar-date-picker";
 import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import {
   BaseUnit,
@@ -43,6 +48,7 @@ import {
   type UUID,
 } from "@/types/api";
 import { money } from "@/utils/decimal";
+import { toDateInputValue } from "@/utils/expense-history-filters";
 import { getItemThumbnailUri } from "@/utils/item-images";
 
 import type { ThemePalette } from "./admin-dashboard-theme";
@@ -52,6 +58,8 @@ import { useAdminTheme } from "./use-admin-theme";
 import type { AdminInventoryScreenProps } from "@/navigation/types";
 
 type InventoryTab = "items" | "categories" | "shops";
+type MovementHistoryMode = "date" | "range";
+type MovementHistoryCalendarTarget = "date" | "start" | "end";
 const INVENTORY_ITEM_PAGE_SIZE = 50;
 const INVENTORY_STOCK_PAGE_SIZE = 50;
 
@@ -81,7 +89,10 @@ function formatInventoryQuantity(value: string | number, unit: BaseUnit) {
 
 function inventoryItemBillingNames(item: InventoryItemRead) {
   return (Array.isArray(item.billing_items) ? item.billing_items : []).map(
-    (billingItem) => billingItem.billing_item_name,
+    (billingItem) =>
+      billingItem.inventory_category_name
+        ? `${billingItem.inventory_category_name}: ${billingItem.billing_item_name}`
+        : billingItem.billing_item_name,
   );
 }
 
@@ -133,8 +144,13 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const [stockLoadedShopId, setStockLoadedShopId] = useState<UUID | null>(null);
   const [movements, setMovements] = useState<InventoryMovementRead[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
-  const [movementsLoadedShopId, setMovementsLoadedShopId] = useState<UUID | null>(null);
+  const [movementsLoadedKey, setMovementsLoadedKey] = useState<string | null>(null);
   const [movementHistoryOpen, setMovementHistoryOpen] = useState(false);
+  const [movementHistoryMode, setMovementHistoryMode] = useState<MovementHistoryMode>("date");
+  const [movementHistoryDate, setMovementHistoryDate] = useState(() => toDateInputValue(new Date()));
+  const [movementHistoryRangeStart, setMovementHistoryRangeStart] = useState(() => toDateInputValue(new Date()));
+  const [movementHistoryRangeEnd, setMovementHistoryRangeEnd] = useState(() => toDateInputValue(new Date()));
+  const [movementCalendarTarget, setMovementCalendarTarget] = useState<MovementHistoryCalendarTarget | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -168,11 +184,54 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const stockLoadingMoreRef = useRef(false);
   const stockLoadedShopIdRef = useRef<UUID | null>(null);
   const movementsLoadingRef = useRef(false);
-  const movementsLoadedShopIdRef = useRef<UUID | null>(null);
+  const movementsLoadedKeyRef = useRef<string | null>(null);
 
   const selectedShop = useMemo(
     () => shops.find((shop) => shop.id === selectedShopId) ?? null,
     [selectedShopId, shops],
+  );
+  const movementCalendarColors = useMemo<CalendarPickerColors>(
+    () => ({
+      overlay: palette.overlay,
+      card: palette.card,
+      surface: palette.surfaceMuted,
+      border: palette.border,
+      textPrimary: palette.textPrimary,
+      textSecondary: palette.textSecondary,
+      textMuted: palette.textMuted,
+      accent: palette.inventory,
+      accentSoft: palette.inventorySoft,
+      onAccent: palette.onPrimary,
+    }),
+    [palette],
+  );
+  const movementHistoryParams = useMemo(
+    () =>
+      movementHistoryMode === "date"
+        ? {
+            reference_date: movementHistoryDate,
+            range_start_date: null,
+            range_end_date: null,
+          }
+        : {
+            reference_date: null,
+            range_start_date: movementHistoryRangeStart,
+            range_end_date: movementHistoryRangeEnd,
+          },
+    [movementHistoryDate, movementHistoryMode, movementHistoryRangeEnd, movementHistoryRangeStart],
+  );
+  const movementHistoryKey = useMemo(
+    () =>
+      selectedShopId
+        ? [
+            selectedShopId,
+            movementHistoryMode,
+            movementHistoryParams.reference_date ?? "",
+            movementHistoryParams.range_start_date ?? "",
+            movementHistoryParams.range_end_date ?? "",
+          ].join(":")
+        : null,
+    [movementHistoryMode, movementHistoryParams, selectedShopId],
   );
 
   useEffect(() => {
@@ -216,8 +275,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   }, [movementsLoading]);
 
   useEffect(() => {
-    movementsLoadedShopIdRef.current = movementsLoadedShopId;
-  }, [movementsLoadedShopId]);
+    movementsLoadedKeyRef.current = movementsLoadedKey;
+  }, [movementsLoadedKey]);
 
   const loadInventoryRows = useCallback(async ({
     append = false,
@@ -333,7 +392,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
         setStockLoadedShopId(null);
         stockLoadedShopIdRef.current = null;
         setMovements([]);
-        setMovementsLoadedShopId(null);
+        movementsLoadedKeyRef.current = null;
+        setMovementsLoadedKey(null);
       }
       setBaseLoaded(true);
       setBaseReloadKey((current) => current + 1);
@@ -443,7 +503,11 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     }
   }, []);
 
-  const loadMovements = useCallback(async (shopId: UUID) => {
+  const loadMovements = useCallback(async (
+    shopId: UUID,
+    historyParams: typeof movementHistoryParams,
+    historyKey: string,
+  ) => {
     if (movementsLoadingRef.current) {
       return;
     }
@@ -451,10 +515,16 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     setMovementsLoading(true);
     setErrorMessage(null);
     try {
-      const nextMovements = await fetchAdminInventoryMovements({ shop_id: shopId, limit: 30 });
+      const nextMovements = await fetchAdminInventoryMovements({
+        shop_id: shopId,
+        reference_date: historyParams.reference_date,
+        range_start_date: historyParams.range_start_date,
+        range_end_date: historyParams.range_end_date,
+        limit: 100,
+      });
       setMovements(nextMovements.items);
-      movementsLoadedShopIdRef.current = shopId;
-      setMovementsLoadedShopId(shopId);
+      movementsLoadedKeyRef.current = historyKey;
+      setMovementsLoadedKey(historyKey);
     } catch (error) {
       triggerHaptic();
       setErrorMessage(getRequestMessage(error, "Unable to load movement history."));
@@ -495,8 +565,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   useEffect(() => {
     setMovementHistoryOpen(false);
     setMovements([]);
-    movementsLoadedShopIdRef.current = null;
-    setMovementsLoadedShopId(null);
+    movementsLoadedKeyRef.current = null;
+    setMovementsLoadedKey(null);
     setStockItems([]);
     stockCursorRef.current = EMPTY_INVENTORY_CURSOR;
     stockHasMoreRef.current = false;
@@ -507,11 +577,24 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   }, [selectedShopId]);
 
   useEffect(() => {
-    if (!movementHistoryOpen || !selectedShopId || movementsLoadedShopId === selectedShopId) {
+    setMovements([]);
+    movementsLoadedKeyRef.current = null;
+    setMovementsLoadedKey(null);
+  }, [movementHistoryKey]);
+
+  useEffect(() => {
+    if (!movementHistoryOpen || !selectedShopId || !movementHistoryKey || movementsLoadedKey === movementHistoryKey) {
       return;
     }
-    void loadMovements(selectedShopId);
-  }, [loadMovements, movementHistoryOpen, movementsLoadedShopId, selectedShopId]);
+    void loadMovements(selectedShopId, movementHistoryParams, movementHistoryKey);
+  }, [
+    loadMovements,
+    movementHistoryKey,
+    movementHistoryOpen,
+    movementHistoryParams,
+    movementsLoadedKey,
+    selectedShopId,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "shops" || !selectedShopId || !baseLoaded) {
@@ -526,6 +609,19 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const openCreateEditor = useCallback(() => {
     navigation.navigate("AdminInventoryItemEditor");
   }, [navigation]);
+
+  const selectMovementHistoryDate = useCallback((selectedDate: string) => {
+    if (movementCalendarTarget === "date") {
+      setMovementHistoryDate(selectedDate);
+    } else if (movementCalendarTarget === "start") {
+      setMovementHistoryRangeStart(selectedDate);
+      setMovementHistoryRangeEnd((currentEnd) => currentEnd < selectedDate ? selectedDate : currentEnd);
+    } else if (movementCalendarTarget === "end") {
+      setMovementHistoryRangeEnd(selectedDate);
+      setMovementHistoryRangeStart((currentStart) => currentStart > selectedDate ? selectedDate : currentStart);
+    }
+    setMovementCalendarTarget(null);
+  }, [movementCalendarTarget]);
 
   const openEditEditor = useCallback((item: InventoryItemRead) => {
     navigation.navigate("AdminInventoryItemEditor", { itemId: item.id, initialItem: item });
@@ -1036,7 +1132,66 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       </View>
       {movementHistoryOpen ? (
         <>
-          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Recent movement</Text>
+          <View style={[styles.historyFilterPanel, { borderColor: palette.border, backgroundColor: palette.card }]}>
+            <View style={styles.historyModeRow}>
+              {[
+                { key: "date" as const, label: "Date", icon: "calendar" as const },
+                { key: "range" as const, label: "Range", icon: "calendar-range" as const },
+              ].map((option) => {
+                const active = movementHistoryMode === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => setMovementHistoryMode(option.key)}
+                    style={[
+                      styles.historyModeButton,
+                      {
+                        borderColor: active ? palette.inventory : palette.border,
+                        backgroundColor: active ? palette.inventory : palette.surfaceMuted,
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={option.icon}
+                      size={16}
+                      color={active ? palette.onPrimary : palette.textMuted}
+                    />
+                    <Text style={[styles.historyModeText, { color: active ? palette.onPrimary : palette.textPrimary }]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {movementHistoryMode === "date" ? (
+              <CalendarDateField
+                label="History date"
+                value={movementHistoryDate}
+                colors={movementCalendarColors}
+                onPress={() => setMovementCalendarTarget("date")}
+              />
+            ) : (
+              <View style={styles.historyDateRow}>
+                <CalendarDateField
+                  label="From"
+                  value={movementHistoryRangeStart}
+                  colors={movementCalendarColors}
+                  icon="calendar-start"
+                  onPress={() => setMovementCalendarTarget("start")}
+                />
+                <CalendarDateField
+                  label="To"
+                  value={movementHistoryRangeEnd}
+                  colors={movementCalendarColors}
+                  icon="calendar-end"
+                  onPress={() => setMovementCalendarTarget("end")}
+                />
+              </View>
+            )}
+          </View>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Movement history</Text>
           {movementsLoading ? (
             <View style={[styles.movementRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
               <ActivityIndicator color={palette.inventory} />
@@ -1045,7 +1200,7 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           ) : movements.length === 0 ? (
             <View style={[styles.movementRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
               <MaterialCommunityIcons name="history" size={20} color={palette.textMuted} />
-              <Text style={[styles.itemMeta, { color: palette.textMuted }]}>No recent stock movement yet.</Text>
+              <Text style={[styles.itemMeta, { color: palette.textMuted }]}>No stock movement found.</Text>
             </View>
           ) : (
             movements.map((movement) => (
@@ -1180,6 +1335,28 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
         </ScrollView>
       )}
 
+      <CalendarDatePickerModal
+        visible={movementCalendarTarget !== null}
+        title={
+          movementCalendarTarget === "start"
+            ? "From"
+            : movementCalendarTarget === "end"
+              ? "To"
+              : "History date"
+        }
+        value={
+          movementCalendarTarget === "start"
+            ? movementHistoryRangeStart
+            : movementCalendarTarget === "end"
+              ? movementHistoryRangeEnd
+              : movementHistoryDate
+        }
+        rangeStartDate={movementHistoryMode === "range" ? movementHistoryRangeStart : null}
+        rangeEndDate={movementHistoryMode === "range" ? movementHistoryRangeEnd : null}
+        colors={movementCalendarColors}
+        onSelect={selectMovementHistoryDate}
+        onClose={() => setMovementCalendarTarget(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -1279,6 +1456,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   historyButtonText: { fontSize: 14, fontWeight: "900", letterSpacing: 0 },
+  historyFilterPanel: { borderWidth: 1, borderRadius: 14, padding: 10, gap: 10 },
+  historyModeRow: { flexDirection: "row", gap: 8 },
+  historyModeButton: { flex: 1, minHeight: 40, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  historyModeText: { fontSize: 12, fontWeight: "900", letterSpacing: 0 },
+  historyDateRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   search: { minHeight: 46, flex: 1, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   input: { flex: 1, minHeight: 42, fontSize: 14, fontWeight: "700" },
   itemRow: { borderWidth: 1, borderRadius: 14, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 10 },

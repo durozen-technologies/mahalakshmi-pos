@@ -119,9 +119,16 @@ export interface InventoryCategoryRead {
 }
 
 export interface InventoryBillingItemMappingRead {
+  inventory_category_id?: UUID | null;
+  inventory_category_name?: string | null;
   billing_item_id: UUID;
   billing_item_name: string;
   billing_item_tamil_name?: string | null;
+}
+
+export interface InventoryBillingItemMappingWrite {
+  inventory_category_id?: UUID | null;
+  billing_item_id: UUID;
 }
 
 export interface InventoryCategoryCreate {
@@ -140,9 +147,11 @@ export interface InventoryItemRead {
   base_unit: BaseUnit;
   is_active: boolean;
   sort_order: number;
+  billing_item_id?: UUID | null;
   billing_item_ids: UUID[];
   billing_items: InventoryBillingItemMappingRead[];
   category_ids: UUID[];
+  category_billing_item_ids: Record<UUID, UUID>;
   categories: InventoryCategoryRead[];
   created_at: string;
   updated_at?: string | null;

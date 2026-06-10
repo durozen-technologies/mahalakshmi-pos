@@ -23,6 +23,7 @@ from app.models import (
     DailyPrice,
     ExpenseEntry,
     ExpenseItem,
+    InventoryMovement,
     InventoryMovementType,
     Item,
     ItemAssumptionStatus,
@@ -40,6 +41,7 @@ from app.schemas.billing import (
 )
 from app.schemas.inventory import (
     InventoryAddRequest,
+    InventoryBillingItemMappingWrite,
     InventoryCategoryCreate,
     InventoryItemCreate,
     InventoryItemUpdate,
@@ -279,7 +281,16 @@ class ServiceUnitTests(BackendTestCase):
                         unit_type=UnitType.WEIGHT,
                         base_unit=BaseUnit.KG,
                         category_ids=[category.id, category_b.id],
-                        billing_item_ids=[chicken.id, mutton.id],
+                        billing_mappings=[
+                            InventoryBillingItemMappingWrite(
+                                inventory_category_id=category.id,
+                                billing_item_id=chicken.id,
+                            ),
+                            InventoryBillingItemMappingWrite(
+                                inventory_category_id=category_b.id,
+                                billing_item_id=mutton.id,
+                            ),
+                        ],
                     ),
                 )
                 unit_inventory_item = await create_inventory_management_item(
@@ -462,13 +473,13 @@ class ServiceUnitTests(BackendTestCase):
                 statement = overall.statements[0]
                 self.assertEqual(statement.sales_amount, Decimal("1835.00"))
                 self.assertEqual(statement.expense_amount, Decimal("100.00"))
-                self.assertEqual(statement.assumption_amount, Decimal("2179.000"))
-                self.assertEqual(statement.difference_amount, Decimal("-344.000"))
+                self.assertEqual(statement.assumption_amount, Decimal("1211.000"))
+                self.assertEqual(statement.difference_amount, Decimal("624.000"))
                 summaries_by_unit = {summary.unit: summary for summary in statement.unit_summaries}
                 self.assertEqual(summaries_by_unit[BaseUnit.KG].adding_stock, Decimal("20.000"))
                 self.assertEqual(summaries_by_unit[BaseUnit.KG].used_stock, Decimal("15.000"))
                 self.assertEqual(summaries_by_unit[BaseUnit.KG].sales_quantity, Decimal("15.000"))
-                self.assertEqual(summaries_by_unit[BaseUnit.KG].assumption_quantity, Decimal("19.200"))
+                self.assertEqual(summaries_by_unit[BaseUnit.KG].assumption_quantity, Decimal("10.300"))
                 self.assertEqual(summaries_by_unit[BaseUnit.UNIT].adding_stock, Decimal("23.000"))
                 self.assertEqual(summaries_by_unit[BaseUnit.UNIT].used_stock, Decimal("6.000"))
                 self.assertEqual(summaries_by_unit[BaseUnit.UNIT].sales_quantity, Decimal("5.000"))
@@ -481,8 +492,8 @@ class ServiceUnitTests(BackendTestCase):
                 }
                 self.assertEqual(breakdown_by_label["Chicken Without Skin"], Decimal("10.000"))
                 self.assertEqual(breakdown_by_label["Chicken With Skin"], Decimal("5.000"))
-                self.assertEqual(chicken_stock.assumption_quantity, Decimal("19.200"))
-                self.assertEqual(chicken_stock.difference_amount, Decimal("-454.000"))
+                self.assertEqual(chicken_stock.assumption_quantity, Decimal("10.300"))
+                self.assertEqual(chicken_stock.difference_amount, Decimal("514.000"))
                 duck_stock = items_by_name["Duck Stock"]
                 self.assertEqual(duck_stock.unit, BaseUnit.UNIT)
                 self.assertEqual(duck_stock.sales_quantity, Decimal("3.000"))
@@ -521,12 +532,11 @@ class ServiceUnitTests(BackendTestCase):
                     self.assertIn(b"Chicken Without", data)
                     self.assertIn(b"3 unit", data)
                     self.assertIn(b"No mapped billing sales", data)
-                    self.assertIn(b"Rs. 1404.00", data)
-                    self.assertIn(b"Rs. 750.00", data)
+                    self.assertIn(b"Rs. 936.00", data)
+                    self.assertIn(b"Rs. 250.00", data)
                     self.assertIn(b"Rs. 25.00", data)
                     self.assertIn(b"Rs. 60.00", data)
-                    self.assertIn(b"Rs. -204.00", data)
-                    self.assertIn(b"Rs. -250.00", data)
+                    self.assertIn(b"Rs. 264.00", data)
                 finally:
                     report.file.close()
 
@@ -734,6 +744,44 @@ class ServiceUnitTests(BackendTestCase):
                 self.assertIsNone(use_result.summary)
                 self.assertEqual(use_result.item.available_quantity, Decimal("7.000"))
 
+                add_movement = session.scalar(
+                    select(InventoryMovement).where(InventoryMovement.id == add_result.movement.id)
+                )
+                use_movement = session.scalar(
+                    select(InventoryMovement).where(InventoryMovement.id == use_result.movement.id)
+                )
+                add_movement.created_at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+                use_movement.created_at = datetime(2026, 6, 3, 11, tzinfo=UTC)
+                session.commit()
+
+                date_movements = await list_inventory_movements(
+                    db,
+                    shop_id=current_shop.id,
+                    reference_date=date(2026, 6, 3),
+                    limit=10,
+                )
+                self.assertEqual([movement.id for movement in date_movements.items], [use_result.movement.id])
+
+                empty_date_movements = await list_inventory_movements(
+                    db,
+                    shop_id=current_shop.id,
+                    reference_date=date(2026, 6, 2),
+                    limit=10,
+                )
+                self.assertEqual(empty_date_movements.items, [])
+
+                range_movements = await list_inventory_movements(
+                    db,
+                    shop_id=current_shop.id,
+                    range_start_date=date(2026, 6, 1),
+                    range_end_date=date(2026, 6, 3),
+                    limit=10,
+                )
+                self.assertEqual(
+                    {movement.id for movement in range_movements.items},
+                    {add_result.movement.id, use_result.movement.id},
+                )
+
                 summary = await get_inventory_summary(db, current_shop)
                 stock_item = next(row for row in summary.items if row.id == item.id)
                 self.assertEqual(stock_item.available_quantity, Decimal("7.000"))
@@ -817,9 +865,22 @@ class ServiceUnitTests(BackendTestCase):
                     )
                 self.assertEqual(overuse_ctx.exception.status_code, 409)
 
-                with self.assertRaises(HTTPException) as delete_ctx:
-                    await delete_inventory_management_item(db, item.id)
-                self.assertEqual(delete_ctx.exception.status_code, 409)
+                await delete_inventory_management_item(db, item.id)
+
+                with self.assertRaises(HTTPException) as deleted_item_ctx:
+                    await get_inventory_item(db, item.id)
+                self.assertEqual(deleted_item_ctx.exception.status_code, 404)
+
+                movements_after_delete = await list_inventory_movements(
+                    db,
+                    item_id=item.id,
+                    limit=10,
+                )
+                self.assertEqual(movements_after_delete.items, [])
+                summary_after_delete = await get_inventory_summary(db, current_shop)
+                self.assertFalse(
+                    any(stock_item.id == item.id for stock_item in summary_after_delete.items)
+                )
 
         self.run_async(scenario())
 
@@ -878,7 +939,7 @@ class ServiceUnitTests(BackendTestCase):
 
         self.run_async(scenario())
 
-    def test_inventory_items_can_map_to_multiple_global_billing_items(
+    def test_inventory_items_map_categories_or_items_to_one_billing_item(
         self,
     ) -> None:
         _actor, shop = self.run_async(self.harness.create_shop_user())
@@ -916,6 +977,29 @@ class ServiceUnitTests(BackendTestCase):
                 category_b = await create_inventory_category(
                     db, InventoryCategoryCreate(name="Mapped Stock B")
                 )
+                with self.assertRaises(HTTPException) as duplicate_ctx:
+                    await create_inventory_management_item(
+                        db,
+                        InventoryItemCreate(
+                            name="Duplicate Billing Category Stock",
+                            tamil_name="இரட்டை இணைப்பு இருப்பு",
+                            unit_type=UnitType.WEIGHT,
+                            base_unit=BaseUnit.KG,
+                            category_ids=[category_a.id, category_b.id],
+                            billing_mappings=[
+                                InventoryBillingItemMappingWrite(
+                                    inventory_category_id=category_a.id,
+                                    billing_item_id=chicken.id,
+                                ),
+                                InventoryBillingItemMappingWrite(
+                                    inventory_category_id=category_b.id,
+                                    billing_item_id=chicken.id,
+                                ),
+                            ],
+                        ),
+                    )
+                self.assertEqual(duplicate_ctx.exception.status_code, 422)
+
                 item = await create_inventory_management_item(
                     db,
                     InventoryItemCreate(
@@ -923,34 +1007,65 @@ class ServiceUnitTests(BackendTestCase):
                         tamil_name="மேப் கோழி இருப்பு",
                         unit_type=UnitType.WEIGHT,
                         base_unit=BaseUnit.KG,
-                        billing_item_ids=[chicken.id, mutton.id],
                         category_ids=[category_a.id, category_b.id],
+                        billing_mappings=[
+                            InventoryBillingItemMappingWrite(
+                                inventory_category_id=category_a.id,
+                                billing_item_id=chicken.id,
+                            ),
+                            InventoryBillingItemMappingWrite(
+                                inventory_category_id=category_b.id,
+                                billing_item_id=mutton.id,
+                            ),
+                        ],
                     ),
                 )
 
                 self.assertEqual(set(item.billing_item_ids), {chicken.id, mutton.id})
+                self.assertIsNone(item.billing_item_id)
+                self.assertEqual(
+                    item.category_billing_item_ids,
+                    {category_a.id: chicken.id, category_b.id: mutton.id},
+                )
                 self.assertEqual(
                     {
-                        (billing_item.billing_item_name, billing_item.billing_item_tamil_name)
+                        (
+                            billing_item.inventory_category_id,
+                            billing_item.inventory_category_name,
+                            billing_item.billing_item_name,
+                            billing_item.billing_item_tamil_name,
+                        )
                         for billing_item in item.billing_items
                     },
-                    {("Chicken", chicken.tamil_name), ("Mutton", mutton.tamil_name)},
+                    {
+                        (category_a.id, category_a.name, "Chicken", chicken.tamil_name),
+                        (category_b.id, category_b.name, "Mutton", mutton.tamil_name),
+                    },
                 )
-                self.assertFalse(hasattr(item, "category_billing_mappings"))
                 self.assertEqual(set(item.category_ids), {category_a.id, category_b.id})
 
                 detail = await get_inventory_item(db, item.id)
                 self.assertEqual(set(detail.billing_item_ids), {chicken.id, mutton.id})
-                self.assertFalse(hasattr(detail, "category_billing_mappings"))
+                self.assertEqual(
+                    detail.category_billing_item_ids,
+                    {category_a.id: chicken.id, category_b.id: mutton.id},
+                )
 
                 listed = await list_inventory_items(db, q="Mapped Chicken")
                 listed_item = next(row for row in listed if row.id == item.id)
                 self.assertEqual(set(listed_item.billing_item_ids), {chicken.id, mutton.id})
-                self.assertFalse(hasattr(listed_item, "category_billing_mappings"))
+                self.assertEqual(
+                    listed_item.category_billing_item_ids,
+                    {category_a.id: chicken.id, category_b.id: mutton.id},
+                )
 
                 rows_page = await list_inventory_item_rows(db, q="Mapped Chicken", limit=10)
                 paged_item = next(row for row in rows_page.items if row.id == item.id)
                 self.assertEqual(set(paged_item.billing_item_ids), {chicken.id, mutton.id})
+                self.assertEqual(
+                    paged_item.category_billing_item_ids,
+                    {category_a.id: chicken.id, category_b.id: mutton.id},
+                )
 
                 cleared = await update_inventory_management_item(
                     db,
@@ -960,11 +1075,12 @@ class ServiceUnitTests(BackendTestCase):
                         tamil_name=item.tamil_name,
                         unit_type=item.unit_type,
                         base_unit=item.base_unit,
-                        billing_item_ids=[],
                         category_ids=item.category_ids,
+                        billing_mappings=[],
                     ),
                 )
                 self.assertEqual(cleared.billing_item_ids, [])
+                self.assertEqual(cleared.category_billing_item_ids, {})
                 self.assertEqual(
                     set(cleared.category_ids),
                     {category_a.id, category_b.id},
@@ -978,11 +1094,17 @@ class ServiceUnitTests(BackendTestCase):
                         tamil_name=item.tamil_name,
                         unit_type=item.unit_type,
                         base_unit=item.base_unit,
-                        billing_item_ids=[mutton.id],
                         category_ids=item.category_ids,
+                        billing_mappings=[
+                            InventoryBillingItemMappingWrite(
+                                inventory_category_id=category_b.id,
+                                billing_item_id=mutton.id,
+                            )
+                        ],
                     ),
                 )
                 self.assertEqual(remapped.billing_item_ids, [mutton.id])
+                self.assertEqual(remapped.category_billing_item_ids, {category_b.id: mutton.id})
                 self.assertEqual(
                     {
                         billing_item.billing_item_name
@@ -990,6 +1112,50 @@ class ServiceUnitTests(BackendTestCase):
                     },
                     {"Mutton"},
                 )
+
+                item_level_mapping = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Egg Tray Stock",
+                        tamil_name="முட்டை தட்டு இருப்பு",
+                        unit_type=UnitType.COUNT,
+                        base_unit=BaseUnit.UNIT,
+                        billing_item_id=egg_count.id,
+                        category_ids=[],
+                    ),
+                )
+                self.assertEqual(item_level_mapping.billing_item_id, egg_count.id)
+                self.assertEqual(item_level_mapping.billing_item_ids, [egg_count.id])
+                self.assertEqual(item_level_mapping.category_billing_item_ids, {})
+                self.assertIsNone(item_level_mapping.billing_items[0].inventory_category_id)
+
+                with self.assertRaises(HTTPException) as reused_billing_ctx:
+                    await create_inventory_management_item(
+                        db,
+                        InventoryItemCreate(
+                            name="Reused Billing Item Stock",
+                            tamil_name="மீண்டும் இணைப்பு இருப்பு",
+                            unit_type=UnitType.WEIGHT,
+                            base_unit=BaseUnit.KG,
+                            billing_item_id=mutton.id,
+                            category_ids=[],
+                        ),
+                    )
+                self.assertEqual(reused_billing_ctx.exception.status_code, 409)
+
+                with self.assertRaises(HTTPException) as multi_item_level_ctx:
+                    await create_inventory_management_item(
+                        db,
+                        InventoryItemCreate(
+                            name="Multi Billing Item Stock",
+                            tamil_name="பல இணைப்பு இருப்பு",
+                            unit_type=UnitType.WEIGHT,
+                            base_unit=BaseUnit.KG,
+                            billing_item_ids=[chicken.id, mutton.id],
+                            category_ids=[],
+                        ),
+                    )
+                self.assertEqual(multi_item_level_ctx.exception.status_code, 422)
 
                 with self.assertRaises(HTTPException) as shop_item_level_ctx:
                     await create_inventory_management_item(

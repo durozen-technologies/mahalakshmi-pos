@@ -38,9 +38,21 @@ export async function fetchShopInventoryRows(params?: FetchShopInventoryRowsPara
   return data;
 }
 
-export async function fetchShopInventoryMovements(limit = 30) {
+export type FetchShopInventoryMovementParams = {
+  reference_date?: string | null;
+  range_start_date?: string | null;
+  range_end_date?: string | null;
+  limit?: number;
+};
+
+export async function fetchShopInventoryMovements(params?: FetchShopInventoryMovementParams) {
   const { data } = await apiClient.get<InventoryMovementPage>("/api/v1/shop/inventory/movements", {
-    params: { limit },
+    params: {
+      reference_date: params?.reference_date ?? undefined,
+      range_start_date: params?.range_start_date ?? undefined,
+      range_end_date: params?.range_end_date ?? undefined,
+      limit: params?.limit ?? 30,
+    },
   });
   return data;
 }

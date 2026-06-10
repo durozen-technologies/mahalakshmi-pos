@@ -1317,11 +1317,29 @@ async def _populate_overall_report_billing_items(
         .where(DailyPrice.shop_id == shop_id)
         .subquery()
     )
+    mapped_used_stock = (
+        select(
+            InventoryMovement.inventory_item_id,
+            InventoryMovement.category_id,
+            func.coalesce(func.sum(InventoryMovement.quantity), 0).label("used_stock"),
+        )
+        .where(
+            InventoryMovement.shop_id == shop_id,
+            InventoryMovement.created_at >= context.start,
+            InventoryMovement.created_at < context.end,
+            InventoryMovement.movement_type == InventoryMovementType.USE,
+            InventoryMovement.category_id.is_not(None),
+        )
+        .group_by(InventoryMovement.inventory_item_id, InventoryMovement.category_id)
+        .subquery()
+    )
     category_label = func.coalesce(func.nullif(func.trim(Item.category), ""), "Uncategorized")
     rows = (
         await db.execute(
             select(
                 InventoryItemBillingMapping.inventory_item_id,
+                InventoryItemBillingMapping.inventory_category_id,
+                InventoryCategory.name.label("inventory_category_name"),
                 Item.id.label("billing_item_id"),
                 Item.name.label("item_name"),
                 Item.tamil_name.label("item_tamil_name"),
@@ -1329,10 +1347,15 @@ async def _populate_overall_report_billing_items(
                 Item.base_unit.label("unit"),
                 Item.assumption_percent,
                 latest_prices.c.today_price,
+                func.coalesce(mapped_used_stock.c.used_stock, 0).label("mapped_used_stock"),
                 func.coalesce(sales_totals.c.sales_quantity, 0).label("sales_quantity"),
                 func.coalesce(sales_totals.c.sales_amount, 0).label("sales_amount"),
             )
             .join(Item, Item.id == InventoryItemBillingMapping.billing_item_id)
+            .outerjoin(
+                InventoryCategory,
+                InventoryCategory.id == InventoryItemBillingMapping.inventory_category_id,
+            )
             .outerjoin(
                 sales_totals,
                 sales_totals.c.billing_item_id == InventoryItemBillingMapping.billing_item_id,
@@ -1345,9 +1368,20 @@ async def _populate_overall_report_billing_items(
                     latest_prices.c.rn == 1,
                 ),
             )
+            .outerjoin(
+                mapped_used_stock,
+                and_(
+                    mapped_used_stock.c.inventory_item_id
+                    == InventoryItemBillingMapping.inventory_item_id,
+                    mapped_used_stock.c.category_id
+                    == InventoryItemBillingMapping.inventory_category_id,
+                ),
+            )
             .where(InventoryItemBillingMapping.inventory_item_id.in_(list(inventory_items)))
             .order_by(
                 InventoryItemBillingMapping.inventory_item_id,
+                InventoryCategory.name.is_(None),
+                func.lower(InventoryCategory.name),
                 category_label,
                 Item.sort_order,
                 func.lower(Item.name),
@@ -1365,8 +1399,13 @@ async def _populate_overall_report_billing_items(
         sales_amount = _decimal(row.sales_amount)
         today_price = _decimal(row.today_price) if row.today_price is not None else None
         assumption_percent = row.assumption_percent
+        used_stock_source = (
+            _decimal(row.mapped_used_stock)
+            if row.inventory_category_id is not None
+            else _decimal(inventory_item.used_stock)
+        )
         assumption_quantity = (
-            _decimal(inventory_item.used_stock) * _decimal(assumption_percent) / Decimal("100")
+            used_stock_source * _decimal(assumption_percent) / Decimal("100")
             if assumption_percent is not None
             else Decimal("0")
         )
