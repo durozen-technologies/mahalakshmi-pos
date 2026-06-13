@@ -79,7 +79,7 @@ export type AnalyticsDateRange = {
   startDate?: string | null;
   endDate?: string | null;
 };
-export type AdminReportSection = "sales" | "billing" | "items" | "inventory" | "over_report";
+export type AdminReportSection = "sales" | "billing" | "expenses" | "over_report";
 export type AdminReportDetailLevel = "summary" | "full";
 export type DownloadAdminReportPdfParams = {
   sections: AdminReportSection[];
@@ -88,6 +88,7 @@ export type DownloadAdminReportPdfParams = {
   referenceDate?: string | null;
   range?: AnalyticsDateRange;
   shopIds?: UUID[];
+  language?: "en" | "ta";
 };
 export type FetchOverallReportParams = Omit<DownloadAdminReportPdfParams, "sections">;
 export type DownloadAdminReportPdfResult = {
@@ -302,6 +303,9 @@ function buildAdminReportQuery(params: DownloadAdminReportPdfParams) {
   const query = new URLSearchParams();
   params.sections.forEach((section) => query.append("sections", section));
   appendAdminReportFilterQuery(query, params);
+  if (params.language && params.language !== "en") {
+    query.set("language", params.language);
+  }
   return query.toString();
 }
 

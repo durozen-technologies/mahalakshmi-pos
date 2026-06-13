@@ -63,3 +63,10 @@ pip-wheel-metadata/
 *.bak
 *.orig
 *.tmp
+
+# Additional local files and IDEs
+.marscode/
+tmp/
+todo.txt
+diff.txt
+*.zip

@@ -346,7 +346,7 @@ function AdminButton({
   palette,
   disabled = false,
   loading = false,
-  variant = "primary",
+  variant = "danger",
   style,
 }: {
   label: string;
@@ -354,30 +354,37 @@ function AdminButton({
   palette: ThemePalette;
   disabled?: boolean;
   loading?: boolean;
-  variant?: "primary" | "secondary" | "danger";
+  variant?: "primary" | "secondary" | "danger" | "contrast";
   style?: StyleProp<ViewStyle>;
 }) {
   const isDisabled = disabled || loading;
   const isSecondary = variant === "secondary";
+  const isContrast = variant === "contrast";
   const backgroundColor = isDisabled
     ? palette.surfaceMuted
     : isSecondary
       ? palette.card
       : variant === "danger"
         ? palette.danger
-        : palette.primary;
+        : isContrast
+          ? palette.textPrimary
+          : palette.primary;
   const borderColor = isDisabled
     ? palette.border
     : isSecondary
       ? palette.border
       : variant === "danger"
         ? palette.danger
-        : palette.primary;
+        : isContrast
+          ? palette.textPrimary
+          : palette.primary;
   const contentColor = isDisabled
     ? palette.textMuted
     : isSecondary
       ? palette.textPrimary
-      : palette.onPrimary;
+      : isContrast
+        ? palette.card
+        : palette.onPrimary;
 
   return (
     <Pressable
@@ -407,6 +414,44 @@ function AdminButton({
           {label}
         </Text>
       )}
+    </Pressable>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  palette,
+  active = false,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  palette: ThemePalette;
+  active?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const isDisabled = disabled;
+  const fg = isDisabled ? palette.textMuted : active ? palette.onPrimary : palette.textPrimary;
+  const bg = isDisabled ? palette.surfaceMuted : active ? palette.inventory : palette.card;
+  const border = isDisabled ? palette.border : active ? palette.inventory : palette.border;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={isDisabled}
+      accessibilityState={{ disabled: isDisabled }}
+      onPress={() => {
+        triggerHaptic();
+        onPress();
+      }}
+      style={[styles.actionButton, { borderColor: border, backgroundColor: bg, opacity: isDisabled ? 0.6 : 1 }]}
+    >
+      <MaterialCommunityIcons name={icon} size={16} color={fg} />
+      <Text numberOfLines={1} style={[styles.actionText, { color: fg }]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -1796,24 +1841,24 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
         palette={palette}
       />
       <View style={styles.headerActions}>
-        <AdminButton
+        <ActionButton
           label="Arrange order"
-          variant="secondary"
+          icon="sort"
           palette={palette}
+          disabled={!selectedShop || allocationRows.length === 0}
           onPress={() => selectedShop && navigation.navigate("AdminShopExpensesOrder", {
             shopId: selectedShop.id,
             shopName: selectedShop.name,
           })}
-          disabled={!selectedShop || allocationRows.length === 0}
-          style={styles.flex}
+          active={!!(selectedShop && allocationRows.length > 0)}
         />
-        <AdminButton
+        <ActionButton
           label={selectedCandidateIds.size > 0 ? `Import (${selectedCandidateIds.size})` : "Import"}
+          icon="plus-circle"
           palette={palette}
-          onPress={importSelectedCandidates}
-          loading={importingCandidates}
           disabled={!selectedShop || selectedCandidateIds.size === 0}
-          style={styles.flex}
+          active
+          onPress={importSelectedCandidates}
         />
       </View>
       <View style={[styles.searchBox, { borderColor: palette.border, backgroundColor: palette.card }]}>
@@ -1911,7 +1956,7 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
             Independent from billing items. No price, unit, image, category, or checkout fields.
           </Text>
         </View>
-        <AdminButton label="New item" palette={palette} onPress={openCreateEditor} />
+        <ActionButton label="New item" icon="plus" palette={palette} active onPress={openCreateEditor} />
       </View>
       <View style={[styles.searchBox, { borderColor: palette.border, backgroundColor: palette.card }]}>
         <MaterialCommunityIcons name="magnify" size={18} color={palette.textMuted} />
@@ -1923,7 +1968,6 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
           style={[styles.searchInput, { color: palette.textPrimary }]}
         />
       </View>
-      <CountStrip counts={itemCounts} palette={palette} />
     </View>
   );
 
@@ -2075,80 +2119,80 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.modalScrollContent}
               >
-              <AdminTextField label="Name" value={nameDraft} onChangeText={setNameDraft} placeholder="Example: Transport" palette={palette} />
-              <AdminTextField label="Tamil name" value={tamilNameDraft} onChangeText={setTamilNameDraft} placeholder="தமிழ் பெயர்" palette={palette} />
-              <View style={[styles.imagePanel, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
-                <ItemThumbnail
-                  uri={currentImageUri}
-                  recyclingKey={editingItem?.id ?? "new-expense-item"}
-                  size={76}
-                  borderRadius={16}
-                  backgroundColor={palette.card}
-                  borderColor={palette.border}
-                  icon="image-plus"
-                  iconColor={palette.textMuted}
-                  iconSize={28}
-                />
-                <View style={styles.rowBody}>
-                  <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Image</Text>
-                  <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
-                    Optional square image for expense rows.
-                  </Text>
-                  {imageStatus ? <Text style={[styles.imageMessage, { color: palette.textMuted }]}>{imageStatus}</Text> : null}
-                  {imageError ? <Text style={[styles.imageMessage, { color: palette.danger }]}>{imageError}</Text> : null}
-                  <View style={styles.imageActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={pickImage}
-                      style={[styles.imageActionButton, { backgroundColor: palette.card, borderColor: palette.border }]}
-                    >
-                      <MaterialCommunityIcons name="image-edit-outline" size={16} color={palette.cash} />
-                      <Text style={[styles.imageActionText, { color: palette.textPrimary }]}>Pick image</Text>
-                    </Pressable>
-                    {imageDraft || hasStoredImage || removeImageRequested ? (
+                <AdminTextField label="Name" value={nameDraft} onChangeText={setNameDraft} placeholder="Example: Transport" palette={palette} />
+                <AdminTextField label="Tamil name" value={tamilNameDraft} onChangeText={setTamilNameDraft} placeholder="தமிழ் பெயர்" palette={palette} />
+                <View style={[styles.imagePanel, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+                  <ItemThumbnail
+                    uri={currentImageUri}
+                    recyclingKey={editingItem?.id ?? "new-expense-item"}
+                    size={76}
+                    borderRadius={16}
+                    backgroundColor={palette.card}
+                    borderColor={palette.border}
+                    icon="image-plus"
+                    iconColor={palette.textMuted}
+                    iconSize={28}
+                  />
+                  <View style={styles.rowBody}>
+                    <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Image</Text>
+                    <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
+                      Optional square image for expense rows.
+                    </Text>
+                    {imageStatus ? <Text style={[styles.imageMessage, { color: palette.textMuted }]}>{imageStatus}</Text> : null}
+                    {imageError ? <Text style={[styles.imageMessage, { color: palette.danger }]}>{imageError}</Text> : null}
+                    <View style={styles.imageActions}>
                       <Pressable
                         accessibilityRole="button"
-                        onPress={removeImage}
-                        style={[styles.imageActionButton, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}
+                        onPress={pickImage}
+                        style={[styles.imageActionButton, { backgroundColor: palette.card, borderColor: palette.border }]}
                       >
-                        <MaterialCommunityIcons name="image-remove-outline" size={16} color={palette.danger} />
-                        <Text style={[styles.imageActionText, { color: palette.danger }]}>
-                          {removeImageRequested ? "Undo" : imageDraft ? "Clear" : "Remove"}
-                        </Text>
+                        <MaterialCommunityIcons name="image-edit-outline" size={16} color={palette.cash} />
+                        <Text style={[styles.imageActionText, { color: palette.textPrimary }]}>Pick image</Text>
                       </Pressable>
-                    ) : null}
+                      {imageDraft || hasStoredImage || removeImageRequested ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={removeImage}
+                          style={[styles.imageActionButton, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}
+                        >
+                          <MaterialCommunityIcons name="image-remove-outline" size={16} color={palette.danger} />
+                          <Text style={[styles.imageActionText, { color: palette.danger }]}>
+                            {removeImageRequested ? "Undo" : imageDraft ? "Clear" : "Remove"}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                 </View>
-              </View>
-              <Pressable
-                accessibilityRole="switch"
-                accessibilityState={{ checked: activeDraft }}
-                onPress={() => setActiveDraft((current) => !current)}
-                style={[styles.switchRow, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
-              >
-                <View style={[styles.switchIcon, { backgroundColor: activeDraft ? palette.successSoft : palette.dangerSoft }]}>
-                  <MaterialCommunityIcons
-                    name={activeDraft ? "check-circle-outline" : "pause-circle-outline"}
-                    size={18}
-                    color={activeDraft ? palette.success : palette.danger}
-                  />
-                </View>
-                <View style={styles.rowBody}>
-                  <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Active</Text>
-                  <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
-                    Inactive expense items cannot be allocated to branches.
-                  </Text>
-                </View>
-              </Pressable>
+                <Pressable
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: activeDraft }}
+                  onPress={() => setActiveDraft((current) => !current)}
+                  style={[styles.switchRow, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}
+                >
+                  <View style={[styles.switchIcon, { backgroundColor: activeDraft ? palette.successSoft : palette.dangerSoft }]}>
+                    <MaterialCommunityIcons
+                      name={activeDraft ? "check-circle-outline" : "pause-circle-outline"}
+                      size={18}
+                      color={activeDraft ? palette.success : palette.danger}
+                    />
+                  </View>
+                  <View style={styles.rowBody}>
+                    <Text style={[styles.switchTitle, { color: palette.textPrimary }]}>Active</Text>
+                    <Text style={[styles.switchSubtitle, { color: palette.textMuted }]}>
+                      Inactive expense items cannot be allocated to branches.
+                    </Text>
+                  </View>
+                </Pressable>
               </ScrollView>
               <View style={styles.modalActions}>
-                <AdminButton label="Cancel" variant="secondary" palette={palette} onPress={closeEditor} disabled={savingItem} style={styles.flex} />
-                <AdminButton
-                  label={editingItem ? "Save changes" : "Create item"}
+                <ActionButton label="Cancel" icon="close" palette={palette} onPress={closeEditor} />
+                <ActionButton
+                  label={editingItem ? "Save changes" : "Save"}
+                  icon="content-save-outline"
                   palette={palette}
+                  active
                   onPress={saveExpenseItem}
-                  loading={savingItem}
-                  style={styles.flex}
                 />
               </View>
             </View>
@@ -2179,6 +2223,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "900",
     textAlign: "center",
+  },
+  actionButton: {
+    minHeight: 40,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  actionText: {
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0,
   },
   adminEmptyCard: {
     borderRadius: 16,

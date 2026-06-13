@@ -14,8 +14,7 @@ AnalyticsPeriod = Literal["date", "week", "month", "year", "range"]
 AdminReportSection = Literal[
     "sales",
     "billing",
-    "items",
-    "inventory",
+    "expenses",
     "over_report",
 ]
 AdminReportDetailLevel = Literal["summary", "full"]

@@ -33,8 +33,8 @@ export const TextField = memo(function TextField({ label, error, suffix, classNa
           editable
           autoCorrect={false}
           underlineColorAndroid="transparent"
-          selectionColor="#244734"
-          cursorColor="#244734"
+          selectionColor="#147D52"
+          cursorColor="#147D52"
           placeholderTextColor="#95A293"
           className={cn("min-h-[52px] flex-1 text-base text-ink", isTamil && "leading-6", className)}
           {...props}

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { type ReactNode, useMemo } from "react";
+import { memo, type ReactNode, useMemo } from "react";
 import { FlatList, RefreshControl } from "react-native";
 import {
   Button as TButton,
@@ -35,6 +35,7 @@ import {
   PriceStatus,
 } from "../admin-items-model";
 import { adminShadow, type ThemePalette } from "../admin-dashboard-theme";
+import { SearchField } from "./admin-dashboard-primitives";
 
 export type ShopItemFormState = {
   name: string;
@@ -79,10 +80,10 @@ type AdminItemsTabProps = {
   priceLoading: boolean;
   priceBootstrap: ShopBootstrapResponse | null;
   currentPriceItem:
-    | (ShopBootstrapResponse["items"][number] & {
-        current_price?: string | null;
-      })
-    | null;
+  | (ShopBootstrapResponse["items"][number] & {
+    current_price?: string | null;
+  })
+  | null;
   selectedPriceItemId: UUID | null;
   draftPrice: string;
   priceError: string | null;
@@ -125,9 +126,9 @@ const unitTypeOptions: {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 }[] = [
-  { value: UnitType.WEIGHT, label: "Weight", icon: "scale-balance" },
-  { value: UnitType.COUNT, label: "Count", icon: "counter" },
-];
+    { value: UnitType.WEIGHT, label: "Weight", icon: "scale-balance" },
+    { value: UnitType.COUNT, label: "Count", icon: "counter" },
+  ];
 
 const baseUnitOptions: { value: BaseUnit; label: string }[] = [
   { value: BaseUnit.KG, label: "KG" },
@@ -139,16 +140,16 @@ const filterOptions: {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 }[] = [
-  { value: AdminItemFilter.All, label: "All", icon: "format-list-bulleted" },
-  { value: AdminItemFilter.Allocated, label: "Allocated", icon: "link-variant" },
-  { value: AdminItemFilter.Available, label: "Available", icon: "link-variant-off" },
-  { value: AdminItemFilter.Catalogue, label: "Catalogue", icon: "shape-outline" },
-  { value: AdminItemFilter.Shop, label: "Shop", icon: "storefront-outline" },
-  { value: AdminItemFilter.Priced, label: "Priced", icon: "cash-check" },
-  { value: AdminItemFilter.NeedsPrice, label: "Needs price", icon: "cash-clock" },
-  { value: AdminItemFilter.StalePrice, label: "Stale price", icon: "calendar-alert" },
-  { value: AdminItemFilter.Paused, label: "Paused", icon: "pause-circle-outline" },
-];
+    { value: AdminItemFilter.All, label: "All", icon: "format-list-bulleted" },
+    { value: AdminItemFilter.Allocated, label: "Allocated", icon: "link-variant" },
+    { value: AdminItemFilter.Available, label: "Available", icon: "link-variant-off" },
+    { value: AdminItemFilter.Catalogue, label: "Catalogue", icon: "shape-outline" },
+    { value: AdminItemFilter.Shop, label: "Shop", icon: "storefront-outline" },
+    { value: AdminItemFilter.Priced, label: "Priced", icon: "cash-check" },
+    { value: AdminItemFilter.NeedsPrice, label: "Needs price", icon: "cash-clock" },
+    { value: AdminItemFilter.StalePrice, label: "Stale price", icon: "calendar-alert" },
+    { value: AdminItemFilter.Paused, label: "Paused", icon: "pause-circle-outline" },
+  ];
 
 const workspacePageOptions: {
   value: AdminItemWorkspace.Catalogue | AdminItemWorkspace.Shop | AdminItemWorkspace.Prices;
@@ -156,10 +157,10 @@ const workspacePageOptions: {
   detail: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 }[] = [
-  { value: AdminItemWorkspace.Catalogue, label: "Catalogue", detail: "Global items", icon: "shape-outline" },
-  { value: AdminItemWorkspace.Shop, label: "Shop items", detail: "Allocations", icon: "storefront-outline" },
-  { value: AdminItemWorkspace.Prices, label: "Prices", detail: "Daily setup", icon: "cash-edit" },
-];
+    { value: AdminItemWorkspace.Catalogue, label: "Catalogue", detail: "Global items", icon: "shape-outline" },
+    { value: AdminItemWorkspace.Shop, label: "Shop items", detail: "Allocations", icon: "storefront-outline" },
+    { value: AdminItemWorkspace.Prices, label: "Prices", detail: "Daily setup", icon: "cash-edit" },
+  ];
 
 const catalogueFilterSet = new Set<ItemFilter>([
   AdminItemFilter.All,
@@ -181,7 +182,7 @@ function toneColor(palette: ThemePalette, tone: Tone) {
   return { fg: palette.textSecondary, bg: palette.surfaceMuted, border: palette.border };
 }
 
-function SmallText({
+const SmallText = memo(function SmallText({
   children,
   color,
   numberOfLines,
@@ -198,9 +199,9 @@ function SmallText({
       {children}
     </Text>
   );
-}
+});
 
-function TitleText({
+const TitleText = memo(function TitleText({
   children,
   color,
   size = "md",
@@ -220,9 +221,9 @@ function TitleText({
       {children}
     </Text>
   );
-}
+});
 
-function ActionButton({
+const ActionButton = memo(function ActionButton({
   label,
   icon,
   onPress,
@@ -295,9 +296,9 @@ function ActionButton({
       )}
     </TButton>
   );
-}
+});
 
-function Chip({
+const Chip = memo(function Chip({
   label,
   icon,
   active = false,
@@ -370,9 +371,9 @@ function Chip({
       {content}
     </TButton>
   );
-}
+});
 
-function CompactIconButton({
+const CompactIconButton = memo(function CompactIconButton({
   label,
   icon,
   onPress,
@@ -400,9 +401,9 @@ function CompactIconButton({
       <MaterialCommunityIcons name={icon} size={18} color={palette.textMuted} />
     </TButton>
   );
-}
+});
 
-function ImageActions({
+const ImageActions = memo(function ImageActions({
   currentImageUri,
   hasImageDraft,
   palette,
@@ -458,9 +459,9 @@ function ImageActions({
       </XStack>
     </Card>
   );
-}
+});
 
-function StatCard({
+const StatCard = memo(function StatCard({
   label,
   value,
   icon,
@@ -493,9 +494,9 @@ function StatCard({
       </YStack>
     </Card>
   );
-}
+});
 
-function ImagePreview({ uri, palette }: { uri: string; palette: ThemePalette }) {
+const ImagePreview = memo(function ImagePreview({ uri, palette }: { uri: string; palette: ThemePalette }) {
   if (!uri) {
     return (
       <Stack
@@ -521,9 +522,9 @@ function ImagePreview({ uri, palette }: { uri: string; palette: ThemePalette }) 
       <Image source={{ uri }} contentFit="cover" style={{ width: "100%", height: "100%" }} />
     </Stack>
   );
-}
+});
 
-function Field({
+const Field = memo(function Field({
   label,
   value,
   placeholder,
@@ -571,9 +572,9 @@ function Field({
       {!errorText && helperText ? <SmallText color={palette.textMuted}>{helperText}</SmallText> : null}
     </YStack>
   );
-}
+});
 
-function AttributeEditor({
+const AttributeEditor = memo(function AttributeEditor({
   value,
   errorText,
   palette,
@@ -683,9 +684,9 @@ function AttributeEditor({
       {errorText ? <SmallText color={palette.danger}>{errorText}</SmallText> : <SmallText color={palette.textMuted}>Optional structured item details for filtering, notes, and future customization.</SmallText>}
     </YStack>
   );
-}
+});
 
-function ToggleButton({
+const ToggleButton = memo(function ToggleButton({
   label,
   icon,
   active,
@@ -724,9 +725,9 @@ function ToggleButton({
       </XStack>
     </TButton>
   );
-}
+});
 
-function EmptyPanel({
+const EmptyPanel = memo(function EmptyPanel({
   title,
   subtitle,
   icon,
@@ -757,9 +758,9 @@ function EmptyPanel({
       </YStack>
     </Card>
   );
-}
+});
 
-function LoadingItemSkeleton({ palette }: { palette: ThemePalette }) {
+const LoadingItemSkeleton = memo(function LoadingItemSkeleton({ palette }: { palette: ThemePalette }) {
   return (
     <Card borderRadius={22} padding={12} borderWidth={1} borderColor={palette.border} backgroundColor={palette.card}>
       <XStack gap={12}>
@@ -775,9 +776,9 @@ function LoadingItemSkeleton({ palette }: { palette: ThemePalette }) {
       </XStack>
     </Card>
   );
-}
+});
 
-function ShopItemCard({
+const ShopItemCard = memo(function ShopItemCard({
   item,
   palette,
   deleting,
@@ -915,9 +916,9 @@ function ShopItemCard({
       </XStack>
     </Card>
   );
-}
+});
 
-function ErrorBanner({
+const ErrorBanner = memo(function ErrorBanner({
   dashboardError,
   hasShops,
   palette,
@@ -938,9 +939,9 @@ function ErrorBanner({
       </XStack>
     </Card>
   );
-}
+});
 
-function AdminItemsPriceView({
+const AdminItemsPriceView = memo(function AdminItemsPriceView({
   selectedShop,
   palette,
   priceLoading,
@@ -966,10 +967,10 @@ function AdminItemsPriceView({
   priceLoading: boolean;
   priceBootstrap: ShopBootstrapResponse | null;
   currentPriceItem:
-    | (ShopBootstrapResponse["items"][number] & {
-        current_price?: string | null;
-      })
-    | null;
+  | (ShopBootstrapResponse["items"][number] & {
+    current_price?: string | null;
+  })
+  | null;
   selectedPriceItemId: UUID | null;
   draftPrice: string;
   priceError: string | null;
@@ -987,8 +988,7 @@ function AdminItemsPriceView({
 }) {
   const summaryText =
     currentPriceItem && draftPrice
-      ? `${currentPriceItem.item_name} will update from ${
-        currentPriceItem.current_price ? `Rs. ${toMoneyString(currentPriceItem.current_price)}` : "not set"
+      ? `${currentPriceItem.item_name} will update from ${currentPriceItem.current_price ? `Rs. ${toMoneyString(currentPriceItem.current_price)}` : "not set"
       } to Rs. ${draftPrice}.`
       : "Select an allocated item and enter a price to preview the update.";
 
@@ -1056,36 +1056,36 @@ function AdminItemsPriceView({
                   showsVerticalScrollIndicator={false}
                   ItemSeparatorComponent={() => <Stack height={8} />}
                   renderItem={({ item }) => {
-                  const resolvedPrice = resolveItemPrice(item.item_id, item.current_price);
-                  const selected = item.item_id === selectedPriceItemId;
-                  return (
-                    <Card
-                      key={item.item_id}
-                      borderRadius={18}
-                      padding={12}
-                      borderWidth={1}
-                      borderColor={selected ? palette.items : palette.border}
-                      backgroundColor={selected ? palette.itemsSoft : palette.surfaceMuted}
-                      onPress={() => onSelectPriceItem(item.item_id, item.current_price)}
-                      pressStyle={{ opacity: 0.9, scale: 0.99 }}
-                    >
-                      <XStack alignItems="center" justifyContent="space-between" gap={10}>
-                        <YStack flex={1} minWidth={0} gap={2}>
-                          <TitleText color={palette.textPrimary} size="sm" numberOfLines={1}>{item.item_name}</TitleText>
-                          <SmallText color={palette.textMuted}>
-                            {item.item_tamil_name ?? "Tamil name missing"} · {item.base_unit.toUpperCase()}
-                          </SmallText>
-                        </YStack>
-                        <Chip
-                          label={resolvedPrice ? `Rs. ${toMoneyString(resolvedPrice)}` : "No price"}
-                          icon={resolvedPrice ? "cash-check" : "cash-clock"}
-                          active
-                          tone={resolvedPrice ? "primary" : "gold"}
-                          palette={palette}
-                        />
-                      </XStack>
-                    </Card>
-                  );
+                    const resolvedPrice = resolveItemPrice(item.item_id, item.current_price);
+                    const selected = item.item_id === selectedPriceItemId;
+                    return (
+                      <Card
+                        key={item.item_id}
+                        borderRadius={18}
+                        padding={12}
+                        borderWidth={1}
+                        borderColor={selected ? palette.items : palette.border}
+                        backgroundColor={selected ? palette.itemsSoft : palette.surfaceMuted}
+                        onPress={() => onSelectPriceItem(item.item_id, item.current_price)}
+                        pressStyle={{ opacity: 0.9, scale: 0.99 }}
+                      >
+                        <XStack alignItems="center" justifyContent="space-between" gap={10}>
+                          <YStack flex={1} minWidth={0} gap={2}>
+                            <TitleText color={palette.textPrimary} size="sm" numberOfLines={1}>{item.item_name}</TitleText>
+                            <SmallText color={palette.textMuted}>
+                              {item.item_tamil_name ?? "Tamil name missing"} · {item.base_unit.toUpperCase()}
+                            </SmallText>
+                          </YStack>
+                          <Chip
+                            label={resolvedPrice ? `Rs. ${toMoneyString(resolvedPrice)}` : "No price"}
+                            icon={resolvedPrice ? "cash-check" : "cash-clock"}
+                            active
+                            tone={resolvedPrice ? "primary" : "gold"}
+                            palette={palette}
+                          />
+                        </XStack>
+                      </Card>
+                    );
                   }}
                 />
               </Stack>
@@ -1101,20 +1101,12 @@ function AdminItemsPriceView({
                 </SmallText>
               </YStack>
 
-              <Input
+              <SearchField
                 value={draftPrice}
                 placeholder="Enter price"
-                placeholderTextColor={palette.textMuted as never}
-                keyboardType="decimal-pad"
+                palette={palette}
                 onChangeText={onChangeDraftPrice}
-                minHeight={52}
-                borderRadius={16}
-                borderWidth={1}
-                borderColor={priceError ? palette.danger : palette.border}
-                backgroundColor={palette.surfaceMuted}
-                color={palette.textPrimary}
-                fontSize={16}
-                fontWeight="800"
+                accessibilityLabel="Item price"
               />
               {priceHelperText ? <SmallText color={palette.textMuted}>{priceHelperText}</SmallText> : null}
               {priceError ? <SmallText color={palette.danger}>{priceError}</SmallText> : null}
@@ -1160,9 +1152,9 @@ function AdminItemsPriceView({
       )}
     </YStack>
   );
-}
+});
 
-function WorkspaceNav({
+const WorkspaceNav = memo(function WorkspaceNav({
   viewMode,
   selectedShop,
   totalCount,
@@ -1244,9 +1236,9 @@ function WorkspaceNav({
       </XStack>
     </YStack>
   );
-}
+});
 
-function ShopSelectorPanel({
+const ShopSelectorPanel = memo(function ShopSelectorPanel({
   visible,
   shops,
   selectedShopId,
@@ -1285,9 +1277,9 @@ function ShopSelectorPanel({
       </ScrollView>
     </YStack>
   );
-}
+});
 
-function ItemsStatsRow({
+const ItemsStatsRow = memo(function ItemsStatsRow({
   allocatedCount,
   missingPriceCount,
   stalePriceCount,
@@ -1308,9 +1300,9 @@ function ItemsStatsRow({
       <StatCard label="Available" value={availableCount} icon="link-variant-off" tone="gold" palette={palette} />
     </XStack>
   );
-}
+});
 
-function ItemEditorPanel({
+const ItemEditorPanel = memo(function ItemEditorPanel({
   formIsOpen,
   editingShopOverride,
   editingItem,
@@ -1501,9 +1493,9 @@ function ItemEditorPanel({
       </YStack>
     </Card>
   );
-}
+});
 
-function ItemsToolbar({
+const ItemsToolbar = memo(function ItemsToolbar({
   title,
   subtitle,
   viewMode,
@@ -1549,19 +1541,11 @@ function ItemsToolbar({
 
       <Card borderRadius={18} padding={12} borderWidth={1} borderColor={palette.border} backgroundColor={palette.card}>
         <YStack gap={12}>
-          <Input
+          <SearchField
             value={itemSearch}
             placeholder="Search English, Tamil, unit"
-            placeholderTextColor={palette.textMuted as never}
+            palette={palette}
             onChangeText={onChangeSearch}
-            minHeight={48}
-            borderRadius={14}
-            borderWidth={1}
-            borderColor={palette.border}
-            backgroundColor={palette.surfaceMuted}
-            color={palette.textPrimary}
-            fontSize={14}
-            fontWeight="700"
           />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
             {visibleFilterOptions.map((option) => (
@@ -1580,7 +1564,7 @@ function ItemsToolbar({
       </Card>
     </YStack>
   );
-}
+});
 
 export function AdminItemsTab({
   dashboardError,
@@ -1641,7 +1625,12 @@ export function AdminItemsTab({
   onSaveSelectedPrice,
   onSavePrice,
 }: AdminItemsTabProps) {
-  const selectedShop = shops.find((shop) => shop.id === selectedShopId) ?? null;
+  const selectedShop = useMemo(() => shops.find((s) => s.id === selectedShopId) || null, [shops, selectedShopId]);
+  const hasSelectedShop = Boolean(selectedShop);
+
+  const workspaceNeedsShop =
+    viewMode === AdminItemWorkspace.Shop || viewMode === AdminItemWorkspace.Prices;
+
   const computedFilterCounts = useMemo(() => ({
     all: items.length,
     allocated: items.filter((item) => item.allocated || item.scope === ItemScope.Shop).length,
@@ -1653,59 +1642,200 @@ export function AdminItemsTab({
     stale_price: items.filter((item) => item.available_for_billing && item.price_status === PriceStatus.Stale).length,
     paused: items.filter((item) => !item.is_active).length,
   }), [items]);
-  const filterCounts = itemCounts ?? computedFilterCounts;
-  const visibleItems = items;
-  const allocatedCount = filterCounts.allocated;
-  const availableCount = filterCounts.available;
-  const missingPriceCount = filterCounts.needs_price;
-  const stalePriceCount = filterCounts.stale_price;
-  const itemsTitle = viewMode === AdminItemWorkspace.Catalogue ? "Catalogue" : "Shop items";
+
+  const filterCounts = itemCounts || computedFilterCounts;
+
+  const visibleFilterOptions = useMemo(() => {
+    if (viewMode === AdminItemWorkspace.Catalogue) {
+      return filterOptions.filter((opt) => catalogueFilterSet.has(opt.value));
+    }
+    return filterOptions.filter((opt) => opt.value !== AdminItemFilter.Catalogue);
+  }, [viewMode]);
+
+  const itemsTitle = viewMode === AdminItemWorkspace.Catalogue ? "Catalogue items" : "Shop allocations";
   const itemsSubtitle =
     viewMode === AdminItemWorkspace.Catalogue
-      ? "Global item records, images, usage, and archive/delete eligibility."
-      : `${selectedShop?.name ?? "Selected shop"} allocations, overrides, and billing status.`;
-  const formIsOpen = formVisible || Boolean(editingItem);
-  const editingShopOverride = viewMode === AdminItemWorkspace.Shop && editingItem?.scope === ItemScope.Global;
-  const currentImageUri = imageDraft?.uri ?? (editingItem?.image_path ? resolveApiUrl(editingItem.image_path) : "");
-  const englishNameError =
-    formIsOpen && form.name.trim().length > 0 && form.name.trim().length < 2
-      ? "Use at least 2 characters."
-      : null;
+      ? "Global master data for all shops."
+      : `Managing items specifically for ${selectedShop?.name || "shop"}.`;
+
+  const visibleItems = items;
+  const itemListData = visibleItems;
+
+  const englishNameError = form.name.length > 0 && form.name.length < 3 ? "Name too short" : null;
   const tamilNameError =
-    formIsOpen && form.tamilName.trim().length === 0
-      ? "Tamil name is required."
-      : null;
-  const attributesError =
-    formIsOpen && form.customAttributesText.trim()
-      ? (() => {
-        try {
-          const parsed = JSON.parse(form.customAttributesText);
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? null
-            : "Use a JSON object, for example {\"grade\":\"A\"}.";
-        } catch {
-          return "Custom attributes must be valid JSON.";
-        }
-      })()
-      : null;
+    form.tamilName.length > 0 && form.tamilName.length < 3 ? "Tamil name too short" : null;
+  const attributesError = null;
+
   const itemSubmitDisabled =
-    savingItem ||
-    form.name.trim().length < 2 ||
-    form.tamilName.trim().length === 0 ||
-    Boolean(attributesError);
-  const workspaceNeedsShop = viewMode !== AdminItemWorkspace.Catalogue;
-  const workspaceReady = viewMode === AdminItemWorkspace.Catalogue || Boolean(selectedShop);
-  const itemListData =
-    workspaceReady && viewMode !== AdminItemWorkspace.Prices && !(itemsLoading && items.length === 0) && visibleItems.length > 0
-      ? visibleItems
-      : [];
-  const visibleFilterOptions = useMemo(
-    () =>
-      viewMode === AdminItemWorkspace.Catalogue
-        ? filterOptions.filter((option) => catalogueFilterSet.has(option.value))
-        : filterOptions,
-    [viewMode],
-  );
+    savingItem || !form.name || form.name.length < 3 || (form.tamilName.length > 0 && form.tamilName.length < 3);
+
+  const allocatedCount = filterCounts.allocated;
+  const missingPriceCount = filterCounts.needs_price;
+  const stalePriceCount = filterCounts.stale_price;
+  const availableCount = filterCounts.available;
+
+  const currentImageUri = imageDraft ? imageDraft.uri : editingItem?.image_path ? resolveApiUrl(editingItem.image_path) : "";
+
+  const header = useMemo(() => (
+    <YStack gap={14} marginBottom={itemListData.length > 0 ? 12 : 0}>
+      <ErrorBanner dashboardError={dashboardError} hasShops={hasShops} palette={palette} />
+      <WorkspaceNav
+        viewMode={viewMode}
+        selectedShop={selectedShop}
+        totalCount={itemTotalCount}
+        filterCounts={filterCounts}
+        palette={palette}
+        onChangeWorkspace={onChangeWorkspace}
+        onOpenPrices={onOpenPrices}
+      />
+      <ShopSelectorPanel
+        visible={workspaceNeedsShop}
+        shops={shops}
+        selectedShopId={selectedShopId}
+        selectedShop={selectedShop}
+        palette={palette}
+        onSelectShop={onSelectShop}
+      />
+
+      {workspaceNeedsShop && !selectedShop ? (
+        <EmptyPanel
+          title="Select a shop first"
+          subtitle="Choose a shop to manage allocations, shop-owned items, or prices."
+          icon="store-alert-outline"
+          palette={palette}
+        />
+      ) : (
+        <YStack gap={14}>
+          {viewMode === AdminItemWorkspace.Prices && selectedShop ? (
+            <AdminItemsPriceView
+              selectedShop={selectedShop}
+              palette={palette}
+              priceLoading={priceLoading}
+              priceBootstrap={priceBootstrap}
+              currentPriceItem={currentPriceItem}
+              selectedPriceItemId={selectedPriceItemId}
+              draftPrice={draftPrice}
+              priceError={priceError}
+              priceHelperText={priceHelperText}
+              savePriceDisabled={savePriceDisabled}
+              savingPrice={savingPrice}
+              saveSelectedPriceDisabled={saveSelectedPriceDisabled}
+              savingSelectedPrice={savingSelectedPrice}
+              resolveItemPrice={resolveItemPrice}
+              onBackToItems={onBackToItems}
+              onSelectPriceItem={onSelectPriceItem}
+              onChangeDraftPrice={onChangeDraftPrice}
+              onSaveSelectedPrice={onSaveSelectedPrice}
+              onSavePrice={onSavePrice}
+            />
+          ) : (
+            <>
+              <ItemsStatsRow
+                allocatedCount={allocatedCount}
+                missingPriceCount={missingPriceCount}
+                stalePriceCount={stalePriceCount}
+                availableCount={availableCount}
+                palette={palette}
+              />
+              <ItemEditorPanel
+                formIsOpen={formVisible}
+                editingShopOverride={false}
+                editingItem={editingItem}
+                form={form}
+                imageDraft={imageDraft}
+                currentImageUri={currentImageUri}
+                englishNameError={englishNameError}
+                tamilNameError={tamilNameError}
+                attributesError={attributesError}
+                itemSubmitDisabled={itemSubmitDisabled}
+                savingItem={savingItem}
+                palette={palette}
+                onCancelEdit={onCancelEdit}
+                onPickImage={onPickImage}
+                onClearImage={onClearImage}
+                onRemoveImage={onRemoveImage}
+                onChangeForm={onChangeForm}
+                onSubmit={onSubmit}
+              />
+              <ItemsToolbar
+                title={itemsTitle}
+                subtitle={itemsSubtitle}
+                viewMode={viewMode}
+                itemSearch={itemSearch}
+                filter={filter}
+                filterCounts={filterCounts}
+                visibleFilterOptions={visibleFilterOptions}
+                palette={palette}
+                onChangeSearch={onChangeSearch}
+                onChangeFilter={onChangeFilter}
+                onOpenCreate={onOpenCreate}
+              />
+            </>
+          )}
+        </YStack>
+      )}
+    </YStack>
+  ), [
+    dashboardError,
+    hasShops,
+    palette,
+    viewMode,
+    selectedShop,
+    itemTotalCount,
+    filterCounts,
+    onChangeWorkspace,
+    onOpenPrices,
+    workspaceNeedsShop,
+    shops,
+    selectedShopId,
+    onSelectShop,
+    priceLoading,
+    priceBootstrap,
+    currentPriceItem,
+    selectedPriceItemId,
+    draftPrice,
+    priceError,
+    priceHelperText,
+    savePriceDisabled,
+    savingPrice,
+    saveSelectedPriceDisabled,
+    savingSelectedPrice,
+    resolveItemPrice,
+    onBackToItems,
+    onSelectPriceItem,
+    onChangeDraftPrice,
+    onSaveSelectedPrice,
+    onSavePrice,
+    allocatedCount,
+    missingPriceCount,
+    stalePriceCount,
+    availableCount,
+    formVisible,
+    editingItem,
+    form,
+    imageDraft,
+    currentImageUri,
+    englishNameError,
+    tamilNameError,
+    attributesError,
+    itemSubmitDisabled,
+    savingItem,
+    onCancelEdit,
+    onPickImage,
+    onClearImage,
+    onRemoveImage,
+    onChangeForm,
+    onSubmit,
+    itemsTitle,
+    itemsSubtitle,
+    itemSearch,
+    filter,
+    visibleFilterOptions,
+    onChangeSearch,
+    onChangeFilter,
+    onOpenCreate,
+    itemListData.length,
+  ]);
 
   return (
     <FlatList
@@ -1728,155 +1858,60 @@ export function AdminItemsTab({
       refreshControl={<RefreshControl refreshing={refreshing || itemsLoading} onRefresh={onRefresh} tintColor={palette.items} />}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      ListHeaderComponent={(
-        <YStack gap={14} marginBottom={itemListData.length > 0 ? 12 : 0}>
-          <ErrorBanner dashboardError={dashboardError} hasShops={hasShops} palette={palette} />
-          <WorkspaceNav
-            viewMode={viewMode}
-            selectedShop={selectedShop}
-            totalCount={itemTotalCount}
-            filterCounts={filterCounts}
-            palette={palette}
-            onChangeWorkspace={onChangeWorkspace}
-            onOpenPrices={onOpenPrices}
-          />
-          <ShopSelectorPanel
-            visible={workspaceNeedsShop}
-            shops={shops}
-            selectedShopId={selectedShopId}
-            selectedShop={selectedShop}
-            palette={palette}
-            onSelectShop={onSelectShop}
-          />
-
-          {workspaceNeedsShop && !selectedShop ? (
-            <EmptyPanel
-              title="Select a shop first"
-              subtitle="Choose a shop to manage allocations, shop-owned items, or prices."
-              icon="store-alert-outline"
+      ListHeaderComponent={header}
+      ListFooterComponent={
+        itemsHasMore ? (
+          <YStack marginTop={12}>
+            <ActionButton
+              label="Load more items"
+              icon="chevron-down-circle-outline"
+              onPress={onLoadMore}
+              loading={itemsLoadingMore}
               palette={palette}
+              variant="secondary"
+              fullWidth
             />
-          ) : (
-            <YStack gap={14}>
-              {viewMode === AdminItemWorkspace.Prices && selectedShop ? (
-                <AdminItemsPriceView
-                  selectedShop={selectedShop}
-                  palette={palette}
-                  priceLoading={priceLoading}
-                  priceBootstrap={priceBootstrap}
-                  currentPriceItem={currentPriceItem}
-                  selectedPriceItemId={selectedPriceItemId}
-                  draftPrice={draftPrice}
-                  priceError={priceError}
-                  priceHelperText={priceHelperText}
-                  savePriceDisabled={savePriceDisabled}
-                  savingPrice={savingPrice}
-                  saveSelectedPriceDisabled={saveSelectedPriceDisabled}
-                  savingSelectedPrice={savingSelectedPrice}
-                  resolveItemPrice={resolveItemPrice}
-                  onBackToItems={onBackToItems}
-                  onSelectPriceItem={onSelectPriceItem}
-                  onChangeDraftPrice={onChangeDraftPrice}
-                  onSaveSelectedPrice={onSaveSelectedPrice}
-                  onSavePrice={onSavePrice}
-                />
-              ) : (
-                <>
-                  <ItemsStatsRow
-                    allocatedCount={allocatedCount}
-                    missingPriceCount={missingPriceCount}
-                    stalePriceCount={stalePriceCount}
-                    availableCount={availableCount}
-                    palette={palette}
-                  />
-                  <ItemEditorPanel
-                    formIsOpen={formIsOpen}
-                    editingShopOverride={editingShopOverride}
-                    editingItem={editingItem}
-                    form={form}
-                    imageDraft={imageDraft}
-                    currentImageUri={currentImageUri}
-                    englishNameError={englishNameError}
-                    tamilNameError={tamilNameError}
-                    attributesError={attributesError}
-                    itemSubmitDisabled={itemSubmitDisabled}
-                    savingItem={savingItem}
-                    palette={palette}
-                    onCancelEdit={onCancelEdit}
-                    onPickImage={onPickImage}
-                    onClearImage={onClearImage}
-                    onRemoveImage={onRemoveImage}
-                    onChangeForm={onChangeForm}
-                    onSubmit={onSubmit}
-                  />
-                  <ItemsToolbar
-                    title={itemsTitle}
-                    subtitle={itemsSubtitle}
-                    viewMode={viewMode}
-                    itemSearch={itemSearch}
-                    filter={filter}
-                    filterCounts={filterCounts}
-                    visibleFilterOptions={visibleFilterOptions}
-                    palette={palette}
-                    onChangeSearch={onChangeSearch}
-                    onChangeFilter={onChangeFilter}
-                    onOpenCreate={onOpenCreate}
-                  />
-
-                  {itemsLoading && items.length === 0 ? (
-                    <YStack gap={12}>
-                      <LoadingItemSkeleton palette={palette} />
-                      <LoadingItemSkeleton palette={palette} />
-                      <LoadingItemSkeleton palette={palette} />
-                    </YStack>
-                  ) : visibleItems.length === 0 ? (
-                    <EmptyPanel
-                      title={items.length === 0 ? "No items available yet" : "No matching items"}
-                      subtitle={
-                        items.length === 0
-                          ? "Create catalogue data or add the first shop item."
-                          : "Try a different filter, allocate an item, or clear the search text."
-                      }
-                      icon="playlist-remove"
-                      palette={palette}
-                      actionLabel={items.length === 0 ? "Add item" : undefined}
-                      onAction={
-                        items.length === 0
-                          ? () =>
-                            onOpenCreate(
-                              viewMode === AdminItemWorkspace.Catalogue
-                                ? AdminItemFormScope.Catalogue
-                                : AdminItemFormScope.Shop,
-                            )
-                          : undefined
-                      }
-                    />
-                  ) : itemsLoading ? (
-                    <Card borderRadius={18} padding={12} backgroundColor={palette.surfaceMuted} borderWidth={0}>
-                      <XStack justifyContent="center" alignItems="center" gap={10}>
-                        <Spinner color={palette.items} />
-                        <SmallText color={palette.textMuted}>Refreshing items...</SmallText>
-                      </XStack>
-                    </Card>
-                  ) : null}
-
-                  {itemsHasMore ? (
-                    <ActionButton
-                      label="Load more items"
-                      icon="chevron-down-circle-outline"
-                      onPress={onLoadMore}
-                      loading={itemsLoadingMore}
-                      palette={palette}
-                      variant="secondary"
-                      fullWidth
-                    />
-                  ) : null}
-                </>
-              )}
-            </YStack>
-          )}
-        </YStack>
-      )}
+          </YStack>
+        ) : null
+      }
+      ListEmptyComponent={
+        itemsLoading && items.length === 0 ? (
+          <YStack gap={12}>
+            <LoadingItemSkeleton palette={palette} />
+            <LoadingItemSkeleton palette={palette} />
+            <LoadingItemSkeleton palette={palette} />
+          </YStack>
+        ) : items.length === 0 ? (
+          <EmptyPanel
+            title={items.length === 0 ? "No items available yet" : "No matching items"}
+            subtitle={
+              items.length === 0
+                ? "Create catalogue data or add the first shop item."
+                : "Try a different filter, allocate an item, or clear the search text."
+            }
+            icon="playlist-remove"
+            palette={palette}
+            actionLabel={items.length === 0 ? "Add item" : undefined}
+            onAction={
+              items.length === 0
+                ? () =>
+                  onOpenCreate(
+                    viewMode === AdminItemWorkspace.Catalogue
+                      ? AdminItemFormScope.Catalogue
+                      : AdminItemFormScope.Shop,
+                  )
+                : undefined
+            }
+          />
+        ) : itemsLoading ? (
+          <Card borderRadius={18} padding={12} backgroundColor={palette.surfaceMuted} borderWidth={0}>
+            <XStack justifyContent="center" alignItems="center" gap={10}>
+              <Spinner color={palette.items} />
+              <SmallText color={palette.textMuted}>Refreshing items...</SmallText>
+            </XStack>
+          </Card>
+        ) : null
+      }
     />
   );
 }

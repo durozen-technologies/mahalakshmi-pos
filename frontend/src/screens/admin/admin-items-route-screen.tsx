@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { YStack } from "tamagui";
 
@@ -528,27 +528,27 @@ function AdminItemsRoute({
     const isGlobal = item.scope === ItemScope.Global;
     const primary: RowAction = isCatalogueWorkspace
       ? {
+        label: "Edit",
+        icon: "pencil-outline",
+        onPress: () => navigateEdit(item),
+      }
+      : isGlobal
+        ? {
+          label: "Remove",
+          icon: "link-variant-off",
+          tone: "danger",
+          disabled: !item.can_deallocate,
+          onPress: () => {
+            void shopItemsState.deallocate(item.id)
+              .then(() => showToast("success", `${item.name} removed from shop.`))
+              .catch((error) => showToast("error", error instanceof Error ? error.message : "Unable to remove item."));
+          },
+        }
+        : {
           label: "Edit",
           icon: "pencil-outline",
           onPress: () => navigateEdit(item),
-        }
-      : isGlobal
-        ? {
-            label: "Remove",
-            icon: "link-variant-off",
-            tone: "danger",
-            disabled: !item.can_deallocate,
-            onPress: () => {
-              void shopItemsState.deallocate(item.id)
-                .then(() => showToast("success", `${item.name} removed from shop.`))
-                .catch((error) => showToast("error", error instanceof Error ? error.message : "Unable to remove item."));
-            },
-          }
-        : {
-            label: "Edit",
-            icon: "pencil-outline",
-            onPress: () => navigateEdit(item),
-          };
+        };
 
     const secondary: RowAction[] = [];
 
@@ -625,10 +625,10 @@ function AdminItemsRoute({
       : workspace === AdminItemWorkspace.Assumption
         ? catalogueState.refreshing
         : workspace === AdminItemWorkspace.Prices
-        ? priceState.refreshing || priceHistoryLoading || shopsState.loading
-        : shopItemsTab === "available"
-          ? availableCatalogueState.refreshing || shopsState.loading
-          : shopItemsState.refreshing || shopsState.loading;
+          ? priceState.refreshing || priceHistoryLoading || shopsState.loading
+          : shopItemsTab === "available"
+            ? availableCatalogueState.refreshing || shopsState.loading
+            : shopItemsState.refreshing || shopsState.loading;
 
   const changeAssumptionDraft = useCallback((item: ShopItemRead, patch: AssumptionDraft) => {
     setAssumptionDrafts((current) => {
@@ -1099,9 +1099,9 @@ function AdminItemsRoute({
       ? "Catalogue"
       : workspace === AdminItemWorkspace.Assumption
         ? "Assumption"
-      : workspace === AdminItemWorkspace.Prices
-        ? "Prices"
-        : "Shop items";
+        : workspace === AdminItemWorkspace.Prices
+          ? "Prices"
+          : "Shop items";
   const subtitle =
     workspace === AdminItemWorkspace.Catalogue || workspace === AdminItemWorkspace.Assumption
       ? "Global item workspace"
@@ -1132,13 +1132,19 @@ function AdminItemsRoute({
           onRefresh={refreshCurrentItemsPage}
         />
       </View>
-      {workspace === AdminItemWorkspace.Catalogue
-        ? renderCatalogue()
-        : workspace === AdminItemWorkspace.Assumption
-          ? renderAssumption()
-        : workspace === AdminItemWorkspace.Prices
-          ? renderPrices()
-          : renderShopItems()}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        style={styles.keyboardAvoid}
+      >
+        {workspace === AdminItemWorkspace.Catalogue
+          ? renderCatalogue()
+          : workspace === AdminItemWorkspace.Assumption
+            ? renderAssumption()
+            : workspace === AdminItemWorkspace.Prices
+              ? renderPrices()
+              : renderShopItems()}
+      </KeyboardAvoidingView>
       <ToastBanner toast={toast} palette={palette} animatedValue={toastAnimation} />
     </SafeAreaView>
   );
@@ -1162,6 +1168,9 @@ export function AdminItemPricesScreen(props: AdminItemPricesScreenProps) {
 
 const styles = StyleSheet.create({
   screen: {
+    flex: 1,
+  },
+  keyboardAvoid: {
     flex: 1,
   },
   topBar: {

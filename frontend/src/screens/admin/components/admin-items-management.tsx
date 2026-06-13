@@ -1069,7 +1069,7 @@ function AssumptionRow({
             value={percent}
             onChangeText={(value) => onChangeDraft(item, { assumption_percent: sanitizePercentInput(value) })}
             disabled={!editable || saving}
-            placeholder="78"
+            placeholder=""
             placeholderTextColor={palette.textMuted as never}
             keyboardType="decimal-pad"
             minHeight={42}
@@ -1700,7 +1700,7 @@ export function PriceGrid({
                   disabled={priceState.dirtyCount === 0 || priceState.invalidDirtyCount > 0}
                   onPress={() => onSaveEdited(priceState.dirtyEntries)}
                 />
-                <ActionButton
+                <ActionButton 
                   label="Save"
                   icon="calendar-check-outline"
                   palette={palette}

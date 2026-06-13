@@ -62,16 +62,14 @@ const PERIOD_OPTIONS: { value: AnalyticsPeriod; label: string }[] = [
 const SECTION_OPTIONS: { key: AdminReportSection; label: string; icon: IconName }[] = [
   { key: "sales", label: "Sales", icon: "chart-line" },
   { key: "billing", label: "Billing", icon: "receipt-text-outline" },
-  { key: "items", label: "Items", icon: "playlist-edit" },
-  { key: "inventory", label: "Inventory", icon: "warehouse" },
+  { key: "expenses", label: "Expenses", icon: "currency-inr" },
   { key: "over_report", label: "Overall Report", icon: "file-chart-outline" },
 ];
 
 const SECTION_ORDER: AdminReportSection[] = [
   "sales",
   "billing",
-  "items",
-  "inventory",
+  "expenses",
   "over_report",
 ];
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -213,6 +211,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
   const [selectedShopIds, setSelectedShopIds] = useState<UUID[]>([]);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [selectedSections, setSelectedSections] = useState<AdminReportSection[]>(["sales"]);
+  const [language, setLanguage] = useState<"en" | "ta">("en");
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
   const weekOptions = useMemo(() => buildWeekOptions(), []);
@@ -372,6 +371,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
             ? { startDate: rangeStartDate, endDate: rangeEndDate }
             : undefined,
         shopIds: allBranches ? undefined : selectedShopIds,
+        language,
       });
       const sharingModule = requireOptionalNativeModule<ExpoSharingNativeModule>("ExpoSharing");
       let shared = false;
@@ -406,6 +406,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
     allBranches,
     canGenerate,
     detailLevel,
+    language,
     period,
     rangeEndDate,
     rangeStartDate,
@@ -433,11 +434,13 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
           ? { startDate: rangeStartDate, endDate: rangeEndDate }
           : undefined,
       shopIds: allBranches ? undefined : selectedShopIds,
+      language,
     });
   }, [
     allBranches,
     canGenerate,
     detailLevel,
+    language,
     navigation,
     period,
     rangeEndDate,
@@ -765,6 +768,39 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
         </View>
       </View>
 
+      {hasOverallReport ? (
+        <View style={styles.sectionBlock}>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Language</Text>
+          <View style={[styles.segmentedControl, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
+            {(["en", "ta"] as ("en" | "ta")[]).map((lang) => {
+              const selected = language === lang;
+              return (
+                <Pressable
+                  key={lang}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    triggerHaptic();
+                    setLanguage(lang);
+                  }}
+                  style={[
+                    styles.segmentButton,
+                    {
+                      backgroundColor: selected ? palette.card : "transparent",
+                      borderColor: selected ? palette.border : "transparent",
+                    },
+                  ]}
+                >
+                  <Text style={[styles.segmentText, { color: selected ? palette.textPrimary : palette.textMuted }]}>
+                    {lang === "en" ? "English" : "Tamil"}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.sectionBlock}>
         <View style={styles.branchHeaderRow}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Branches</Text>
@@ -864,7 +900,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
         accessibilityRole="button"
         accessibilityState={{ disabled: !canGenerate }}
         disabled={!canGenerate}
-        onPress={hasOverallReport ? handlePreviewOverallReport : handleGenerate}
+        onPress={handleGenerate}
         style={[
           styles.generateButton,
           adminShadow(palette.shadow, 0.08, 10, 14),
@@ -884,7 +920,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
           />
         )}
         <Text style={[styles.generateButtonText, { color: palette.onPrimary }]}>
-          {generating ? "Generating..." : hasOverallReport ? "Preview Overall Report" : "Generate PDF"}
+          {generating ? "Generating..." : `Generate PDF`}
         </Text>
       </Pressable>
     </View>
@@ -933,7 +969,7 @@ export function AdminReportsScreen({ navigation }: AdminReportsScreenProps) {
         maxToRenderPerBatch={8}
         updateCellsBatchingPeriod={48}
         windowSize={7}
-        extraData={`${allBranches}-${selectedShopIds.join(",")}-${selectedSections.join(",")}-${detailLevel}-${period}-${branchDropdownOpen}`}
+        extraData={`${allBranches}-${selectedShopIds.join(",")}-${selectedSections.join(",")}-${detailLevel}-${period}-${branchDropdownOpen}-${language}`}
         showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
@@ -1426,6 +1462,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingTop: 14,
+    paddingHorizontal: 16,
+    gap: 10,
   },
   generateButton: {
     minHeight: 54,

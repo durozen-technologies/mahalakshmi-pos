@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ScrollView,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -33,6 +34,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ItemThumbnail } from "@/components/ui/item-thumbnail";
 import { LoadingState } from "@/components/ui/loading-state";
 import { TextField } from "@/components/ui/text-field";
+import { ShopHeaderActions } from "@/components/shop-header";
 import { useApiConnection } from "@/hooks/use-api-connection";
 import {
   getLocalizedItemName,
@@ -49,6 +51,9 @@ import {
 } from "@/utils/expense-history-filters";
 import { formatCurrency, formatDateTime } from "@/utils/format";
 import { getItemThumbnailUri } from "@/utils/item-images";
+import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { usePriceStore } from "@/store/price-store";
 
 type CursorState = {
   sortOrder: number | null;
@@ -67,8 +72,8 @@ const SHOP_CALENDAR_COLORS: CalendarPickerColors = {
   textPrimary: "#1E2B22",
   textSecondary: "#4B5C50",
   textMuted: "#6C7A70",
-  accent: "#9A6700",
-  accentSoft: "#FAEFD8",
+  accent: "#147D52",
+  accentSoft: "#DDEEE6",
   onAccent: "#FFFFFF",
 };
 
@@ -100,17 +105,20 @@ function isValidAmount(value: string) {
 function ExpenseRow({
   item,
   displayName,
+  language,
   onPress,
 }: {
   item: ShopExpenseItemRead;
   displayName: string;
+  language: string;
   onPress: (item: ShopExpenseItemRead) => void;
 }) {
+  const tapToUpdateLabel = language === "en" ? "Tap to update amount" : "தொகையை புதுப்பிக்கத் தட்டவும்";
   const thumbnailUri = getItemThumbnailUri(item);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Record expense for ${displayName}`}
+      accessibilityLabel={`Update amount for ${displayName}`}
       onPress={() => onPress(item)}
       className="mb-3 rounded-[18px] border border-border bg-card p-4 shadow-soft"
     >
@@ -120,10 +128,10 @@ function ExpenseRow({
           recyclingKey={item.id}
           size={48}
           borderRadius={15}
-          backgroundColor="#FAEFD8"
-          borderColor="#E7D8B2"
+          backgroundColor="#DDEEE6"
+          borderColor="#B9DCCB"
           icon="cash-minus"
-          iconColor="#9A6700"
+          iconColor="#147D52"
           iconSize={22}
         />
         <View className="min-w-0 flex-1">
@@ -134,7 +142,7 @@ function ExpenseRow({
             {item.tamil_name}
           </Text>
           <Text className="mt-1 text-xs font-semibold text-muted">
-            Tap to enter amount
+            {tapToUpdateLabel}
           </Text>
         </View>
         <MaterialCommunityIcons name="chevron-right" size={22} color="#6C7A70" />
@@ -147,15 +155,15 @@ function HistoryRow({ entry }: { entry: ExpenseEntryRead }) {
   return (
     <View className="mb-3 rounded-[16px] border border-border bg-card p-4">
       <View className="flex-row items-start gap-3">
-        <View className="h-10 w-10 items-center justify-center rounded-[13px] bg-[#FAEFD8]">
-          <MaterialCommunityIcons name="receipt-text-clock-outline" size={20} color="#9A6700" />
+        <View className="h-10 w-10 items-center justify-center rounded-[13px] bg-accentSoft">
+          <MaterialCommunityIcons name="receipt-text-clock-outline" size={20} color="#147D52" />
         </View>
         <View className="min-w-0 flex-1">
           <View className="flex-row items-start gap-3">
             <Text className="min-w-0 flex-1 text-sm font-extrabold text-ink" numberOfLines={1}>
               {entry.expense_name}
             </Text>
-            <Text className="text-sm font-extrabold text-[#9A6700]">
+            <Text className="text-sm font-extrabold text-accent">
               {formatCurrency(entry.amount)}
             </Text>
           </View>
@@ -295,14 +303,14 @@ function ShopHistoryFilterControls({
         <MaterialCommunityIcons
           name={selectedOption.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
           size={20}
-          color="#9A6700"
+          color="#147D52"
         />
         <MaterialCommunityIcons name="chevron-down" size={22} color="#6C7A70" />
       </Pressable>
 
       {inputForInterval}
 
-      <View className="min-h-[68px] flex-row items-center gap-3 rounded-[14px] border border-[#9A6700] bg-[#FAEFD8] p-3">
+      <View className="min-h-[68px] flex-row items-center gap-3 rounded-[14px] border border-accent bg-accentSoft p-3">
         <View className="min-w-0 flex-1">
           <Text className="text-xs font-extrabold leading-4 text-muted">
             Total for {range.isValid ? range.label : selectedOption.label}
@@ -311,7 +319,7 @@ function ShopHistoryFilterControls({
             {range.isValid ? "Filtered expense amount" : range.validationMessage}
           </Text>
         </View>
-        <Text className="text-base font-black text-[#9A6700]">{formatCurrency(totalAmount)}</Text>
+        <Text className="text-base font-black text-accent">{formatCurrency(totalAmount)}</Text>
       </View>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -336,18 +344,18 @@ function ShopHistoryFilterControls({
                     setOpen(false);
                   }}
                   className={`min-h-12 flex-row items-center gap-2 rounded-[12px] border px-3 ${
-                    selected ? "border-[#9A6700] bg-[#FAEFD8]" : "border-border bg-cream"
+                    selected ? "border-accent bg-accentSoft" : "border-border bg-cream"
                   }`}
                 >
                   <MaterialCommunityIcons
                     name={option.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
                     size={18}
-                    color={selected ? "#9A6700" : "#6C7A70"}
+                    color={selected ? "#147D52" : "#6C7A70"}
                   />
                   <Text className="min-w-0 flex-1 text-sm font-extrabold text-ink" numberOfLines={1}>
                     {option.label}
                   </Text>
-                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#9A6700" /> : null}
+                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#147D52" /> : null}
                 </Pressable>
               );
             })}
@@ -397,8 +405,12 @@ function ShopHistoryInput({
 
 export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<ShopExpensesScreenProps["navigation"]>();
   const apiConnection = useApiConnection();
-  const { language } = useShopTranslation();
+  const { language, t } = useShopTranslation();
+  const clearSession = useAuthStore((state) => state.clearSession);
+  const resetCart = useCartStore((state) => state.resetCart);
+  const clearPrices = usePriceStore((state) => state.clear);
   const [items, setItems] = useState<ShopExpenseItemRead[]>([]);
   const [cursor, setCursor] = useState<CursorState>(EMPTY_CURSOR);
   const [hasMore, setHasMore] = useState(false);
@@ -423,13 +435,38 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
 
   const [selectedItem, setSelectedItem] = useState<ShopExpenseItemRead | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
-  const [noteDraft, setNoteDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
   const visibleItems = useMemo(
     () => items.filter((item) => item.is_active && item.allocation_is_active),
     [items],
   );
+
+  const handleLogout = useCallback(() => {
+    clearSession();
+    resetCart();
+    clearPrices();
+  }, [clearPrices, clearSession, resetCart]);
+
+  const handleOpenInventory = useCallback(() => {
+    navigation.navigate("InventoryManagement");
+  }, [navigation]);
+
+  const handleOpenPrinter = useCallback(() => {
+    navigation.navigate("PrinterSetup");
+  }, [navigation]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <ShopHeaderActions
+          onLogout={handleLogout}
+          onInventory={handleOpenInventory}
+          onPrinter={handleOpenPrinter}
+        />
+      ),
+    });
+  }, [handleLogout, handleOpenInventory, handleOpenPrinter, navigation]);
 
   const loadItems = useCallback(async (refresh = false) => {
     setErrorMessage(null);
@@ -555,7 +592,6 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
   const openExpenseModal = useCallback((item: ShopExpenseItemRead) => {
     setSelectedItem(item);
     setAmountDraft("");
-    setNoteDraft("");
   }, []);
 
   const closeExpenseModal = useCallback(() => {
@@ -578,7 +614,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
       await createShopExpenseEntry({
         expense_item_id: selectedItem.id,
         amount: Number(amountDraft).toFixed(2),
-        note: noteDraft.trim() || null,
+        note: null,
       });
       setSelectedItem(null);
       if (historyLoaded) {
@@ -589,7 +625,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
     } finally {
       setSaving(false);
     }
-  }, [amountDraft, historyLoaded, loadHistory, noteDraft, selectedItem]);
+  }, [amountDraft, historyLoaded, loadHistory, selectedItem]);
 
   const toggleHistory = useCallback(() => {
     setHistoryOpen((current) => !current);
@@ -599,8 +635,8 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
     <View className="mb-4 gap-4">
       <View className="rounded-[20px] border border-border bg-card p-4 shadow-soft">
         <View className="flex-row items-start gap-3">
-          <View className="h-12 w-12 items-center justify-center rounded-[15px] bg-[#FAEFD8]">
-            <MaterialCommunityIcons name="cash-fast" size={23} color="#9A6700" />
+          <View className="h-12 w-12 items-center justify-center rounded-[15px] bg-accentSoft">
+            <MaterialCommunityIcons name="cash-fast" size={23} color="#147D52" />
           </View>
           <View className="min-w-0 flex-1">
             <Text className="text-lg font-extrabold leading-7 text-ink">
@@ -654,7 +690,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
             onChange={setHistoryFilter}
           />
           {historyLoading && historyRows.length === 0 ? (
-            <ActivityIndicator color="#244734" />
+            <ActivityIndicator color="#147D52" />
           ) : historyRows.length === 0 ? (
             <EmptyState title="No expense history" description="Recorded expense entries will show here." />
           ) : (
@@ -690,6 +726,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
           <ExpenseRow
             item={item}
             displayName={getLocalizedItemName(language, item.name, item.tamil_name)}
+            language={language}
             onPress={openExpenseModal}
           />
         )}
@@ -700,8 +737,8 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
             description="Ask an admin to allocate expense items to this branch."
           />
         }
-        ListFooterComponent={loadingMore ? <ActivityIndicator color="#244734" style={styles.footerLoader} /> : null}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadItems(true)} tintColor="#244734" />}
+        ListFooterComponent={loadingMore ? <ActivityIndicator color="#147D52" style={styles.footerLoader} /> : null}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadItems(true)} tintColor="#147D52" />}
         onEndReached={loadMoreItems}
         onEndReachedThreshold={0.45}
         keyboardShouldPersistTaps="handled"
@@ -710,36 +747,44 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
           paddingTop: 16,
           paddingBottom: 112 + insets.bottom,
         }}
-      />
+      /> 
+
+      <View className="px-4 pb-4 pt-2">
+        <Button
+          label={t("action.backToBilling")}
+          onPress={() => navigation.navigate("Billing")}
+          variant="secondary"
+          className="w-full"
+        />
+      </View>
 
       <Modal visible={Boolean(selectedItem)} animationType="slide" transparent onRequestClose={closeExpenseModal}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.modalBackdrop}
         >
           <View className="rounded-t-[26px] border border-border bg-card p-5">
-            <Text className="text-lg font-extrabold text-ink" numberOfLines={1}>
-              {selectedItem ? getLocalizedItemName(language, selectedItem.name, selectedItem.tamil_name) : "Expense"}
-            </Text>
-            <Text className="mt-1 text-sm font-semibold text-muted" numberOfLines={1}>
-              {selectedItem?.tamil_name}
-            </Text>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 16, paddingBottom: 12 }}
+            >
+              <Text className="text-lg font-extrabold text-ink" numberOfLines={1}>
+                {selectedItem ? getLocalizedItemName(language, selectedItem.name, selectedItem.tamil_name) : "Expense"}
+              </Text>
+              <Text className="mt-1 text-sm font-semibold text-muted" numberOfLines={1}>
+                {selectedItem?.tamil_name}
+              </Text>
 
-            <View className="mt-5 gap-4">
               <TextField
                 label="Amount in rupees"
                 value={amountDraft}
                 onChangeText={setAmountDraft}
                 keyboardType="decimal-pad"
                 placeholder="Example 250.00"
+                autoFocus
               />
-              <TextField
-                label="Note"
-                value={noteDraft}
-                onChangeText={setNoteDraft}
-                placeholder="Optional"
-              />
-            </View>
+            </ScrollView>
 
             <View className="mt-5 flex-row gap-3">
               <Button
@@ -750,7 +795,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
                 className="flex-1"
               />
               <Button
-                label="Save expense"
+                label={language === "en" ? "Update amount" : "தொகையை புதுப்பி"}
                 onPress={submitExpense}
                 loading={saving}
                 className="flex-1"

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import html as _html_lib
+import io
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -10,6 +13,8 @@ from typing import BinaryIO, Iterable, Iterator
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from pypdf import PdfReader as PypdfReader
+from pypdf import PdfWriter as PypdfWriter
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -50,15 +55,13 @@ from app.services.admin import _get_period_bounds
 SECTION_ORDER: tuple[AdminReportSection, ...] = (
     "sales",
     "billing",
-    "items",
-    "inventory",
+    "expenses",
     "over_report",
 )
 SECTION_LABELS: dict[AdminReportSection, str] = {
     "sales": "Sales",
     "billing": "Billing",
-    "items": "Items",
-    "inventory": "Inventory",
+    "expenses": "Expenses",
     "over_report": "Overall Report",
 }
 SUMMARY_BILL_ROWS = 25
@@ -80,6 +83,22 @@ OVER_REPORT_SHEET_HEADERS = [
     "Assumption Amount",
     "Sales Amount",
     "Difference Amount",
+]
+OVER_REPORT_SHEET_HEADERS_TAMIL = [
+    "தேதி",
+    "சரக்கு பொருள்",
+    "பழைய இருப்பு (kg / Unit)",
+    "சேர்க்கப்பட்ட இருப்பு (kg / Unit)",
+    "மொத்த கிடைக்கும் இருப்பு (kg / Unit)",
+    "பயன்படுத்தப்பட்ட இருப்பு (kg / Unit)",
+    "மீதி இருப்பு (kg / Unit)",
+    "பில்லிங் பொருள்கள்",
+    "அனுமானம் (kg / Unit)",
+    "விற்பனை (kg / Unit)",
+    "வித்தியாசம் (kg / Unit)",
+    "அனுமான தொகை",
+    "விற்பனை தொகை",
+    "வித்தியாச தொகை",
 ]
 OVER_REPORT_SHEET_WIDTHS = [46, 58, 54, 56, 60, 62, 56, 68, 66, 52, 56, 58, 56, 56]
 OVER_REPORT_SHEET_ALIGNMENTS = [
@@ -270,6 +289,25 @@ class PdfReportWriter:
         self._canvas.setFont(self._font_regular, 9)
         self._canvas.drawString(self._margin + 10, box_y + 7, _pdf_text(text, 128))
         self._y = box_y - 10
+
+    def financial_summary(self, metrics: list[tuple[str, str]]) -> None:
+        self._current_table = None
+        self._current_table_is_sheet = False
+        self._page_has_content = True
+        
+        block_height = len(metrics) * 16 + 10
+        self._ensure_space(block_height, repeat_table_header=False)
+        self._page_has_content = True
+        
+        y = self._y - 16
+        self._set_fill(self._text)
+        for label, value in metrics:
+            self._canvas.setFont(self._font_bold, 9)
+            self._canvas.drawString(self._width - 220, y, label)
+            self._canvas.drawRightString(self._width - self._margin, y, value)
+            y -= 16
+            
+        self._y = y - 4
 
     def table(
         self,
@@ -590,6 +628,7 @@ async def generate_admin_report_pdf(
     range_start_date: date | None = None,
     range_end_date: date | None = None,
     shop_ids: list[UUID] | None = None,
+    language: str = "en",
 ) -> AdminReportFile:
     context = await _build_report_context(
         db,
@@ -602,32 +641,47 @@ async def generate_admin_report_pdf(
         shop_ids=shop_ids,
     )
 
-    output = SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
-    writer = PdfReportWriter(output)
-    if context.sections != ["over_report"]:
-        writer.title(
-            "Admin PDF Report",
-            [
-                f"Period: {context.period_label}",
-                f"Branches: {context.branch_label}",
-                f"Detail level: {context.detail_level.title()}",
-                f"Sections: {', '.join(SECTION_LABELS[section] for section in context.sections)}",
-            ],
+    non_over_sections = [s for s in context.sections if s != "over_report"]
+    has_over_report = "over_report" in context.sections
+
+    # ── Step 1: Generate non-over-report sections with ReportLab (if any) ──
+    rl_bytes: bytes | None = None
+    if non_over_sections or not has_over_report:
+        rl_output = io.BytesIO()
+        writer = PdfReportWriter(rl_output)
+        non_over_context = ReportContext(
+            sections=non_over_sections or context.sections,
+            detail_level=context.detail_level,
+            period=context.period,
+            start=context.start,
+            end=context.end,
+            shops=context.shops,
+            shop_ids=context.shop_ids,
         )
+        if non_over_sections:
+            for section in non_over_sections:
+                if section == "sales":
+                    await _write_sales_section(db, writer, non_over_context)
+                elif section == "billing":
+                    await _write_billing_section(db, writer, non_over_context)
+                elif section == "expenses":
+                    await _write_expenses_section(db, writer, non_over_context)
+        writer.save()
+        rl_bytes = rl_output.getvalue()
 
-    for section in context.sections:
-        if section == "sales":
-            await _write_sales_section(db, writer, context)
-        elif section == "billing":
-            await _write_billing_section(db, writer, context)
-        elif section == "items":
-            await _write_items_section(db, writer, context)
-        elif section == "inventory":
-            await _write_inventory_section(db, writer, context)
-        else:
-            await _write_over_report_section(db, writer, context)
+    # ── Step 2: Generate overall-report pages with WeasyPrint (Tamil-safe) ──
+    wp_bytes: bytes | None = None
+    if has_over_report:
+        wp_bytes = await _generate_over_report_weasyprint_pdf(db, context, language=language)
 
-    writer.save()
+    # ── Step 3: Merge with pypdf ──
+    output = SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    merger = PypdfWriter()
+    if rl_bytes:
+        merger.append(PypdfReader(io.BytesIO(rl_bytes)))
+    if wp_bytes:
+        merger.append(PypdfReader(io.BytesIO(wp_bytes)))
+    merger.write(output)
     output.seek(0)
     return AdminReportFile(file=output, filename=_report_filename(context))
 
@@ -687,7 +741,21 @@ async def _write_sales_section(
     writer: PdfReportWriter,
     context: ReportContext,
 ) -> None:
-    writer.section("Sales")
+    period_start = context.start.date()
+    period_end = (context.end - timedelta(days=1)).date()
+    if period_start == period_end:
+        date_line = f"Date: {_date_text(period_start)}"
+    else:
+        date_line = f"Date: {_date_text(period_start)} To {_date_text(period_end)}"
+
+    branch_label = context.branch_label.upper()
+    writer.statement_header(
+        "SRI MAHALAKSHMI BROILERS",
+        f"{branch_label} - BRANCH" if context.shop_ids else branch_label,
+        "Sales Report",
+        date_line,
+    )
+
     filters = _bill_filters(context)
     query = (
         select(
@@ -705,7 +773,10 @@ async def _write_sales_section(
     query = _apply_shop_scope(query, context)
     rows = (await db.execute(query)).all()
     total_revenue = sum((_decimal(row.total_sales) for row in rows), Decimal("0"))
-    writer.note(f"Total revenue: {_money(total_revenue)} across {len(rows)} branch row(s).")
+    total_cash = sum((_decimal(row.cash_total) for row in rows), Decimal("0"))
+    total_upi = sum((_decimal(row.upi_total) for row in rows), Decimal("0"))
+    total_bills = sum((int(row.bill_count or 0) for row in rows))
+
     writer.table(
         ["Branch", "Bills", "Revenue", "Cash", "UPI"],
         (
@@ -718,9 +789,16 @@ async def _write_sales_section(
             ]
             for row in rows
         ),
-        [178, 48, 90, 90, 90],
+        [195, 58, 90, 90, 90],
         ["left", "right", "right", "right", "right"],
     )
+
+    writer.financial_summary([
+        ("Total Bills", str(total_bills)),
+        ("Total Revenue", _money(total_revenue)),
+        ("Total Cash", _money(total_cash)),
+        ("Total UPI", _money(total_upi)),
+    ])
 
 
 async def _write_billing_section(
@@ -728,7 +806,21 @@ async def _write_billing_section(
     writer: PdfReportWriter,
     context: ReportContext,
 ) -> None:
-    writer.section("Billing")
+    period_start = context.start.date()
+    period_end = (context.end - timedelta(days=1)).date()
+    if period_start == period_end:
+        date_line = f"Date: {_date_text(period_start)}"
+    else:
+        date_line = f"Date: {_date_text(period_start)} To {_date_text(period_end)}"
+
+    branch_label = context.branch_label.upper()
+    writer.statement_header(
+        "SRI MAHALAKSHMI BROILERS",
+        f"{branch_label} - BRANCH" if context.shop_ids else branch_label,
+        "Billing Report",
+        date_line,
+    )
+
     filters = _bill_filters(context)
     stats = (
         await db.execute(
@@ -744,15 +836,9 @@ async def _write_billing_section(
         )
     ).one()
     max_rows = SUMMARY_BILL_ROWS if context.detail_level == "summary" else None
-    writer.note(
-        "Rows shown: "
-        f"{min(int(stats.bill_count or 0), max_rows or int(stats.bill_count or 0))} "
-        f"of {int(stats.bill_count or 0)} bills. "
-        f"Total: {_money(stats.total_sales)}; Cash: {_money(stats.cash_total)}; UPI: {_money(stats.upi_total)}."
-    )
     writer.table_header(
         ["Bill No", "Branch", "Date", "Total", "Cash", "UPI", "Status"],
-        [70, 95, 98, 62, 62, 62, 42],
+        [74, 115, 108, 62, 62, 62, 40],
         ["left", "left", "left", "right", "right", "right", "center"],
     )
 
@@ -801,7 +887,7 @@ async def _write_billing_section(
                     _money(row.upi_amount),
                     getattr(row.status, "value", row.status),
                 ],
-                [70, 95, 98, 62, 62, 62, 42],
+                [74, 115, 108, 62, 62, 62, 40],
                 ["left", "left", "left", "right", "right", "right", "center"],
             )
             row_count += 1
@@ -811,190 +897,90 @@ async def _write_billing_section(
             remaining -= len(page)
         if len(page) < limit:
             break
-    writer.note(f"Billing rows written: {row_count}.")
+
+    writer.financial_summary([
+        ("Total Bills", str(int(stats.bill_count or 0))),
+        ("Total Amount", _money(stats.total_sales)),
+        ("Cash", _money(stats.cash_total)),
+        ("UPI", _money(stats.upi_total)),
+    ])
 
 
-async def _write_items_section(
+async def _write_expenses_section(
     db: AsyncSession,
     writer: PdfReportWriter,
     context: ReportContext,
 ) -> None:
-    writer.section("Items")
-    filters = _bill_filters(context)
-    max_rows = SUMMARY_ITEM_ROWS if context.detail_level == "summary" else None
-    item_name = func.coalesce(Item.name, "Unknown item")
-    item_unit = func.coalesce(Item.base_unit, BillItem.item_base_unit, BillItem.unit)
-    item_amount = func.coalesce(func.sum(BillItem.line_total), 0)
-    query = (
-        select(
-            Bill.shop_id,
-            Shop.name.label("shop_name"),
-            item_name.label("item_name"),
-            item_unit.label("unit"),
-            func.coalesce(func.sum(BillItem.quantity), 0).label("quantity_sold"),
-            item_amount.label("total_amount"),
-            func.count(distinct(BillItem.bill_id)).label("bill_count"),
-        )
-        .select_from(BillItem)
-        .join(Bill, Bill.id == BillItem.bill_id)
-        .join(Shop, Shop.id == Bill.shop_id)
-        .outerjoin(Item, Item.id == BillItem.item_id)
-        .where(*filters)
-        .group_by(
-            Bill.shop_id,
-            Shop.name,
-            item_name,
-            item_unit,
-        )
-        .order_by(Shop.name, item_amount.desc(), item_name)
-    )
-    if max_rows is not None:
-        query = query.limit(max_rows)
-    rows = (await db.execute(query)).all()
-    category_labels = await _sold_item_category_labels_by_key(
-        db,
-        context,
-        {(row.shop_id, row.item_name, row.unit) for row in rows},
-    )
-    writer.note(
-        f"Rows shown: {len(rows)}"
-        + (
-            " top sold item row(s). Items are grouped by current item name."
-            if context.detail_level == "summary"
-            else " sold item row(s). Items are grouped by current item name."
-        )
-    )
-    writer.table(
-        ["Branch", "Category", "Item", "Qty", "Unit", "Amount", "Bills"],
-        (
-            [
-                row.shop_name,
-                category_labels.get((row.shop_id, row.item_name, row.unit), "Uncategorized"),
-                row.item_name,
-                _quantity(row.quantity_sold),
-                getattr(row.unit, "value", row.unit),
-                _money(row.total_amount),
-                int(row.bill_count or 0),
-            ]
-            for row in rows
-        ),
-        [78, 82, 132, 54, 40, 70, 40],
-        ["left", "left", "left", "right", "center", "right", "right"],
+    # Centered header — same style as overall report statement header
+    period_start = context.start.date()
+    period_end = (context.end - timedelta(days=1)).date()
+    if period_start == period_end:
+        date_line = f"Date: {_date_text(period_start)}"
+    else:
+        date_line = f"Date: {_date_text(period_start)} To {_date_text(period_end)}"
+
+    branch_label = context.branch_label.upper()
+    writer.statement_header(
+        "SRI MAHALAKSHMI BROILERS",
+        f"{branch_label} - BRANCH" if context.shop_ids else branch_label,
+        "Expense Report",
+        date_line,
     )
 
+    filters: list[object] = [ExpenseEntry.spent_at >= context.start, ExpenseEntry.spent_at < context.end]
+    if context.shop_ids:
+        filters.append(ExpenseEntry.shop_id.in_(context.shop_ids))
 
-async def _sold_item_category_labels_by_key(
-    db: AsyncSession,
-    context: ReportContext,
-    keys: set[SoldItemCategoryKey],
-) -> dict[SoldItemCategoryKey, str]:
-    if not keys:
-        return {}
-
-    item_name = func.coalesce(Item.name, "Unknown item")
-    item_unit = func.coalesce(Item.base_unit, BillItem.item_base_unit, BillItem.unit)
-    item_category = func.coalesce(func.nullif(func.trim(Item.category), ""), "Uncategorized")
-    shop_ids = {shop_id for shop_id, _name, _unit in keys}
-    item_names = {name for _shop_id, name, _unit in keys}
-    rows = (
+    stats = (
         await db.execute(
             select(
-                Bill.shop_id,
-                item_name.label("item_name"),
-                item_unit.label("unit"),
-                item_category.label("category"),
+                func.count(ExpenseEntry.id).label("expense_count"),
+                func.coalesce(func.sum(ExpenseEntry.amount), 0).label("total_expenses"),
             )
-            .select_from(BillItem)
-            .join(Bill, Bill.id == BillItem.bill_id)
-            .outerjoin(Item, Item.id == BillItem.item_id)
-            .where(
-                *_bill_filters(context),
-                Bill.shop_id.in_(list(shop_ids)),
-                item_name.in_(list(item_names)),
-            )
-            .group_by(Bill.shop_id, item_name, item_unit, item_category)
-            .order_by(Bill.shop_id, item_name, item_category)
+            .select_from(ExpenseEntry)
+            .where(*filters)
         )
-    ).all()
-    category_names_by_key: dict[SoldItemCategoryKey, set[str]] = {}
-    for row in rows:
-        key = (row.shop_id, row.item_name, row.unit)
-        if key in keys:
-            category_names_by_key.setdefault(key, set()).add(row.category)
-    return {
-        key: ", ".join(sorted(category_names, key=str.lower))
-        for key, category_names in category_names_by_key.items()
-    }
+    ).one()
 
+    # Columns: Date (DD/MM/YYYY) | Branch | Expense | Amount
+    widths = [83, 140, 200, 100]
+    alignments = ["left", "left", "left", "right"]
+    writer.table_header(
+        ["Date", "Branch", "Expense", "Amount"],
+        widths,
+        alignments,
+    )
 
-async def _write_inventory_section(
-    db: AsyncSession,
-    writer: PdfReportWriter,
-    context: ReportContext,
-) -> None:
-    writer.section("Inventory")
-    max_rows = SUMMARY_INVENTORY_ROWS if context.detail_level == "summary" else None
-    all_totals = _inventory_totals_subquery(context, period_only=False)
-    period_totals = _inventory_totals_subquery(context, period_only=True)
-    query = (
+    result = await db.execute(
         select(
+            ExpenseEntry.spent_at,
             Shop.name.label("shop_name"),
-            InventoryItem.id.label("item_id"),
-            InventoryItem.name.label("item_name"),
-            InventoryItem.base_unit.label("unit"),
-            ShopInventoryAllocation.is_active,
-            func.coalesce(all_totals.c.added_quantity, 0).label("added_quantity"),
-            func.coalesce(all_totals.c.used_quantity, 0).label("used_quantity"),
-            func.coalesce(period_totals.c.added_quantity, 0).label("period_added_quantity"),
-            func.coalesce(period_totals.c.used_quantity, 0).label("period_used_quantity"),
+            ExpenseEntry.expense_name,
+            ExpenseEntry.amount,
         )
-        .join(ShopInventoryAllocation, ShopInventoryAllocation.shop_id == Shop.id)
-        .join(InventoryItem, InventoryItem.id == ShopInventoryAllocation.inventory_item_id)
-        .outerjoin(
-            all_totals,
-            and_(
-                all_totals.c.shop_id == Shop.id,
-                all_totals.c.inventory_item_id == InventoryItem.id,
-            ),
-        )
-        .outerjoin(
-            period_totals,
-            and_(
-                period_totals.c.shop_id == Shop.id,
-                period_totals.c.inventory_item_id == InventoryItem.id,
-            ),
-        )
-        .order_by(Shop.name, ShopInventoryAllocation.sort_order, func.lower(InventoryItem.name), InventoryItem.id)
+        .join(Shop, Shop.id == ExpenseEntry.shop_id)
+        .where(*filters)
+        .order_by(ExpenseEntry.spent_at.asc(), ExpenseEntry.id.asc())
     )
-    query = _apply_shop_scope(query, context)
-    if max_rows is not None:
-        query = query.limit(max_rows)
-    rows = (await db.execute(query)).all()
-    category_labels = await _inventory_category_labels_by_item_id(
-        db,
-        [row.item_id for row in rows],
-    )
-    writer.note(
-        f"Rows shown: {len(rows)}"
-        + " allocated stock row(s). Added and Used are period movement totals."
-    )
-    writer.table(
-        ["Branch", "Category", "Inventory Item", "Available", "Added", "Used", "Status"],
-        (
+    page = result.all()
+    for row in page:
+        writer.table_row(
             [
+                row.spent_at.strftime("%d/%m/%Y") if row.spent_at else "",
                 row.shop_name,
-                category_labels.get(row.item_id, "Uncategorized"),
-                row.item_name,
-                f"{_quantity(_decimal(row.added_quantity) - _decimal(row.used_quantity))} {getattr(row.unit, 'value', row.unit)}",
-                _quantity(row.period_added_quantity),
-                _quantity(row.period_used_quantity),
-                "Active" if row.is_active else "Paused",
-            ]
-            for row in rows
-        ),
-        [72, 82, 125, 82, 58, 58, 45],
-        ["left", "left", "left", "right", "right", "right", "center"],
-    )
+                row.expense_name,
+                _money(row.amount),
+            ],
+            widths,
+            alignments,
+        )
+
+    # Summary at the bottom
+    writer.financial_summary([
+        ("Total Expenses", str(int(stats.expense_count or 0))),
+        ("Total Amount", _money(stats.total_expenses)),
+    ])
+
 
 
 async def _write_over_report_section(
@@ -1467,33 +1453,84 @@ def _unit_sort_key(unit: BaseUnit) -> int:
     return 2
 
 
+async def _write_over_report_section(
+    db: AsyncSession,
+    writer: PdfReportWriter,
+    context: ReportContext,
+    language: str = "en",
+) -> None:
+    report = await _build_overall_report_for_context(db, context)
+    if not report.statements:
+        writer.section("Overall Report")
+        writer.note("No branch data available for the selected report scope.")
+        return
+
+    is_first = True
+    writer.use_landscape_page()
+    for statement in report.statements:
+        if not is_first:
+            writer._y -= 15
+        _write_over_report_statement(writer, statement, print_header=is_first, report_context=context, language=language)
+        is_first = False
+
+
 def _write_over_report_statement(
     writer: PdfReportWriter,
     statement: OverallReportStatement,
+    print_header: bool = True,
+    report_context: ReportContext | None = None,
+    language: str = "en",
 ) -> None:
-    writer.statement_header(
-        "SRI MAHALAKSHMI BROILERS",
-        f"{statement.shop_name.upper()} - BRANCH",
-        "Statement",
-        f"Date: {_date_text(statement.start_date)} To {_date_text(statement.end_date)}",
-    )
+    use_tamil = language == "ta"
+    if print_header:
+        if report_context:
+            start_date = report_context.start.date()
+            end_date = (report_context.end - timedelta(days=1)).date()
+        else:
+            start_date = statement.start_date
+            end_date = statement.end_date
+            
+        if start_date == end_date:
+            date_str = f"Date: {_date_text(start_date)}"
+        else:
+            date_str = f"Date: {_date_text(start_date)} To {_date_text(end_date)}"
+
+        writer.statement_header(
+            "SRI MAHALAKSHMI BROILERS",
+            f"{statement.shop_name.upper()} - BRANCH",
+            "Statement",
+            date_str,
+        )
 
     if not statement.inventory_items:
         writer.note("No allocated inventory items found for this branch and period.")
         return
 
+    sheet_headers = OVER_REPORT_SHEET_HEADERS_TAMIL if use_tamil else OVER_REPORT_SHEET_HEADERS
     writer.sheet_table(
-        OVER_REPORT_SHEET_HEADERS,
-        _over_report_sheet_rows(statement),
+        sheet_headers,
+        _over_report_sheet_rows(statement, use_tamil=use_tamil),
         OVER_REPORT_SHEET_WIDTHS,
         OVER_REPORT_SHEET_ALIGNMENTS,
     )
+    
+    if statement.inventory_items:
+        writer.financial_summary([
+            ("Total Sales", _money(statement.sales_amount)),
+            ("Total Expense", _money(statement.expense_amount)),
+            ("Balance Amount", _money(statement.sales_minus_expense_amount)),
+        ])
 
 
-def _over_report_sheet_rows(statement: OverallReportStatement) -> list[list[str]]:
+def _over_report_sheet_rows(statement: OverallReportStatement, use_tamil: bool = False) -> list[list[str]]:
     rows: list[list[str]] = []
     table_date = _statement_table_date(statement)
+    is_single_date = statement.start_date == statement.end_date
+    has_printed_date = False
     for item in statement.inventory_items:
+        inv_display_name = (
+            (item.item_tamil_name or item.item_name) if use_tamil else item.item_name
+        )
         used_rows = item.used_stock_breakdown or [
             OverallReportUsedStockBreakdown(
                 label="Used",
@@ -1506,16 +1543,29 @@ def _over_report_sheet_rows(statement: OverallReportStatement) -> list[list[str]
             is_first = index == 0
             used_row = used_rows[index] if index < len(used_rows) else None
             billing_row = billing_rows[index] if index < len(billing_rows) else None
+
+            if billing_row is not None:
+                billing_display_name = (
+                    (billing_row.item_tamil_name or billing_row.item_name) if use_tamil else billing_row.item_name
+                )
+            else:
+                billing_display_name = None
+            
+            printed_date = ""
+            if is_first and not has_printed_date:
+                printed_date = table_date
+                has_printed_date = True
+
             rows.append(
                 [
-                    table_date if is_first else "",
-                    item.item_name if is_first else "",
+                    printed_date,
+                    inv_display_name if is_first else "",
                     _quantity_with_unit(item.old_stock, item.unit) if is_first else "",
                     _quantity_with_unit(item.adding_stock, item.unit) if is_first else "",
                     _quantity_with_unit(item.total_available_stock, item.unit) if is_first else "",
                     _used_stock_breakdown_text(used_row, item.unit),
                     _quantity_with_unit(item.remaining_stock, item.unit) if is_first else "",
-                    billing_row.item_name if billing_row is not None else (
+                    billing_display_name if billing_row is not None else (
                         "No mapped billing sales" if is_first and not billing_rows else ""
                     ),
                     _quantity_with_unit(billing_row.assumption_quantity, billing_row.unit)
@@ -1532,6 +1582,27 @@ def _over_report_sheet_rows(statement: OverallReportStatement) -> list[list[str]
                     _money(billing_row.difference_amount) if billing_row is not None else "",
                 ]
             )
+            
+        if is_single_date:
+            rows.append(
+                [
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    f"Total Used: {_quantity_with_unit(item.used_stock, item.unit)}",
+                    "",
+                    "Subtotal",
+                    _quantity_with_unit(item.assumption_quantity, item.unit),
+                    _quantity_with_unit(item.sales_quantity, item.unit),
+                    _quantity_with_unit(item.difference_quantity, item.unit),
+                    _money(item.assumption_amount),
+                    _money(item.sales_amount),
+                    _money(item.difference_amount),
+                ]
+            )
+
     return rows
 
 
@@ -1767,3 +1838,333 @@ def _datetime_text(value: datetime | None) -> str:
 
 def _date_text(value: date) -> str:
     return value.strftime("%d/%m/%Y")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WeasyPrint-based Overall Report PDF (Tamil-safe)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _he(text: str) -> str:
+    """HTML-escape a string for safe embedding in HTML."""
+    return _html_lib.escape(str(text), quote=True)
+
+
+def _render_shop_group_html(
+    shop_name: str,
+    statements: list[OverallReportStatement],
+    use_tamil: bool,
+    period_start: date,
+    period_end: date,
+) -> str:
+    """Render all statements for one branch as a single section with one header.
+
+    The header shows the company name, branch, and the full date range once.
+    All daily rows are merged into one continuous table.
+    """
+    headers = OVER_REPORT_SHEET_HEADERS_TAMIL if use_tamil else OVER_REPORT_SHEET_HEADERS
+    header_cells = "".join(f"<th>{_he(h)}</th>" for h in headers)
+
+    # Date range label — always "DD/MM/YYYY To DD/MM/YYYY" (or single date if same day)
+    if period_start == period_end:
+        date_label = _date_text(period_start)
+    else:
+        date_label = f"{_date_text(period_start)} To {_date_text(period_end)}"
+
+    # Merge rows from all daily statements — with a styled daily summary after each day
+    body_rows = ""
+    row_index = 0
+    has_any_items = False
+    num_cols = len(OVER_REPORT_SHEET_HEADERS)
+
+    for stmt in statements:
+        if stmt.inventory_items:
+            has_any_items = True
+
+        # Data rows for this day
+        for row in _over_report_sheet_rows(stmt, use_tamil=use_tamil):
+            tr_class = "alt" if row_index % 2 == 1 else ""
+            tds = "".join(f"<td>{_he(cell)}</td>" for cell in row)
+            body_rows += f'<tr class="{tr_class}">{tds}</tr>\n'
+            row_index += 1
+
+        # Daily summary card — full-width, matching the uploaded image style
+        if stmt.inventory_items and period_start != period_end:
+            day_label = _statement_table_date(stmt)
+            day_sales = _decimal(stmt.sales_amount)
+            day_expense = _decimal(stmt.expense_amount)
+            day_balance = day_sales - day_expense
+            card = (
+                f'<div class="day-card">'
+                f'<div class="day-card-title">Day Summary &nbsp;<span class="day-card-date">({_he(day_label)})</span></div>'
+                f'<div class="day-card-row">'
+                f'  <span class="day-card-label">Total Sales</span>'
+                f'  <span class="day-card-value">{_he(_money(day_sales))}</span>'
+                f'</div>'
+                f'<div class="day-card-row">'
+                f'  <span class="day-card-label">Total Expense Amount</span>'
+                f'  <span class="day-card-value">{_he(_money(day_expense))}</span>'
+                f'</div>'
+                f'<div class="day-card-row">'
+                f'  <span class="day-card-label">Balance Amount</span>'
+                f'  <span class="day-card-value">{_he(_money(day_balance))}</span>'
+                f'</div>'
+                f'</div>'
+            )
+            body_rows += (
+                f'<tr class="day-summary-row">'
+                f'<td colspan="{num_cols}" class="day-summary-cell">'
+                f'{card}'
+                f'</td></tr>\n'
+            )
+
+    # Grand total financial summary across all statements
+    total_sales = sum((_decimal(s.sales_amount) for s in statements), Decimal("0"))
+    total_expense = sum((_decimal(s.expense_amount) for s in statements), Decimal("0"))
+    total_balance = total_sales - total_expense
+
+    fin_rows = ""
+    for label, value in [
+        ("Total Sales", _money(total_sales)),
+        ("Total Expense", _money(total_expense)),
+        ("Balance Amount", _money(total_balance)),
+    ]:
+        fin_rows += f'<tr><td class="fin-label">{_he(label)}</td><td class="fin-value">{_he(value)}</td></tr>'
+
+    empty_note = (
+        '<p class="empty-note">No allocated inventory items found for this branch and period.</p>'
+        if not has_any_items
+        else ""
+    )
+
+    table_html = (
+        f"""
+  <div class="table-wrap">
+    <table>
+      <thead><tr>{header_cells}</tr></thead>
+      <tbody>{body_rows}</tbody>
+    </table>
+  </div>
+  <table class="fin-summary">
+    <tbody>{fin_rows}</tbody>
+  </table>"""
+        if has_any_items
+        else ""
+    )
+
+    return f"""
+<section class="statement">
+  <div class="stmt-header">
+    <div class="company">SRI MAHALAKSHMI BROILERS</div>
+    <div class="branch">{_he(shop_name.upper())} - BRANCH</div>
+    <div class="stmt-title">Statement</div>
+    <div class="stmt-date">Date: {_he(date_label)}</div>
+  </div>
+  {empty_note}
+  {table_html}
+</section>
+"""
+
+
+_PLAYWRIGHT_CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans Tamil', 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+  font-size: 7pt;
+  color: #1f2733;
+  line-height: 1.3;
+}
+
+.statement {
+  margin-bottom: 16mm;
+  page-break-inside: avoid;
+}
+
+.stmt-header {
+  text-align: center;
+  margin-bottom: 4mm;
+}
+.company  { font-size: 13pt; font-weight: 700; }
+.branch   { font-size: 11pt; font-weight: 700; margin-top: 1mm; }
+.stmt-title { font-size: 9pt; font-weight: 600; margin-top: 1mm; }
+.stmt-date  { font-size: 8pt; color: #555; margin-top: 1mm; }
+
+.table-wrap {
+  overflow-x: auto;
+  margin-bottom: 3mm;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 6.5pt;
+}
+
+/* Date column — first child — needs slightly more width to fit DD/MM/YYYY */
+thead th:first-child,
+tbody td:first-child {
+  min-width: 72px;
+  white-space: nowrap;
+}
+
+thead tr {
+  background: #2e3d52;
+  color: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+thead th {
+  padding: 3pt 4pt;
+  text-align: left;
+  border: 0.5pt solid #1a2533;
+  font-weight: 700;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+tbody tr td {
+  padding: 2.5pt 4pt;
+  border: 0.5pt solid #c8cdd4;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+tbody tr.alt td {
+  background: #f4f6f8;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.fin-summary {
+  margin-left: auto;
+  width: auto;
+  border-collapse: collapse;
+  margin-top: 2mm;
+}
+.fin-summary td {
+  padding: 2pt 6pt;
+  font-size: 8pt;
+}
+.fin-label { font-weight: 700; text-align: right; }
+.fin-value { font-weight: 700; text-align: right; }
+
+/* Daily summary card — full-width, image-matching style */
+.day-summary-row td.day-summary-cell {
+  background: #fff;
+  border: none !important;
+  padding: 3pt 0 5pt 0;
+}
+.day-card {
+  border: 1pt solid #b8c8d8;
+  border-radius: 4pt;
+  padding: 6pt 10pt;
+  margin: 2pt 0;
+  background: #fff;
+}
+.day-card-title {
+  font-size: 8.5pt;
+  font-weight: 900;
+  color: #1f2e3d;
+  margin-bottom: 4pt;
+}
+.day-card-date {
+  font-weight: 600;
+  color: #4a5c6e;
+  font-size: 7.5pt;
+}
+.day-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5pt 0;
+}
+.day-card-label {
+  font-size: 7.5pt;
+  font-weight: 700;
+  color: #1f2e3d;
+}
+.day-card-value {
+  font-size: 7.5pt;
+  font-weight: 700;
+  color: #1f2e3d;
+  text-align: right;
+}
+
+.empty-note {
+  color: #777;
+  font-style: italic;
+  text-align: center;
+  padding: 4mm;
+}
+"""
+
+
+async def _generate_over_report_weasyprint_pdf(
+    db: AsyncSession,
+    context: ReportContext,
+    language: str = "en",
+) -> bytes:
+    """Build the Overall Report PDF using Playwright/Chromium so Tamil renders correctly.
+
+    Playwright is already a project dependency and works on Windows, Linux, and macOS.
+    We use the sync API in a thread pool executor so it works on uvicorn's SelectorEventLoop
+    (Windows asyncio does not support subprocess creation from async context).
+    """
+    report = await _build_overall_report_for_context(db, context)
+    use_tamil = language == "ta"
+    period_start = context.start.date()
+    period_end = (context.end - timedelta(days=1)).date()
+
+    if not report.statements:
+        body = '<p class="empty-note" style="margin:20mm auto;text-align:center;">No branch data available for the selected report scope.</p>'
+    else:
+        # Group statements by shop so each branch gets one header and one merged table
+        shops_seen: dict[str, tuple[str, list[OverallReportStatement]]] = {}
+        for stmt in report.statements:
+            key = str(stmt.shop_id)
+            if key not in shops_seen:
+                shops_seen[key] = (stmt.shop_name, [])
+            shops_seen[key][1].append(stmt)
+
+        body = "\n".join(
+            _render_shop_group_html(shop_name, stmts, use_tamil, period_start, period_end)
+            for _shop_id, (shop_name, stmts) in shops_seen.items()
+        )
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="{'ta' if use_tamil else 'en'}">
+<head>
+<meta charset="utf-8">
+<title>Overall Report - {_he(context.period_label)}</title>
+<style>
+{_PLAYWRIGHT_CSS}
+</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(None, _playwright_html_to_pdf, html_content)
+    return pdf_bytes
+
+
+def _playwright_html_to_pdf(html_content: str) -> bytes:
+    """Run Playwright synchronously in a thread — avoids asyncio subprocess issues on Windows."""
+    from playwright.sync_api import sync_playwright  # noqa: PLC0415
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html_content, wait_until="domcontentloaded")
+        pdf_bytes = page.pdf(
+            format="A3",
+            landscape=True,
+            print_background=True,
+            margin={"top": "12mm", "bottom": "14mm", "left": "10mm", "right": "10mm"},
+        )
+        browser.close()
+    return pdf_bytes
+

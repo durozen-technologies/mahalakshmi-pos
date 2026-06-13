@@ -3,6 +3,7 @@ import "./global.css";
 
 import "./src/navigation/bootstrap";
 
+import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -31,6 +32,11 @@ const navigationTheme = {
 };
 
 export default function App() {
+  // Load NotoSansTamil so Tamil script renders correctly throughout the app
+  const [fontsLoaded] = useFonts({
+    NotoSansTamil: require("./assets/fonts/NotoSansTamil.ttf"),
+  });
+
   return (
     <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
       <GestureHandlerRootView style={{ flex: 1 }}>

@@ -31,15 +31,16 @@ export type AppStackParamList = {
     referenceDate?: string | null;
     range?: AnalyticsDateRange;
     shopIds?: UUID[];
+    language?: "en" | "ta";
   };
   AdminExpenses: { shopId?: UUID } | undefined;
   AdminShopExpensesOrder: { shopId: UUID; shopName?: string };
   AdminInventoryItemEditor:
-    | {
-        itemId?: UUID;
-        initialItem?: InventoryItemRead;
-      }
-    | undefined;
+  | {
+    itemId?: UUID;
+    initialItem?: InventoryItemRead;
+  }
+  | undefined;
   AdminItemEditor: {
     mode: AdminItemEditorMode;
     workspace: AdminItemWorkspace;

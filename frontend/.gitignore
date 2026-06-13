@@ -81,3 +81,10 @@ pnpm-debug.log*
 *.bak
 *.orig
 *.tmp
+
+# Additional local files and IDEs
+.marscode/
+tmp/
+todo.txt
+diff.txt
+*.zip

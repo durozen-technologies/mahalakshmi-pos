@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
@@ -122,6 +122,7 @@ function visibleStockRows(items: InventoryItemStockRead[]) {
 }
 
 export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
+  const navigation = useNavigation<InventoryManagementScreenProps["navigation"]>();
   const { language, t } = useShopTranslation();
   const [items, setItems] = useState<InventoryItemStockRead[]>([]);
   const [shopName, setShopName] = useState<string | null>(null);
@@ -812,10 +813,23 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
         />
       </Screen>
 
+      <View className="px-4 pb-4 pt-2">
+        <Button
+          label={t("action.backToBilling")}
+          onPress={() => navigation.navigate("Billing")}
+          variant="secondary"
+          className="w-full"
+        />
+      </View>
+
       <Modal visible={Boolean(selectedItem)} animationType="fade" transparent onRequestClose={closeMovement}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          className="flex-1 justify-center bg-black/45 px-4"
+          className={
+            mode === InventoryMovementType.USE
+              ? "flex-1 justify-start bg-black/45 px-4"
+              : "flex-1 justify-center bg-black/45 px-4"
+          }
         >
           <View
             className="w-full self-center rounded-[20px] border border-border bg-card p-4 shadow-soft"
@@ -847,7 +861,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                       <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
                         {t("inventory.available")}
                       </Text>
-                      <Text className="mt-1 text-4xl font-extrabold text-ink">
+                      <Text className="mt-1 text-3xl font-extrabold text-ink">
                         {formatQuantity(selectedItem.available_quantity, selectedItem.base_unit)}
                       </Text>
                     </View>
@@ -889,7 +903,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                                 {t("inventory.used")} {formatQuantity(category.used_quantity, selectedItem.base_unit)}
                               </Text>
                             </View>
-                            <View className="h-11 w-32 flex-row items-center rounded-[12px] border border-border bg-card px-2">
+                            <View className="h-14 w-40 flex-row items-center rounded-[12px] border border-border bg-card px-3">
                               <TextInput
                                 keyboardType="decimal-pad"
                                 placeholder={selectedItem.base_unit === BaseUnit.KG ? t("common.exampleKg") : t("common.exampleUnits")}
@@ -908,7 +922,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                                 cursorColor="#244734"
                                 className="min-w-0 flex-1 text-center text-xl font-extrabold text-ink"
                               />
-                              <Text className="text-xs font-semibold uppercase text-muted">{selectedItem.base_unit}</Text>
+                              <Text className="ml-2 text-xs font-semibold uppercase text-muted">{selectedItem.base_unit}</Text>
                             </View>
                           </View>
                         ))}
@@ -916,14 +930,14 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                       <View className="rounded-[14px] border border-border bg-card px-4 py-3">
                         <View className="flex-row items-center justify-between gap-3">
                           <Text className="text-xs font-semibold uppercase text-muted">Split total</Text>
-                          <Text className="text-2xl font-extrabold text-ink">
+                          <Text className="text-xl font-extrabold text-ink">
                             {formatQuantity(splitState.splitTotal.toString(), selectedItem.base_unit)}
                           </Text>
                         </View>
                         {!splitState.splitMatchesTotal ? (
                           <View className="mt-2 flex-row items-center justify-between gap-3">
                             <Text className="text-xs font-semibold uppercase text-muted">Remaining</Text>
-                            <Text className="text-sm font-extrabold text-[#9F4335]">
+                            <Text className="text-xl font-extrabold text-[#9F4335]">
                               {formatQuantity(splitState.remaining.abs().toString(), selectedItem.base_unit)}
                             </Text>
                           </View>

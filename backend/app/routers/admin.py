@@ -248,6 +248,10 @@ ReportDetailLevelParam = Annotated[
     AdminReportDetailLevel,
     Query(description="Report detail level: summary or full."),
 ]
+ReportLanguageParam = Annotated[
+    str,
+    Query(description="Language for PDF content: en (English) or ta (Tamil)."),
+]
 BillsLimitParam = Annotated[
     int,
     Query(ge=1, le=500, description="Maximum number of bills returned in one page."),
@@ -2044,6 +2048,7 @@ async def admin_report_pdf(
     range_start_date: RangeStartDateParam = None,
     range_end_date: RangeEndDateParam = None,
     shop_ids: ShopIdsParam = None,
+    language: ReportLanguageParam = "en",
     db: DBSession = None,
 ) -> StreamingResponse:
     """Generate a merged PDF report server-side for the selected admin sections."""
@@ -2056,6 +2061,7 @@ async def admin_report_pdf(
         range_start_date=range_start_date,
         range_end_date=range_end_date,
         shop_ids=shop_ids,
+        language=language,
     )
     return StreamingResponse(
         iter_admin_report_file(report.file),

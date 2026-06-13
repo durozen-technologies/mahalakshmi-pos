@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import { Controller, Control, useForm, useWatch } from "react-hook-form";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { checkoutBill, previewBill } from "@/api/billing";
 import { toApiError } from "@/api/client";
@@ -10,6 +11,7 @@ import { Screen } from "@/components/ui/screen";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusPill } from "@/components/ui/status-pill";
 import { TextField } from "@/components/ui/text-field";
+import { ShopHeaderActions } from "@/components/shop-header";
 import { useReceiptImagePrintJob } from "@/hooks/use-receipt-image-print-job";
 import { useShopTranslation } from "@/hooks/use-shop-translation";
 import { CheckoutScreenProps } from "@/navigation/types";
@@ -18,7 +20,9 @@ import {
   getSavedPrinterLabel,
 } from "@/services/printer-service";
 import { getCartTotal, useCartStore } from "@/store/cart-store";
+import { useAuthStore } from "@/store/auth-store";
 import { usePrinterStore } from "@/store/printer-store";
+import { usePriceStore } from "@/store/price-store";
 import { BaseUnit } from "@/types/api";
 import { money, toMoneyString } from "@/utils/decimal";
 import { formatCurrency } from "@/utils/format";
@@ -54,9 +58,21 @@ const CheckoutPrinterCard = memo(function CheckoutPrinterCard({
   return (
     <View className="rounded-[26px] border border-border bg-surface p-4">
       <View className="mb-3 flex-row flex-wrap items-center justify-between gap-2">
-        <Text className="text-[11px] font-semibold uppercase tracking-[1.4px] text-muted">
-          {t("common.savedPrinter")}
-        </Text>
+        <View className="flex-row items-center gap-2">
+          <View
+            className={`h-7 w-7 items-center justify-center rounded-full border ${printerConfigured ? "border-[#BFE8D4] bg-[#EAF7F1]" : "border-border bg-surface"
+              }`}
+          >
+            <MaterialCommunityIcons
+              name={printerConfigured ? "printer-check-outline" : "printer-off-outline"}
+              size={16}
+              color={printerConfigured ? "#147D52" : "#6C7A70"}
+            />
+          </View>
+          <Text className="text-[11px] font-semibold uppercase tracking-[1.4px] text-muted">
+            {t("common.savedPrinter")}
+          </Text>
+        </View>
         <StatusPill
           label={
             printerConfigured ? t("common.ready") : t("common.notConfigured")
@@ -161,6 +177,8 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
   const { language, t } = useShopTranslation();
   const cartItems = useCartStore((state) => state.items);
   const resetCart = useCartStore((state) => state.resetCart);
+  const clearSession = useAuthStore((state) => state.clearSession);
+  const clearPrices = usePriceStore((state) => state.clear);
   const preferredPrinter = usePrinterStore((state) => state.preferredPrinter);
   const [submitting, setSubmitting] = useState(false);
   const checkoutCompletedRef = useRef(false);
@@ -182,6 +200,27 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
   const printerLabel = preferredPrinter ? getSavedPrinterLabel(preferredPrinter) : null;
   const printerDetail = preferredPrinter ? getPrinterDeviceDetail(preferredPrinter) : null;
   const { receiptImagePrintBridge, startReceiptImagePrintJob } = useReceiptImagePrintJob();
+
+  const handleLogout = useCallback(() => {
+    clearSession();
+    resetCart();
+    clearPrices();
+  }, [clearPrices, clearSession, resetCart]);
+
+  const handleOpenPrinterSetup = useCallback(() => {
+    navigation.navigate("PrinterSetup");
+  }, [navigation]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <ShopHeaderActions
+          onLogout={handleLogout}
+          onPrinter={handleOpenPrinterSetup}
+        />
+      ),
+    });
+  }, [handleLogout, handleOpenPrinterSetup, navigation]);
 
   async function handleCheckout(values: CheckoutFormValues) {
     const total = money(totalAmount);
@@ -254,7 +293,7 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
   }
 
   return (
-    <Screen>
+    <Screen topInset={false} contentTopPadding={4}>
       <Card className="gap-4">
         <SectionHeading
           eyebrow={t("checkout.splitPayment")}
@@ -289,12 +328,14 @@ export function CheckoutScreen({ navigation }: CheckoutScreenProps) {
             />
           )}
         />
-        <CheckoutPrinterCard
-          printerLabel={printerLabel}
-          printerDetail={printerDetail}
-          t={t}
-          onManagePrinter={() => navigation.navigate("PrinterSetup")}
-        />
+        {!printerLabel ? (
+          <CheckoutPrinterCard
+            printerLabel={printerLabel}
+            printerDetail={printerDetail}
+            t={t}
+            onManagePrinter={() => navigation.navigate("PrinterSetup")}
+          />
+        ) : null}
 
         <CheckoutPaymentStatus
           control={form.control}

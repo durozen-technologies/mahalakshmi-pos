@@ -7,9 +7,9 @@ module.exports = {
       colors: {
         cream: "#F7F1E8",
         ink: "#1E2B22",
-        accent: "#244734",
-        accentDeep: "#183224",
-        accentSoft: "#DCE7DA",
+        accent: "#147D52",
+        accentDeep: "#0F5E3E",
+        accentSoft: "#DDEEE6",
         successSoft: "#DBEADF",
         warningSoft: "#F8E9C7",
         dangerSoft: "#F8DFD9",

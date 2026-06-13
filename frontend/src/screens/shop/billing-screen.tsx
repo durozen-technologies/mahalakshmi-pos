@@ -35,7 +35,6 @@ import {
   useCartStore,
 } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
-import { usePrinterStore } from "@/store/printer-store";
 import { usePriceStore } from "@/store/price-store";
 import { BaseUnit, ItemPriceRead, UUID } from "@/types/api";
 
@@ -111,7 +110,7 @@ const CatalogueDropdown = memo(function CatalogueDropdown({
       >
         <View className="flex-row items-center gap-3">
           <View className="h-10 w-10 items-center justify-center rounded-[14px] bg-accentSoft">
-            <MaterialCommunityIcons name="filter-variant" size={20} color="#244734" />
+            <MaterialCommunityIcons name="filter-variant" size={20} color="#147D52" />
           </View>
 
           <View className="min-w-0 flex-1">
@@ -158,7 +157,7 @@ const CatalogueDropdown = memo(function CatalogueDropdown({
                 <MaterialCommunityIcons
                   name={optionIcon}
                   size={18}
-                  color={selected ? "#244734" : "#6C7A70"}
+                  color={selected ? "#147D52" : "#6C7A70"}
                 />
                 <Text
                   className={cn(
@@ -298,7 +297,7 @@ const CartLine = memo(
     <Card className="mb-3">
       <View className="flex-row items-start gap-3">
         <View className="h-10 w-10 items-center justify-center rounded-[14px] bg-accentSoft">
-          <MaterialCommunityIcons name="basket-outline" size={18} color="#244734" />
+          <MaterialCommunityIcons name="basket-outline" size={18} color="#147D52" />
         </View>
 
         <View className="min-w-0 flex-1">
@@ -357,7 +356,6 @@ export function BillingScreen({
   const clearSession = useAuthStore((state) => state.clearSession);
   const cartItems = useCartStore((state) => state.items);
   const resetCart = useCartStore((state) => state.resetCart);
-  const preferredPrinter = usePrinterStore((state) => state.preferredPrinter);
   const clearPrices = usePriceStore((state) => state.clear);
 
   const addItem = useCartStore((state) => state.addItem);
@@ -556,6 +554,18 @@ export function BillingScreen({
     clearPrices();
   }, [clearPrices, clearSession, resetCart]);
 
+  const handleOpenInventory = useCallback(() => {
+    navigation.navigate("InventoryManagement");
+  }, [navigation]);
+
+  const handleOpenExpenses = useCallback(() => {
+    navigation.navigate("ShopExpenses");
+  }, [navigation]);
+
+  const handleOpenPrinter = useCallback(() => {
+    navigation.navigate("PrinterSetup");
+  }, [navigation]);
+
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
@@ -563,10 +573,21 @@ export function BillingScreen({
           onLogout={handleLogout}
           onRefresh={handleRefreshBilling}
           refreshing={loading}
+          onInventory={handleOpenInventory}
+          onExpenses={handleOpenExpenses}
+          onPrinter={handleOpenPrinter}
         />
       ),
     });
-  }, [handleLogout, handleRefreshBilling, loading, navigation]);
+  }, [
+    handleLogout,
+    handleRefreshBilling,
+    handleOpenExpenses,
+    handleOpenInventory,
+    handleOpenPrinter,
+    loading,
+    navigation,
+  ]);
 
   const handleToggleCatalogue = useCallback(() => {
     setCatalogueOpen((current) => !current);
@@ -659,7 +680,6 @@ export function BillingScreen({
     () => (
       <View className="pb-4">
         <SectionHeading
-          eyebrow={t("billing.currentCart")}
           title={t("billing.reviewBeforeCheckout")}
           subtitle={t("billing.reviewBeforeCheckoutSubtitle")}
         />
@@ -691,80 +711,9 @@ export function BillingScreen({
           ))
         )}
 
-        <Card className="mt-2">
-          <View className="flex-row items-start gap-3">
-            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-accentSoft">
-              <MaterialCommunityIcons name="warehouse" size={21} color="#244734" />
-            </View>
-            <View className="min-w-0 flex-1">
-              <Text className="text-sm font-bold text-ink">
-                {t("inventory.title")}
-              </Text>
-              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
-                {t("inventory.billingEntryDescription")}
-              </Text>
-              <Button
-                label={t("action.manageInventory")}
-                onPress={() => navigation.navigate("InventoryManagement")}
-                variant="secondary"
-                className="mt-4 self-start"
-              />
-            </View>
-          </View>
-        </Card>
-
-        <Card className="mt-2">
-          <View className="flex-row items-start gap-3">
-            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-[#FAEFD8]">
-              <MaterialCommunityIcons name="cash-minus" size={21} color="#9A6700" />
-            </View>
-            <View className="min-w-0 flex-1">
-              <Text className="text-sm font-bold text-ink">
-                {t("expenses.title")}
-              </Text>
-              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
-                {t("expenses.billingEntryDescription")}
-              </Text>
-              <Button
-                label={t("action.manageExpenses")}
-                onPress={() => navigation.navigate("ShopExpenses")}
-                variant="secondary"
-                className="mt-4 self-start"
-              />
-            </View>
-          </View>
-        </Card>
-
-        <Card className="mt-2">
-          <View className="flex-row items-start gap-3">
-            <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-surface">
-              <MaterialCommunityIcons
-                name={preferredPrinter ? "printer-check" : "printer-alert"}
-                size={21}
-                color={preferredPrinter ? "#244734" : "#925F12"}
-              />
-            </View>
-            <View className="min-w-0 flex-1">
-              <Text className="text-sm font-bold text-ink">
-                {t("common.savedPrinter")}
-              </Text>
-              <Text className="mt-1 text-sm leading-6 text-muted" numberOfLines={3}>
-                {preferredPrinter
-                  ? preferredPrinter.name
-                  : t("printer.noPrinterSavedDescription")}
-              </Text>
-              <Button
-                label={t("action.managePrinter")}
-                onPress={() => navigation.navigate("PrinterSetup")}
-                variant="secondary"
-                className="mt-4 self-start"
-              />
-            </View>
-          </View>
-        </Card>
       </View>
     ),
-    [cartItems, handleRemoveItem, language, navigation, preferredPrinter, t, translatedItemNames],
+    [cartItems, handleRemoveItem, language, t, translatedItemNames],
   );
 
   if (loading && !bootstrap) {
@@ -813,7 +762,7 @@ export function BillingScreen({
 
   return (
     <View className="flex-1 bg-cream">
-      <Screen scroll={false}>
+      <Screen scroll={false} topInset={false} contentTopPadding={4}>
         <FlatList
           style={{ flex: 1 }}
           data={visibleItems}
@@ -833,8 +782,8 @@ export function BillingScreen({
             <RefreshControl
               refreshing={loading}
               onRefresh={handleRefreshBilling}
-              tintColor="#244734"
-              colors={["#244734"]}
+              tintColor="#147D52"
+              colors={["#147D52"]}
             />
           }
           contentContainerStyle={{

@@ -8,13 +8,23 @@ type ScreenProps = {
   onRefresh?: () => void;
   topSlot?: ReactNode;
   scroll?: boolean;
+  topInset?: boolean;
+  contentTopPadding?: number;
 };
 
-export function Screen({ children, refreshing = false, onRefresh, topSlot, scroll = true }: ScreenProps) {
+export function Screen({
+  children,
+  refreshing = false,
+  onRefresh,
+  topSlot,
+  scroll = true,
+  topInset = true,
+  contentTopPadding = 16,
+}: ScreenProps) {
   const insets = useSafeAreaInsets();
 
   return (
-    <SafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-cream">
+    <SafeAreaView edges={topInset ? ["top", "left", "right"] : ["left", "right"]} className="flex-1 bg-cream">
       {topSlot ? <View className="px-4 pb-2">{topSlot}</View> : null}
       {scroll ? (
         <ScrollView
@@ -22,7 +32,7 @@ export function Screen({ children, refreshing = false, onRefresh, topSlot, scrol
           keyboardDismissMode="on-drag"
           contentContainerStyle={{
             paddingHorizontal: 16,
-            paddingTop: 16,
+            paddingTop: contentTopPadding,
             paddingBottom: 112 + insets.bottom,
             gap: 20,
           }}
@@ -33,7 +43,7 @@ export function Screen({ children, refreshing = false, onRefresh, topSlot, scrol
           <View className="w-full max-w-[820px] self-center gap-5">{children}</View>
         </ScrollView>
       ) : (
-        <View className="flex-1 px-4 pt-4">
+        <View className="flex-1 px-4" style={{ paddingTop: contentTopPadding }}>
           <View className="w-full max-w-[820px] flex-1 self-center">{children}</View>
         </View>
       )}

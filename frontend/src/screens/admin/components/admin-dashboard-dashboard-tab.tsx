@@ -106,20 +106,6 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
   const subtitle = selectedShopId
     ? `${selectedShopName} · ${analyticsReferenceLabel}`
     : `All branches · ${analyticsReferenceLabel}`;
-  const snapshotColors = {
-    scope: {
-      backgroundColor: palette.primarySoft,
-      borderColor: palette.primary,
-      iconColor: palette.primary,
-      textColor: palette.primaryStrong,
-    },
-    period: {
-      backgroundColor: palette.billingSoft,
-      borderColor: palette.billing,
-      iconColor: palette.billing,
-      textColor: palette.billingStrong,
-    },
-  };
 
   return (
     <ScrollView
@@ -164,21 +150,6 @@ export const AdminDashboardTab = memo(function AdminDashboardTab({
                 Performance Snapshot
               </Text>
             </YStack>
-
-            <XStack flexWrap="wrap" gap={10}>
-              <SnapshotChip
-                label="Scope"
-                value={selectedShopId ? selectedShopName : "All branches"}
-                icon={selectedShopId ? "storefront-outline" : "source-branch"}
-                {...snapshotColors.scope}
-              />
-              <SnapshotChip
-                label="Period"
-                value={analyticsReferenceLabel}
-                icon="calendar-clock"
-                {...snapshotColors.period}
-              />
-            </XStack>
           </YStack>
 
           <YStack gap={10}>

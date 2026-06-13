@@ -6,6 +6,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -111,11 +113,11 @@ function markInventoryItemAllocated(
   return items.map((item) =>
     item.id === itemId
       ? {
-          ...item,
-          allocated: true,
-          allocation_active: item.is_active,
-          allocation_sort_order: item.allocation_sort_order ?? item.sort_order,
-        }
+        ...item,
+        allocated: true,
+        allocation_active: item.is_active,
+        allocation_sort_order: item.allocation_sort_order ?? item.sort_order,
+      }
       : item,
   );
 }
@@ -209,27 +211,27 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     () =>
       movementHistoryMode === "date"
         ? {
-            reference_date: movementHistoryDate,
-            range_start_date: null,
-            range_end_date: null,
-          }
+          reference_date: movementHistoryDate,
+          range_start_date: null,
+          range_end_date: null,
+        }
         : {
-            reference_date: null,
-            range_start_date: movementHistoryRangeStart,
-            range_end_date: movementHistoryRangeEnd,
-          },
+          reference_date: null,
+          range_start_date: movementHistoryRangeStart,
+          range_end_date: movementHistoryRangeEnd,
+        },
     [movementHistoryDate, movementHistoryMode, movementHistoryRangeEnd, movementHistoryRangeStart],
   );
   const movementHistoryKey = useMemo(
     () =>
       selectedShopId
         ? [
-            selectedShopId,
-            movementHistoryMode,
-            movementHistoryParams.reference_date ?? "",
-            movementHistoryParams.range_start_date ?? "",
-            movementHistoryParams.range_end_date ?? "",
-          ].join(":")
+          selectedShopId,
+          movementHistoryMode,
+          movementHistoryParams.reference_date ?? "",
+          movementHistoryParams.range_start_date ?? "",
+          movementHistoryParams.range_end_date ?? "",
+        ].join(":")
         : null,
     [movementHistoryMode, movementHistoryParams, selectedShopId],
   );
@@ -318,9 +320,9 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
         append
           ? Promise.resolve(null)
           : fetchInventoryItemCounts(
-              { q: inventorySearch || undefined },
-              { signal: controller.signal },
-            ),
+            { q: inventorySearch || undefined },
+            { signal: controller.signal },
+          ),
       ]);
 
       if (controller.signal.aborted || requestId !== itemsRequestIdRef.current) {
@@ -1245,95 +1247,83 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           onRefresh={() => loadBaseData(true)}
         />
       </View>
-      {activeTab === "items" ? (
-        <FlatList
-          data={items}
-          keyExtractor={(item) => item.id}
-          renderItem={renderInventoryItemRow}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
-          }
-          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
-          ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
-          ListHeaderComponent={(
-            <View style={styles.section}>
-              {renderTabs()}
-              {errorMessage ? (
-                <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
-                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
-                  <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
-                </View>
-              ) : null}
-              {renderItemsHeader()}
-              {itemsLoading && items.length === 0 ? (
-                <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
-              ) : null}
-            </View>
-          )}
-          ListEmptyComponent={
-            !itemsLoading ? (
-              <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
-            ) : null
-          }
-          ListFooterComponent={renderItemsFooter}
-          onEndReached={() => void loadInventoryRows({ append: true })}
-          onEndReachedThreshold={0.35}
-        />
-      ) : activeTab === "shops" ? (
-        <FlatList
-          data={stockItems}
-          keyExtractor={(item) => item.id}
-          renderItem={renderStockItemRow}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
-          }
-          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
-          ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
-          ListHeaderComponent={(
-            <View style={styles.section}>
-              {renderTabs()}
-              {errorMessage ? (
-                <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
-                  <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
-                  <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
-                </View>
-              ) : null}
-              {renderShopStockHeader()}
-            </View>
-          )}
-          ListEmptyComponent={
-            !stockLoading ? (
-              <Text style={[styles.loadingText, { color: palette.textMuted }]}>No branch stock rows found.</Text>
-            ) : null
-          }
-          ListFooterComponent={renderShopStockFooter}
-          onEndReached={() => void loadMoreShopData()}
-          onEndReachedThreshold={0.35}
-        />
-      ) : (
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
-          }
-          contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
-        >
-          {renderTabs()}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.keyboardAvoid}
+      >
+        <View style={styles.section}>{renderTabs()}</View>
+
+        <View style={styles.flex}>
           {errorMessage ? (
             <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
               <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
               <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
             </View>
           ) : null}
-          {loading ? (
-            <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
-          ) : (
-            renderCategories()
+
+          {activeTab === "items" && (
+            <FlatList
+              data={items}
+              keyExtractor={(item) => item.id}
+              renderItem={renderInventoryItemRow}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+              }
+              contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+              ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+              ListHeaderComponent={renderItemsHeader}
+              ListEmptyComponent={
+                !itemsLoading ? (
+                  <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
+                ) : null
+              }
+              ListFooterComponent={renderItemsFooter}
+              onEndReached={() => void loadInventoryRows({ append: true })}
+              onEndReachedThreshold={0.35}
+            />
           )}
-        </ScrollView>
-      )}
+
+          {activeTab === "shops" && (
+            <FlatList
+              data={stockItems}
+              keyExtractor={(item) => item.id}
+              renderItem={renderStockItemRow}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+              }
+              contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+              ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+              ListHeaderComponent={renderShopStockHeader}
+              ListEmptyComponent={
+                !stockLoading ? (
+                  <Text style={[styles.loadingText, { color: palette.textMuted }]}>No branch stock rows found.</Text>
+                ) : null
+              }
+              ListFooterComponent={renderShopStockFooter}
+              onEndReached={() => void loadMoreShopData()}
+              onEndReachedThreshold={0.35}
+            />
+          )}
+
+          {activeTab === "categories" && (
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+              }
+              contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+            >
+              {loading ? (
+                <Text style={[styles.loadingText, { color: palette.textMuted }]}>Loading inventory...</Text>
+              ) : (
+                renderCategories()
+              )}
+            </ScrollView>
+          )}
+        </View>
+      </KeyboardAvoidingView>
 
       <CalendarDatePickerModal
         visible={movementCalendarTarget !== null}
@@ -1419,6 +1409,7 @@ function IconButton({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  keyboardAvoid: { flex: 1 },
   topBar: {
     minHeight: 70,
     borderBottomWidth: StyleSheet.hairlineWidth,

@@ -287,3 +287,10 @@ duckdns/
 test/__pycache__/
 test/**/__pycache__/
 test/.pytest_cache/
+
+# Additional local files and IDEs
+.marscode/
+tmp/
+todo.txt
+diff.txt
+*.zip

@@ -48,9 +48,16 @@ type ExpoSharingNativeModule = {
   ) => Promise<void>;
 };
 
+type ReportLanguage = "en" | "ta";
+
+/** Font family name for Tamil script — registered in App.tsx via expo-font */
+const TAMIL_FONT = "NotoSansTamil";
+
 type SheetColumn = {
   key: string;
   label: string;
+  /** Proper Tamil Unicode label — rendered with NotoSansTamil font */
+  tamilLabel: string;
   width: number;
   align?: "left" | "center" | "right";
 };
@@ -61,20 +68,20 @@ type SheetRow = {
 };
 
 const SHEET_COLUMNS: SheetColumn[] = [
-  { key: "date", label: "Date", width: 92, align: "center" },
-  { key: "inventory", label: "Inventory Item", width: 132 },
-  { key: "old", label: "Old Stock (kg / Unit)", width: 118, align: "right" },
-  { key: "adding", label: "Adding Stock (kg / Unit)", width: 126, align: "right" },
-  { key: "available", label: "Total Available Stock (kg / Unit)", width: 136, align: "right" },
-  { key: "used", label: "Used Stock (kg / Unit)", width: 138 },
-  { key: "remaining", label: "Remaining Stock (kg / Unit)", width: 126, align: "right" },
-  { key: "billing", label: "Billing Items", width: 142 },
-  { key: "assumption", label: "Assumption (kg / Unit)", width: 132, align: "right" },
-  { key: "sales", label: "Sales (kg / Unit)", width: 112, align: "right" },
-  { key: "difference", label: "Difference (kg / Unit)", width: 120, align: "right" },
-  { key: "assumption_amount", label: "Assumption Amount", width: 124, align: "right" },
-  { key: "sales_amount", label: "Sales Amount", width: 112, align: "right" },
-  { key: "difference_amount", label: "Difference Amount", width: 124, align: "right" },
+  { key: "date",              label: "Date",                            tamilLabel: "\u0ba4\u0bc7\u0ba4\u0bbf",                                               width: 92,  align: "center" },
+  { key: "inventory",         label: "Inventory Item",                  tamilLabel: "\u0b9a\u0bb0\u0b95\u0bcd\u0b95\u0bc1 \u0baa\u0bca\u0bb0\u0bc1\u0bb3\u0bcd",                      width: 132 },
+  { key: "old",               label: "Old Stock (kg / Unit)",           tamilLabel: "\u0baa\u0bb4\u0bc8\u0baf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",                  width: 118, align: "right" },
+  { key: "adding",            label: "Adding Stock (kg / Unit)",        tamilLabel: "\u0b9a\u0bc7\u0bb0\u0bcd\u0b95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",      width: 126, align: "right" },
+  { key: "available",         label: "Total Available Stock (kg / Unit)",tamilLabel: "\u0bae\u0bca\u0ba4\u0bcd\u0ba4 \u0b95\u0bbf\u0b9f\u0bc8\u0b95\u0bcd\u0b95\u0bc1\u0bae\u0bcd \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",    width: 136, align: "right" },
+  { key: "used",              label: "Used Stock (kg / Unit)",          tamilLabel: "\u0baa\u0baf\u0ba9\u0bcd\u0baa\u0b9f\u0bc1\u0ba4\u0bcd\u0ba4\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",  width: 138 },
+  { key: "remaining",         label: "Remaining Stock (kg / Unit)",     tamilLabel: "\u0bae\u0bc0\u0ba4\u0bbf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",                  width: 126, align: "right" },
+  { key: "billing",           label: "Billing Items",                   tamilLabel: "\u0baa\u0bbf\u0bb2\u0bcd\u0bb2\u0bbf\u0b99\u0bcd \u0baa\u0bca\u0bb0\u0bc1\u0bb3\u0bcd\u0b95\u0bb3\u0bcd",                  width: 142 },
+  { key: "assumption",        label: "Assumption (kg / Unit)",          tamilLabel: "\u0b85\u0ba9\u0bc1\u0bae\u0bbe\u0ba9\u0bae\u0bcd (kg/Unit)",                    width: 132, align: "right" },
+  { key: "sales",             label: "Sales (kg / Unit)",               tamilLabel: "\u0bb5\u0bbf\u0bb1\u0bcd\u0baa\u0ba9\u0bc8 (kg/Unit)",                        width: 112, align: "right" },
+  { key: "difference",        label: "Difference (kg / Unit)",          tamilLabel: "\u0bb5\u0bbf\u0ba4\u0bcd\u0ba4\u0bbf\u0baf\u0bbe\u0b9a\u0bae\u0bcd (kg/Unit)",                  width: 120, align: "right" },
+  { key: "assumption_amount", label: "Assumption Amount",               tamilLabel: "\u0b85\u0ba9\u0bc1\u0bae\u0bbe\u0ba9 \u0ba4\u0bca\u0b95\u0bc8",                          width: 124, align: "right" },
+  { key: "sales_amount",      label: "Sales Amount",                    tamilLabel: "\u0bb5\u0bbf\u0bb1\u0bcd\u0baa\u0ba9\u0bc8 \u0ba4\u0bca\u0b95\u0bc8",                          width: 112, align: "right" },
+  { key: "difference_amount", label: "Difference Amount",               tamilLabel: "\u0bb5\u0bbf\u0ba4\u0bcd\u0ba4\u0bbf\u0baf\u0bbe\u0b9a \u0ba4\u0bca\u0b95\u0bc8",                        width: 124, align: "right" },
 ];
 
 function unitLabel(unit: BaseUnit) {
@@ -96,9 +103,7 @@ function formatReportMoney(value: string | number | null | undefined) {
 
 function formatReportDate(value: string) {
   const [year, month, day] = value.split("-");
-  if (!year || !month || !day) {
-    return value;
-  }
+  if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
 }
 
@@ -108,45 +113,52 @@ function formatStatementDate(statement: OverallReportStatement) {
   return start === end ? start : `${start} To ${end}`;
 }
 
-function formatUsedBreakdown(
-  row: OverallReportUsedStockBreakdown | undefined,
-  unit: BaseUnit,
-) {
-  if (!row) {
-    return "";
-  }
+function formatUsedBreakdown(row: OverallReportUsedStockBreakdown | undefined, unit: BaseUnit) {
+  if (!row) return "";
   return `${row.label}: ${formatReportQuantityWithUnit(row.quantity, unit)}`;
 }
 
-function buildStatementRows(statement: OverallReportStatement): SheetRow[] {
-  return statement.inventory_items.flatMap((item) => buildInventoryRows(statement, item));
+function buildStatementRows(statement: OverallReportStatement, language: ReportLanguage): SheetRow[] {
+  return statement.inventory_items.flatMap((item) => buildInventoryRows(statement, item, language));
 }
 
 function buildInventoryRows(
   statement: OverallReportStatement,
   item: OverallReportInventoryItem,
+  language: ReportLanguage,
 ): SheetRow[] {
-  const usedRows = item.used_stock_breakdown.length > 0
-    ? item.used_stock_breakdown
-    : [{ label: "Used", quantity: item.used_stock } as OverallReportUsedStockBreakdown];
+  const useTamil = language === "ta";
+  const invDisplayName = useTamil ? (item.item_tamil_name ?? item.item_name) : item.item_name;
+
+  const usedRows =
+    item.used_stock_breakdown.length > 0
+      ? item.used_stock_breakdown
+      : [{ label: "Used", quantity: item.used_stock } as OverallReportUsedStockBreakdown];
   const billingRows = item.billing_items;
   const rowCount = Math.max(1, usedRows.length, billingRows.length || 1);
   const rows: SheetRow[] = [];
+
   for (let index = 0; index < rowCount; index += 1) {
     const isFirst = index === 0;
     const usedRow = usedRows[index];
     const billingRow = billingRows[index];
+    const billingDisplayName = billingRow
+      ? useTamil
+        ? (billingRow.item_tamil_name ?? billingRow.item_name)
+        : billingRow.item_name
+      : undefined;
+
     rows.push({
       id: `${statement.shop_id}-${statement.start_date}-${statement.end_date}-${item.inventory_item_id}-${index}`,
       cells: [
         isFirst ? formatStatementDate(statement) : "",
-        isFirst ? item.item_name : "",
+        isFirst ? invDisplayName : "",
         isFirst ? formatReportQuantityWithUnit(item.old_stock, item.unit) : "",
         isFirst ? formatReportQuantityWithUnit(item.adding_stock, item.unit) : "",
         isFirst ? formatReportQuantityWithUnit(item.total_available_stock, item.unit) : "",
         formatUsedBreakdown(usedRow, item.unit),
         isFirst ? formatReportQuantityWithUnit(item.remaining_stock, item.unit) : "",
-        billingRow?.item_name ?? (isFirst && billingRows.length === 0 ? "No mapped billing sales" : ""),
+        billingDisplayName ?? (isFirst && billingRows.length === 0 ? "No mapped billing sales" : ""),
         billingRow ? formatReportQuantityWithUnit(billingRow.assumption_quantity, billingRow.unit) : "",
         billingRow ? formatReportQuantityWithUnit(billingRow.sales_quantity, billingRow.unit) : "",
         billingRow ? formatReportQuantityWithUnit(billingRow.difference_quantity, billingRow.unit) : "",
@@ -163,52 +175,53 @@ export function AdminOverallReportPreviewScreen({
   navigation,
   route,
 }: AdminOverallReportPreviewScreenProps) {
-  const { colorScheme, palette } = useAdminTheme();
+  const { palette } = useAdminTheme();
   const insets = useSafeAreaInsets();
   const [report, setReport] = useState<OverallReportRead | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [language, setLanguage] = useState<ReportLanguage>(route.params.language ?? "en");
 
-  const reportParams = useMemo<FetchOverallReportParams>(() => ({
-    detailLevel: route.params.detailLevel,
-    period: route.params.period,
-    referenceDate:
-      route.params.period === AnalyticsPeriod.RANGE ? undefined : route.params.referenceDate,
-    range:
-      route.params.period === AnalyticsPeriod.RANGE
-        ? route.params.range
-        : undefined,
-    shopIds: route.params.shopIds,
-  }), [
-    route.params.detailLevel,
-    route.params.period,
-    route.params.range,
-    route.params.referenceDate,
-    route.params.shopIds,
-  ]);
+  const reportParams = useMemo<FetchOverallReportParams>(
+    () => ({
+      detailLevel: route.params.detailLevel,
+      period: route.params.period,
+      referenceDate:
+        route.params.period === AnalyticsPeriod.RANGE ? undefined : route.params.referenceDate,
+      range: route.params.period === AnalyticsPeriod.RANGE ? route.params.range : undefined,
+      shopIds: route.params.shopIds,
+    }),
+    [
+      route.params.detailLevel,
+      route.params.period,
+      route.params.range,
+      route.params.referenceDate,
+      route.params.shopIds,
+    ],
+  );
 
   const canGenerate = route.params.sections.length > 0 && !generating;
   const subtitle = report?.period_label ?? route.params.period;
 
-  const loadReport = useCallback(async (refresh = false) => {
-    if (refresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-    setErrorMessage(null);
-    try {
-      const nextReport = await fetchAdminOverallReport(reportParams);
-      setReport(nextReport);
-    } catch (error) {
-      setErrorMessage(toApiError(error).message || "Overall report preview could not be loaded.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [reportParams]);
+  const loadReport = useCallback(
+    async (refresh = false) => {
+      if (refresh) setRefreshing(true);
+      else setLoading(true);
+      setErrorMessage(null);
+      try {
+        const nextReport = await fetchAdminOverallReport(reportParams);
+        setReport(nextReport);
+      } catch (error) {
+        setErrorMessage(toApiError(error).message || "Overall report preview could not be loaded.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [reportParams],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -218,92 +231,104 @@ export function AdminOverallReportPreviewScreen({
       .then(setReport)
       .catch((error) => {
         if (!isApiRequestCanceled(error)) {
-          setErrorMessage(toApiError(error).message || "Overall report preview could not be loaded.");
+          setErrorMessage(
+            toApiError(error).message || "Overall report preview could not be loaded.",
+          );
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
   }, [reportParams]);
 
-  const handleGenerate = useCallback(async () => {
-    if (!canGenerate) {
-      return;
-    }
-    setGenerating(true);
-    setErrorMessage(null);
-    try {
-      const result = await downloadAdminReportPdf({
-        ...reportParams,
-        sections: route.params.sections,
-      });
-      const sharingModule = requireOptionalNativeModule<ExpoSharingNativeModule>("ExpoSharing");
-      let shared = false;
-      if (sharingModule?.shareAsync) {
-        const sharingAvailable = sharingModule.isAvailableAsync
-          ? await sharingModule.isAvailableAsync().catch(() => false)
-          : true;
-        if (sharingAvailable) {
-          await sharingModule
-            .shareAsync(result.uri, {
-              dialogTitle: "Admin report",
-              mimeType: "application/pdf",
-              UTI: "com.adobe.pdf",
-            })
-            .then(() => {
-              shared = true;
-            })
-            .catch(() => {
-              shared = false;
-            });
+  const handleGenerate = useCallback(
+    async (lang: ReportLanguage) => {
+      if (!canGenerate) return;
+      setGenerating(true);
+      setErrorMessage(null);
+      try {
+        const result = await downloadAdminReportPdf({
+          ...reportParams,
+          sections: route.params.sections,
+          language: lang,
+        });
+        const sharingModule =
+          requireOptionalNativeModule<ExpoSharingNativeModule>("ExpoSharing");
+        let shared = false;
+        if (sharingModule?.shareAsync) {
+          const sharingAvailable = sharingModule.isAvailableAsync
+            ? await sharingModule.isAvailableAsync().catch(() => false)
+            : true;
+          if (sharingAvailable) {
+            await sharingModule
+              .shareAsync(result.uri, {
+                dialogTitle: "Admin report",
+                mimeType: "application/pdf",
+                UTI: "com.adobe.pdf",
+              })
+              .then(() => { shared = true; })
+              .catch(() => { shared = false; });
+          }
         }
+        if (!shared) {
+          Alert.alert("Report downloaded", result.filename);
+        }
+      } catch (error) {
+        setErrorMessage(toApiError(error).message || "Report could not be generated.");
+      } finally {
+        setGenerating(false);
       }
-      if (!shared) {
-        Alert.alert("Report downloaded", result.filename);
-      }
-    } catch (error) {
-      setErrorMessage(toApiError(error).message || "Report could not be generated.");
-    } finally {
-      setGenerating(false);
-    }
-  }, [canGenerate, reportParams, route.params.sections]);
+    },
+    [canGenerate, reportParams, route.params.sections],
+  );
 
-  const renderCell = (column: SheetColumn, value: string, rowId: string, rowIndex: number) => (
-    <View
-      key={`${rowId}-${column.key}`}
-      style={[
-        styles.sheetCell,
-        {
-          width: column.width,
-          minHeight: rowIndex === -1 ? 58 : 48,
-          backgroundColor: rowIndex === -1
-            ? palette.surfaceMuted
-            : rowIndex % 2 === 0
-              ? palette.card
-              : palette.background,
-          borderColor: palette.border,
-        },
-      ]}
-    >
-      <Text
+  /** Render a single table cell. Uses NotoSansTamil when language is Tamil. */
+  const renderCell = (
+    column: SheetColumn,
+    value: string,
+    rowId: string,
+    rowIndex: number,
+    isTamil: boolean,
+  ) => {
+    const isHeader = rowIndex === -1;
+    return (
+      <View
+        key={`${rowId}-${column.key}`}
         style={[
-          rowIndex === -1 ? styles.sheetHeaderText : styles.sheetCellText,
+          styles.sheetCell,
           {
-            color: rowIndex === -1 ? palette.textPrimary : palette.textSecondary,
-            textAlign: column.align ?? "left",
+            width: column.width,
+            minHeight: isHeader ? 58 : 48,
+            backgroundColor: isHeader
+              ? palette.surfaceMuted
+              : rowIndex % 2 === 0
+                ? palette.card
+                : palette.background,
+            borderColor: palette.border,
           },
         ]}
       >
-        {value}
-      </Text>
-    </View>
-  );
+        <Text
+          style={[
+            isHeader ? styles.sheetHeaderText : styles.sheetCellText,
+            {
+              color: isHeader ? palette.textPrimary : palette.textSecondary,
+              textAlign: column.align ?? "left",
+              // Apply NotoSansTamil so Tamil Unicode renders correctly instead of squares
+              fontFamily: isTamil ? TAMIL_FONT : undefined,
+            },
+          ]}
+        >
+          {value}
+        </Text>
+      </View>
+    );
+  };
 
   const renderStatement = ({ item: statement }: { item: OverallReportStatement }) => {
-    const rows = buildStatementRows(statement);
+    const rows = buildStatementRows(statement, language);
+    const isTamil = language === "ta";
     return (
       <View
         style={[
@@ -313,7 +338,9 @@ export function AdminOverallReportPreviewScreen({
         ]}
       >
         <View style={styles.statementHeader}>
-          <Text style={[styles.companyTitle, { color: palette.textPrimary }]}>SRI MAHALAKSHMI BROILERS</Text>
+          <Text style={[styles.companyTitle, { color: palette.textPrimary }]}>
+            SRI MAHALAKSHMI BROILERS
+          </Text>
           <Text style={[styles.branchTitle, { color: palette.textPrimary }]}>
             {statement.shop_name.toUpperCase()} - BRANCH
           </Text>
@@ -322,19 +349,41 @@ export function AdminOverallReportPreviewScreen({
             Date: {formatStatementDate(statement)}
           </Text>
         </View>
+
         {rows.length === 0 ? (
           <View style={[styles.reportEmptyRow, { backgroundColor: palette.surfaceMuted }]}>
-            <Text style={[styles.reportEmptyText, { color: palette.textMuted }]}>No allocated inventory items</Text>
+            <Text style={[styles.reportEmptyText, { color: palette.textMuted }]}>
+              No allocated inventory items
+            </Text>
           </View>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator>
             <View>
+              {/* Header row */}
               <View style={styles.sheetRow}>
-                {SHEET_COLUMNS.map((column) => renderCell(column, column.label, "header", -1))}
+                {SHEET_COLUMNS.map((column) =>
+                  renderCell(
+                    column,
+                    isTamil ? column.tamilLabel : column.label,
+                    "header",
+                    -1,
+                    isTamil,
+                  ),
+                )}
               </View>
+              {/* Data rows */}
               {rows.map((row, index) => (
                 <View key={row.id} style={styles.sheetRow}>
-                  {SHEET_COLUMNS.map((column, columnIndex) => renderCell(column, row.cells[columnIndex] ?? "", row.id, index))}
+                  {SHEET_COLUMNS.map((column, columnIndex) =>
+                    renderCell(
+                      column,
+                      row.cells[columnIndex] ?? "",
+                      row.id,
+                      index,
+                      // Use Tamil font for inventory/billing name columns when in Tamil mode
+                      isTamil && (column.key === "inventory" || column.key === "billing"),
+                    ),
+                  )}
                 </View>
               ))}
             </View>
@@ -347,7 +396,12 @@ export function AdminOverallReportPreviewScreen({
   const renderListHeader = () => (
     <View style={styles.headerContent}>
       {errorMessage ? (
-        <View style={[styles.errorBanner, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}>
+        <View
+          style={[
+            styles.errorBanner,
+            { backgroundColor: palette.dangerSoft, borderColor: palette.danger },
+          ]}
+        >
           <MaterialCommunityIcons name="alert-circle-outline" size={18} color={palette.danger} />
           <Text style={[styles.errorText, { color: palette.danger }]}>{errorMessage}</Text>
         </View>
@@ -361,12 +415,86 @@ export function AdminOverallReportPreviewScreen({
   );
 
   const renderFooter = () => (
-    <View style={[styles.footer, { paddingBottom: 18 + insets.bottom, backgroundColor: palette.background }]}>
+    <View
+      style={[
+        styles.footer,
+        { paddingBottom: 18 + insets.bottom, backgroundColor: palette.background },
+      ]}
+    >
+      {/* Language selector */}
+      <View
+        style={[
+          styles.languageToggle,
+          { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: language === "en" }}
+          onPress={() => setLanguage("en")}
+          style={[
+            styles.languageChip,
+            { backgroundColor: language === "en" ? palette.primary : "transparent" },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name="alphabetical"
+            size={15}
+            color={language === "en" ? palette.onPrimary : palette.textSecondary}
+          />
+          <Text
+            style={[
+              styles.languageChipText,
+              { color: language === "en" ? palette.onPrimary : palette.textSecondary },
+            ]}
+          >
+            English
+          </Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: language === "ta" }}
+          onPress={() => setLanguage("ta")}
+          style={[
+            styles.languageChip,
+            { backgroundColor: language === "ta" ? palette.primary : "transparent" },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name="translate"
+            size={15}
+            color={language === "ta" ? palette.onPrimary : palette.textSecondary}
+          />
+          {/* Render Tamil label with NotoSansTamil font */}
+          <Text
+            style={[
+              styles.languageChipText,
+              {
+                color: language === "ta" ? palette.onPrimary : palette.textSecondary,
+                fontFamily: TAMIL_FONT,
+              },
+            ]}
+          >
+            {"\u0ba4\u0bae\u0bbf\u0bb4\u0bcd"}
+          </Text>
+          <Text
+            style={[
+              styles.languageChipTextSub,
+              { color: language === "ta" ? palette.onPrimary : palette.textSecondary },
+            ]}
+          >
+            (Tamil)
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Generate PDF button */}
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ disabled: !canGenerate }}
         disabled={!canGenerate}
-        onPress={handleGenerate}
+        onPress={() => void handleGenerate(language)}
         style={[
           styles.generateButton,
           adminShadow(palette.shadow, 0.08, 10, 14),
@@ -382,43 +510,65 @@ export function AdminOverallReportPreviewScreen({
           <MaterialCommunityIcons name="file-pdf-box" size={21} color={palette.onPrimary} />
         )}
         <Text style={[styles.generateButtonText, { color: palette.onPrimary }]}>
-          {generating ? "Generating..." : "Generate PDF"}
+          {generating
+            ? "Generating..."
+            : `Generate PDF`}
         </Text>
       </Pressable>
     </View>
   );
 
   return (
-    <SafeAreaView style={[styles.screen, { backgroundColor: palette.background }]} edges={["top", "left", "right"]}>
+    <SafeAreaView
+      style={[styles.screen, { backgroundColor: palette.background }]}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar style="light" />
       <View
         style={[
           styles.topBar,
-          { backgroundColor: palette.shell, borderBottomColor: palette.shellBorder, paddingTop: Math.max(insets.top - 8, 0) },
+          {
+            backgroundColor: palette.shell,
+            borderBottomColor: palette.shellBorder,
+            paddingTop: Math.max(insets.top - 8, 0),
+          },
         ]}
       >
-        <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
           <MaterialCommunityIcons name="arrow-left" size={20} color={palette.onShell} />
         </Pressable>
         <View style={styles.titleWrap}>
-          <Text numberOfLines={1} style={[styles.title, { color: palette.onShell }]}>Overall Report</Text>
+          <Text numberOfLines={1} style={[styles.title, { color: palette.onShell }]}>
+            Overall Report
+          </Text>
           <Text numberOfLines={1} style={[styles.subtitle, { color: palette.onShellMuted }]}>
             {subtitle}
           </Text>
         </View>
-        <AdminHeaderActions refreshing={refreshing || loading} onRefresh={() => void loadReport(true)} />
+        <AdminHeaderActions
+          refreshing={refreshing || loading}
+          onRefresh={() => void loadReport(true)}
+        />
       </View>
 
       <FlatList
         data={report?.statements ?? []}
-        keyExtractor={(statement) => `${statement.shop_id}-${statement.start_date}-${statement.end_date}`}
+        keyExtractor={(statement) =>
+          `${statement.shop_id}-${statement.start_date}-${statement.end_date}`
+        }
         renderItem={renderStatement}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         ListHeaderComponent={renderListHeader}
         ListEmptyComponent={
           !loading && !errorMessage ? (
             <View style={[styles.reportEmptyRow, { backgroundColor: palette.surfaceMuted }]}>
-              <Text style={[styles.reportEmptyText, { color: palette.textMuted }]}>No branch data available</Text>
+              <Text style={[styles.reportEmptyText, { color: palette.textMuted }]}>
+                No branch data available
+              </Text>
             </View>
           ) : null
         }
@@ -436,7 +586,7 @@ export function AdminOverallReportPreviewScreen({
         maxToRenderPerBatch={6}
         updateCellsBatchingPeriod={48}
         windowSize={7}
-        extraData={`${refreshing}-${loading}-${generating}-${errorMessage ?? ""}`}
+        extraData={`${refreshing}-${loading}-${generating}-${errorMessage ?? ""}-${language}`}
         showsVerticalScrollIndicator={false}
       />
       {renderFooter()}
@@ -445,9 +595,7 @@ export function AdminOverallReportPreviewScreen({
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-  },
+  screen: { flex: 1 },
   topBar: {
     minHeight: 64,
     paddingHorizontal: 16,
@@ -457,34 +605,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  backButton: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  titleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: "800",
-  },
-  subtitle: {
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  listContent: {
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 18,
-  },
-  headerContent: {
-    gap: 12,
-    marginBottom: 12,
-  },
+  backButton: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  titleWrap: { flex: 1, minWidth: 0 },
+  title: { fontSize: 20, fontWeight: "800" },
+  subtitle: { marginTop: 2, fontSize: 12, fontWeight: "700" },
+  listContent: { paddingHorizontal: 12, paddingTop: 16, paddingBottom: 18 },
+  headerContent: { gap: 12, marginBottom: 12 },
   errorBanner: {
     minHeight: 44,
     borderWidth: 1,
@@ -495,21 +621,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  errorText: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  loadingPanel: {
-    minHeight: 54,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statementPanel: {
-    borderWidth: 1,
-    borderRadius: 12,
-    overflow: "hidden",
-  },
+  errorText: { flex: 1, fontSize: 12, fontWeight: "700" },
+  loadingPanel: { minHeight: 54, alignItems: "center", justifyContent: "center" },
+  statementPanel: { borderWidth: 1, borderRadius: 12, overflow: "hidden" },
   statementHeader: {
     minHeight: 96,
     alignItems: "center",
@@ -517,36 +631,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
-  companyTitle: {
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  branchTitle: {
-    marginTop: 2,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  statementTitle: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  statementDate: {
-    marginTop: 3,
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  sheetRow: {
-    flexDirection: "row",
-  },
+  companyTitle: { fontSize: 16, lineHeight: 21, fontWeight: "900", textAlign: "center" },
+  branchTitle: { marginTop: 2, fontSize: 14, lineHeight: 19, fontWeight: "900", textAlign: "center" },
+  statementTitle: { marginTop: 4, fontSize: 12, lineHeight: 16, fontWeight: "800", textAlign: "center" },
+  statementDate: { marginTop: 3, fontSize: 11, lineHeight: 15, fontWeight: "800", textAlign: "center" },
+  sheetRow: { flexDirection: "row" },
   sheetCell: {
     borderRightWidth: StyleSheet.hairlineWidth,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -554,31 +643,35 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     justifyContent: "center",
   },
-  sheetHeaderText: {
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: "900",
-  },
-  sheetCellText: {
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: "700",
-  },
+  sheetHeaderText: { fontSize: 10, lineHeight: 14, fontWeight: "900" },
+  sheetCellText: { fontSize: 10, lineHeight: 14, fontWeight: "700" },
   reportEmptyRow: {
     minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
-  reportEmptyText: {
-    fontSize: 12,
-    fontWeight: "800",
-    textAlign: "center",
+  reportEmptyText: { fontSize: 12, fontWeight: "800", textAlign: "center" },
+  footer: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
+  languageToggle: {
+    flexDirection: "row",
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 4,
+    gap: 4,
   },
-  footer: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
+  languageChip: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingHorizontal: 10,
   },
+  languageChipText: { fontSize: 13, fontWeight: "700" },
+  languageChipTextSub: { fontSize: 11, fontWeight: "600" },
   generateButton: {
     minHeight: 54,
     borderRadius: 12,
@@ -588,8 +681,5 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 18,
   },
-  generateButtonText: {
-    fontSize: 15,
-    fontWeight: "800",
-  },
+  generateButtonText: { fontSize: 15, fontWeight: "800" },
 });

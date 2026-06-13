@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type TextStyle,
   Keyboard,
@@ -6,7 +6,6 @@ import {
   Platform,
   StatusBar,
   TouchableWithoutFeedback,
-  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -150,7 +149,7 @@ function SecurityChip({
 
 export function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { height } = useWindowDimensions();
+  const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
   const [submitting, setSubmitting] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -163,6 +162,25 @@ export function LoginScreen() {
   const clearPrices = usePriceStore((state) => state.clear);
 
   const credentialsReady = Boolean(collapseWhitespace(username).trim() && password.trim());
+
+  useEffect(() => {
+    const keyboardShowEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+
+    const subscription = Keyboard.addListener(keyboardShowEvent, () => {
+      if (!focusedField) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({
+          y: focusedField === "password" ? 260 : 160,
+          animated: true,
+        });
+      });
+    });
+
+    return () => subscription.remove();
+  }, [focusedField]);
 
   async function handleLogin() {
     const normalizedUsername = collapseWhitespace(username).trim();
@@ -211,6 +229,7 @@ export function LoginScreen() {
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <ScrollView
+            ref={scrollViewRef}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             showsVerticalScrollIndicator={false}
@@ -218,21 +237,20 @@ export function LoginScreen() {
             backgroundColor={C.background}
             contentContainerStyle={{
               flexGrow: 1,
-              minHeight: height,
               backgroundColor: C.background,
             }}
           >
-            <YStack flex={1} minHeight={height} backgroundColor={C.background}>
+            <YStack flex={1} backgroundColor={C.background}>
               <YStack
-                minHeight={292}
+                minHeight={244}
                 paddingHorizontal={22}
-                paddingTop={insets.top + 24}
-                paddingBottom={50}
+                paddingTop={insets.top + 18}
+                paddingBottom={28}
                 backgroundColor={C.hero}
                 borderBottomWidth={1}
                 borderBottomColor="rgba(255,255,255,0.08)"
               >
-                <YStack width="100%" maxWidth={520} alignSelf="center" gap={22}>
+                <YStack width="100%" maxWidth={520} alignSelf="center" gap={14}>
                   <XStack alignItems="center" justifyContent="space-between" gap={16}>
                     <XStack alignItems="center" gap={12} flex={1} minWidth={0}>
                       <Stack
@@ -285,8 +303,7 @@ export function LoginScreen() {
                     </IconTile>
                   </XStack>
 
-                  <YStack gap={12} marginTop={6}>
-        
+                  <YStack gap={8} marginTop={0}>
                     <Text
                       style={{
                         color: "rgba(255,255,255,0.76)",

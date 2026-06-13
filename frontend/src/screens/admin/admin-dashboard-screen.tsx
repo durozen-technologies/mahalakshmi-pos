@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import {
   Alert,
   Animated,
+  KeyboardAvoidingView,
   LayoutAnimation,
   Platform,
   Pressable,
@@ -1053,77 +1054,82 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
         </View>
       ) : null}
 
-      {activeNav === "dashboard" ? (
-        <AdminDashboardTab
-          dashboardError={dashboardError}
-          hasShops={shops.length > 0}
-          palette={palette}
-          refreshing={refreshing}
-          onRefresh={handleQuickRefresh}
-          bottomSpacer={bottomSpacer}
-          selectedShopId={selectedShopId}
-          selectedShopName={selectedShopName}
-          analyticsReferenceLabel={analyticsReferenceLabel}
-          visibleBillCount={visibleBillCount}
-          metricCards={metricCards}
-          useCompactMetricCards={useCompactMetricCards}
-        />
-      ) : null}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.keyboardAvoid}
+      >
+        {activeNav === "dashboard" ? (
+          <AdminDashboardTab
+            dashboardError={dashboardError}
+            hasShops={shops.length > 0}
+            palette={palette}
+            refreshing={refreshing}
+            onRefresh={handleQuickRefresh}
+            bottomSpacer={bottomSpacer}
+            selectedShopId={selectedShopId}
+            selectedShopName={selectedShopName}
+            analyticsReferenceLabel={analyticsReferenceLabel}
+            visibleBillCount={visibleBillCount}
+            metricCards={metricCards}
+            useCompactMetricCards={useCompactMetricCards}
+          />
+        ) : null}
 
-      {activeNav === "billing" ? (
-        <AdminBillingTab
-          dashboardError={dashboardError}
-          hasShops={shops.length > 0}
-          palette={palette}
-          billingSections={billingSections}
-          visibleBillCount={visibleBillCount}
-          visibleBillsLength={visibleBills.length}
-          dailyBillsLength={dailyBills.length}
-          dailyBillsHasMore={dailyBillsHasMore}
-          dailyBillsLoadingMore={dailyBillsLoadingMore}
-          refreshing={refreshing}
-          bottomSpacer={bottomSpacer}
-          printingAll={printingAll}
-          onRefresh={handleQuickRefresh}
-          onOpenBill={handleOpenBillPreview}
-          onPrintAll={handleStartPrintAllBills}
-          onLoadMore={handleLoadMoreBills}
-        />
-      ) : null}
+        {activeNav === "billing" ? (
+          <AdminBillingTab
+            dashboardError={dashboardError}
+            hasShops={shops.length > 0}
+            palette={palette}
+            billingSections={billingSections}
+            visibleBillCount={visibleBillCount}
+            visibleBillsLength={visibleBills.length}
+            dailyBillsLength={dailyBills.length}
+            dailyBillsHasMore={dailyBillsHasMore}
+            dailyBillsLoadingMore={dailyBillsLoadingMore}
+            refreshing={refreshing}
+            bottomSpacer={bottomSpacer}
+            printingAll={printingAll}
+            onRefresh={handleQuickRefresh}
+            onOpenBill={handleOpenBillPreview}
+            onPrintAll={handleStartPrintAllBills}
+            onLoadMore={handleLoadMoreBills}
+          />
+        ) : null}
 
-      {activeNav === "sales" ? (
-        <AdminInventoryTab
-          dashboardError={dashboardError}
-          hasShops={shops.length > 0}
-          palette={palette}
-          filteredItemSales={filteredItemSales}
-          itemRevenueAverage={itemRevenueAverage}
-          itemSearch={itemSearch}
-          onChangeSearch={setItemSearch}
-          refreshing={refreshing}
-          bottomPadding={inventoryContentPadding}
-          onRefresh={handleQuickRefresh}
-        />
-      ) : null}
+        {activeNav === "sales" ? (
+          <AdminInventoryTab
+            dashboardError={dashboardError}
+            hasShops={shops.length > 0}
+            palette={palette}
+            filteredItemSales={filteredItemSales}
+            itemRevenueAverage={itemRevenueAverage}
+            itemSearch={itemSearch}
+            onChangeSearch={setItemSearch}
+            refreshing={refreshing}
+            bottomPadding={inventoryContentPadding}
+            onRefresh={handleQuickRefresh}
+          />
+        ) : null}
 
-      {activeNav === "settings" ? (
-        <AdminSettingsTab
-          dashboardError={dashboardError}
-          hasShops={shops.length > 0}
-          palette={palette}
-          visibleShopRows={visibleShopRows}
-          branchRanking={branchRanking}
-          statusUpdatingShopId={statusUpdatingShopId}
-          refreshing={refreshing}
-          bottomPadding={inventoryContentPadding}
-          onRefresh={handleQuickRefresh}
-          onCreateBranch={openCreateShopSheet}
-          onOpenReports={openReportsScreen}
-          onManageBranch={openManageShopSheet}
-          onToggleBranch={handleToggleBranchStatus}
-          onLogout={handleLogout}
-        />
-      ) : null}
+        {activeNav === "settings" ? (
+          <AdminSettingsTab
+            dashboardError={dashboardError}
+            hasShops={shops.length > 0}
+            palette={palette}
+            visibleShopRows={visibleShopRows}
+            branchRanking={branchRanking}
+            statusUpdatingShopId={statusUpdatingShopId}
+            refreshing={refreshing}
+            bottomPadding={inventoryContentPadding}
+            onRefresh={handleQuickRefresh}
+            onCreateBranch={openCreateShopSheet}
+            onOpenReports={openReportsScreen}
+            onManageBranch={openManageShopSheet}
+            onToggleBranch={handleToggleBranchStatus}
+            onLogout={handleLogout}
+          />
+        ) : null}
+      </KeyboardAvoidingView>
 
       <BottomNav
         items={bottomNavItems}
@@ -1196,6 +1202,9 @@ export function AdminDashboardScreen({ navigation }: AdminDashboardScreenProps) 
 
 const styles = StyleSheet.create({
   screen: {
+    flex: 1,
+  },
+  keyboardAvoid: {
     flex: 1,
   },
   floatingDropdown: {

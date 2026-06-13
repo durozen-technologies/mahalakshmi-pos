@@ -541,10 +541,10 @@ export function toApiError(error: unknown): ApiError {
   const requestId =
     responseHeaders && typeof responseHeaders === "object"
       ? String(
-          (responseHeaders as Record<string, unknown>)["x-request-id"] ??
-            (responseHeaders as Record<string, unknown>)["X-Request-ID"] ??
-            "",
-        )
+        (responseHeaders as Record<string, unknown>)["x-request-id"] ??
+        (responseHeaders as Record<string, unknown>)["X-Request-ID"] ??
+        "",
+      )
       : "";
   const baseUrl = isAxiosError(error) ? error.config?.baseURL?.trim() : undefined;
   const message = getErrorMessage(error);
