@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from textwrap import shorten, wrap
-from typing import BinaryIO, Iterable, Iterator
+from typing import BinaryIO, Callable, Iterable, Iterator
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -71,39 +72,63 @@ SUMMARY_BILL_ROWS = 25
 SUMMARY_ITEM_ROWS = 50
 SUMMARY_INVENTORY_ROWS = 100
 FULL_QUERY_BATCH_SIZE = 500
-OVER_REPORT_SHEET_HEADERS = [
+KG_UNIT_SUFFIX = "(Kg/Unit)"
+_OVER_REPORT_HEADER_LABELS_EN = (
     "Date",
     "Inventory Item",
-    "Old Stock (kg / Unit)",
-    "Adding Stock (kg / Unit)",
-    "Total Available Stock (kg / Unit)",
-    "Used Stock (kg / Unit)",
-    "Remaining Stock (kg / Unit)",
+    "Old Stock",
+    "Adding Stock",
+    "Total Available Stock",
+    "Used Stock",
+    "Remaining Stock",
     "Billing Items",
-    "Assumption (kg / Unit)",
-    "Sales (kg / Unit)",
-    "Difference (kg / Unit)",
+    "Assumption",
+    "Sales",
+    "Difference",
     "Assumption Amount",
     "Sales Amount",
     "Difference Amount",
-]
-OVER_REPORT_SHEET_HEADERS_TAMIL = [
+)
+_OVER_REPORT_HEADER_LABELS_TA = (
     "தேதி",
     "சரக்கு பொருள்",
-    "பழைய இருப்பு (kg / Unit)",
-    "சேர்க்கப்பட்ட இருப்பு (kg / Unit)",
-    "மொத்த கிடைக்கும் இருப்பு (kg / Unit)",
-    "பயன்படுத்தப்பட்ட இருப்பு (kg / Unit)",
-    "மீதி இருப்பு (kg / Unit)",
+    "பழைய இருப்பு",
+    "சேர்க்கப்பட்ட இருப்பு",
+    "மொத்த கிடைக்கும் இருப்பு",
+    "பயன்படுத்தப்பட்ட இருப்பு",
+    "மீதி இருப்பு",
     "பில்லிங் பொருள்கள்",
-    "அனுமானம் (kg / Unit)",
-    "விற்பனை (kg / Unit)",
-    "வித்தியாசம் (kg / Unit)",
+    "அனுமானம்",
+    "விற்பனை",
+    "வித்தியாசம்",
     "அனுமான தொகை",
     "விற்பனை தொகை",
     "வித்தியாச தொகை",
-]
-OVER_REPORT_SHEET_WIDTHS = [46, 58, 54, 56, 60, 62, 56, 68, 66, 52, 56, 58, 56, 56]
+)
+_KG_UNIT_HEADER_INDICES = frozenset({2, 3, 4, 5, 6, 8, 9, 10})
+
+
+def _over_report_sheet_headers(*, use_tamil: bool) -> list[str]:
+    labels = _OVER_REPORT_HEADER_LABELS_TA if use_tamil else _OVER_REPORT_HEADER_LABELS_EN
+    headers: list[str] = []
+    for index, label in enumerate(labels):
+        if index in _KG_UNIT_HEADER_INDICES:
+            headers.append(f"{label}\n{KG_UNIT_SUFFIX}")
+        else:
+            headers.append(label)
+    return headers
+
+
+OVER_REPORT_SHEET_HEADER_ALIGNMENTS = ("center",) * 14
+OVER_REPORT_SHEET_MIN_WIDTHS = (
+    46, 58, 50, 50, 50, 68, 52, 58, 50, 48, 48, 58, 52, 58,
+)
+OVER_REPORT_SHEET_HEADER_PADDING = 8
+OVER_REPORT_SHEET_DATA_PADDING = 6
+OVER_REPORT_SHEET_HEADER_FONT_SIZE_FPDF = 6.5
+OVER_REPORT_SHEET_HEADER_FONT_SIZE_REPORTLAB = 5.4
+OVER_REPORT_SHEET_DATA_FONT_SIZE_FPDF = 6.0
+OVER_REPORT_SHEET_DATA_FONT_SIZE_REPORTLAB = 5.6
 OVER_REPORT_SHEET_ALIGNMENTS = [
     "center",
     "left",
@@ -120,6 +145,120 @@ OVER_REPORT_SHEET_ALIGNMENTS = [
     "right",
     "right",
 ]
+
+
+def _over_report_sheet_widths(
+    headers: list[str],
+    *,
+    line_width: Callable[[str], float],
+    available_width: float,
+    padding: float = OVER_REPORT_SHEET_HEADER_PADDING,
+    min_widths: tuple[int, ...] = OVER_REPORT_SHEET_MIN_WIDTHS,
+    rows: list[list[str]] | None = None,
+    data_line_width: Callable[[str], float] | None = None,
+    data_padding: float = OVER_REPORT_SHEET_DATA_PADDING,
+) -> list[int]:
+    widths = [
+        max(
+            floor,
+            int(max(line_width(line) for line in header.split("\n")) + padding * 2),
+        )
+        for header, floor in zip(headers, min_widths, strict=True)
+    ]
+    measure_data = data_line_width or line_width
+    if rows:
+        for index in range(len(headers)):
+            for row in rows:
+                if index >= len(row):
+                    continue
+                cell = str(row[index] or "")
+                if not cell:
+                    continue
+                for line in cell.split("\n"):
+                    widths[index] = max(
+                        widths[index],
+                        int(measure_data(line) + data_padding * 2),
+                    )
+    total = sum(widths)
+    if total <= available_width:
+        if total < available_width:
+            slack = available_width - total
+            widths = [width + int(slack * width / total) for width in widths]
+        return widths
+
+    scale = available_width / total
+    scaled = [max(int(width * scale), floor) for width, floor in zip(widths, min_widths, strict=True)]
+    overflow = sum(scaled) - available_width
+    if overflow > 0:
+        for index in sorted(range(len(scaled)), key=scaled.__getitem__, reverse=True):
+            if overflow <= 0:
+                break
+            reducible = scaled[index] - min_widths[index]
+            cut = min(reducible, overflow)
+            scaled[index] -= cut # type: ignore
+            overflow -= cut
+    return scaled
+
+
+def _reportlab_sheet_header_line_width(text: str) -> float:
+    _, tamil_bold = _resolve_tamil_fonts()
+    font = tamil_bold if _has_tamil_text(text) else "Helvetica-Bold"
+    return pdfmetrics.stringWidth(text, font, OVER_REPORT_SHEET_HEADER_FONT_SIZE_REPORTLAB)
+
+
+def _fpdf_sheet_header_line_width(pdf: FPDF, text: str) -> float:
+    style = "B"
+    font_size = OVER_REPORT_SHEET_HEADER_FONT_SIZE_FPDF
+    if _has_tamil_text(text):
+        pdf.set_font("NotoSansTamil", style=style, size=font_size)
+    else:
+        pdf.set_font("NotoSans", style=style, size=font_size)
+    return pdf.get_string_width(text)
+
+
+def _reportlab_sheet_data_line_width(text: str) -> float:
+    regular, tamil_regular = _resolve_tamil_fonts()
+    font = tamil_regular if _has_tamil_text(text) else "Helvetica"
+    return pdfmetrics.stringWidth(text, font, OVER_REPORT_SHEET_DATA_FONT_SIZE_REPORTLAB)
+
+
+def _fpdf_sheet_data_line_width(pdf: FPDF, text: str) -> float:
+    if _has_tamil_text(text):
+        pdf.set_font("NotoSansTamil", size=OVER_REPORT_SHEET_DATA_FONT_SIZE_FPDF)
+    else:
+        pdf.set_font("NotoSans", size=OVER_REPORT_SHEET_DATA_FONT_SIZE_FPDF)
+    return pdf.get_string_width(text)
+
+
+def _reportlab_over_report_sheet_widths(
+    headers: list[str],
+    available_width: float,
+    rows: list[list[str]] | None = None,
+) -> list[int]:
+    return _over_report_sheet_widths(
+        headers,
+        line_width=_reportlab_sheet_header_line_width,
+        available_width=available_width,
+        rows=rows,
+        data_line_width=_reportlab_sheet_data_line_width,
+    )
+
+
+def _fpdf_over_report_sheet_widths(
+    pdf: FPDF,
+    headers: list[str],
+    rows: list[list[str]] | None = None,
+) -> list[int]:
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    return _over_report_sheet_widths(
+        headers,
+        line_width=lambda text: _fpdf_sheet_header_line_width(pdf, text),
+        available_width=available_width,
+        rows=rows,
+        data_line_width=lambda text: _fpdf_sheet_data_line_width(pdf, text),
+    )
+
+
 TAMIL_FONT_REGULAR = "BillingReportNotoSansTamil"
 TAMIL_FONT_BOLD = "BillingReportNotoSansTamilBold"
 TAMIL_FONT_REGULAR_PATHS = (
@@ -473,11 +612,8 @@ class PdfReportWriter:
         line_height = 6.2
         padding = 3
         cell_lines = [
-            _pdf_text_lines(
-                header,
-                max(7, int((width - padding * 2) / 2.5)),
-            )
-            for header, width in zip(state.headers, state.widths, strict=True)
+            header.split("\n") if header else [""]
+            for header in state.headers
         ]
         max_lines = max((len(lines) for lines in cell_lines), default=1)
         header_height = max(26, padding * 2 + font_size + line_height * (max_lines - 1))
@@ -492,9 +628,10 @@ class PdfReportWriter:
         for lines, width, alignment in zip(cell_lines, state.widths, state.alignments, strict=True):
             self._set_stroke((0.35, 0.35, 0.35))
             self._canvas.rect(x, header_y, width, header_height, stroke=1, fill=0)
-            text_y = header_y + header_height - padding - font_size
+            block_height = font_size + line_height * max(0, len(lines) - 1)
+            text_y = header_y + (header_height + block_height) / 2 - font_size
             for line in lines:
-                self._draw_cell_line(line, x, text_y, width, alignment, font_size=font_size, bold=True)
+                self._draw_cell_line(line, x, text_y, width, "center", font_size=font_size, bold=True)
                 text_y -= line_height
             x += width
         self._y -= header_height
@@ -505,10 +642,7 @@ class PdfReportWriter:
         padding = 3
         row_values = list(row)
         cell_lines = [
-            _pdf_text_lines(
-                _format_cell(value),
-                max(7, int((width - padding * 2) / 2.55)),
-            )
+            _reportlab_sheet_cell_lines(_format_cell(value), width - padding * 2)
             for value, width in zip(row_values, state.widths, strict=True)
         ]
         max_lines = max((len(lines) for lines in cell_lines), default=1)
@@ -977,7 +1111,7 @@ async def _write_items_section(
                 category_labels.get((row.shop_id, row.item_name, row.unit), "Uncategorized"),
                 row.item_name,
                 _quantity(row.quantity_sold),
-                getattr(row.unit, "value", row.unit),
+                _unit_value(row.unit),
                 _money(row.total_amount),
                 int(row.bill_count or 0),
             ]
@@ -1090,7 +1224,7 @@ async def _write_inventory_section(
                 row.shop_name,
                 category_labels.get(row.item_id, "Uncategorized"),
                 row.item_name,
-                f"{_quantity(_decimal(row.added_quantity) - _decimal(row.used_quantity))} {getattr(row.unit, 'value', row.unit)}",
+                _quantity_with_unit(_decimal(row.added_quantity) - _decimal(row.used_quantity), row.unit),
                 _quantity(row.period_added_quantity),
                 _quantity(row.period_used_quantity),
                 "Active" if row.is_active else "Paused",
@@ -1702,11 +1836,17 @@ def _write_over_report_statement(
         writer.note("No allocated inventory items found for this branch and period.")
         return
 
-    sheet_headers = OVER_REPORT_SHEET_HEADERS_TAMIL if use_tamil else OVER_REPORT_SHEET_HEADERS
+    sheet_headers = _over_report_sheet_headers(use_tamil=use_tamil)
+    sheet_rows = _over_report_sheet_rows(statement, use_tamil=use_tamil)
+    sheet_widths = _reportlab_over_report_sheet_widths(
+        sheet_headers,
+        writer._available_width,
+        sheet_rows,
+    )
     writer.sheet_table(
         sheet_headers,
-        _over_report_sheet_rows(statement, use_tamil=use_tamil),
-        OVER_REPORT_SHEET_WIDTHS,
+        sheet_rows,
+        sheet_widths,
         OVER_REPORT_SHEET_ALIGNMENTS,
     )
     
@@ -1760,7 +1900,7 @@ def _over_report_sheet_rows(statement: OverallReportStatement, use_tamil: bool =
                     _quantity_with_unit(item.adding_stock, item.unit) if is_first else "",
                     _quantity_with_unit(item.total_available_stock, item.unit) if is_first else "",
                     _used_stock_breakdown_text(used_row, item.unit),
-                    _quantity_with_unit(item.remaining_stock, item.unit) if is_first else "",
+                    _quantity_with_unit(item.remaining_stock, item.unit),
                     billing_display_name if billing_row is not None else (
                         "No mapped billing sales" if is_first and not billing_rows else ""
                     ),
@@ -1787,7 +1927,7 @@ def _over_report_sheet_rows(statement: OverallReportStatement, use_tamil: bool =
                     "",
                     "",
                     "",
-                    f"Total Used: {_quantity_with_unit(item.used_stock, item.unit)}",
+                    f"Total Used\n{_quantity_with_unit(item.used_stock, item.unit)}",
                     "",
                     "Subtotal",
                     _quantity_with_unit(item.assumption_quantity, item.unit),
@@ -1808,7 +1948,7 @@ def _used_stock_breakdown_text(
 ) -> str:
     if row is None:
         return ""
-    return f"{row.label}: {_quantity_with_unit(row.quantity, unit)}"
+    return f"{row.label}\n{_quantity_with_unit(row.quantity, unit)}"
 
 
 def _statement_table_date(statement: OverallReportStatement) -> str:
@@ -1958,7 +2098,7 @@ def _format_cell(value: object) -> str:
         return _quantity(value)
     if isinstance(value, datetime):
         return _datetime_text(value)
-    return "" if value is None else str(value)
+    return "" if value is None else _normalize_report_text(str(value))
 
 
 def _resolve_tamil_fonts() -> tuple[str, str]:
@@ -1985,22 +2125,46 @@ def _has_tamil_text(value: str) -> bool:
     return any("\u0b80" <= character <= "\u0bff" for character in value)
 
 
+def _reportlab_sheet_cell_lines(text: str, inner_width: float) -> list[str]:
+    if not text:
+        return [""]
+    lines: list[str] = []
+    for segment in text.split("\n"):
+        if not segment:
+            lines.append("")
+            continue
+        if _reportlab_sheet_data_line_width(segment) <= inner_width:
+            lines.append(segment)
+            continue
+        wrap_width = max(4, int(inner_width / 3.2))
+        lines.extend(_pdf_text_lines(segment, wrap_width))
+    return lines or [""]
+
+
 def _pdf_text(value: str, width: int) -> str:
-    text = value.replace("\n", " ").replace("\r", " ")
+    text = _normalize_report_text(value)
     return shorten(text, width=max(4, width), placeholder="...")
 
 
 def _pdf_text_lines(value: str, width: int) -> list[str]:
-    text = value.replace("\n", " ").replace("\r", " ").strip()
-    if not text:
+    raw = value.replace("\r", "").strip()
+    if not raw:
         return [""]
-    return wrap(
-        text,
-        width=max(4, width),
-        break_long_words=True,
-        break_on_hyphens=False,
-        drop_whitespace=True,
-    ) or [text]
+    lines: list[str] = []
+    for segment in raw.split("\n"):
+        text = _normalize_report_text(segment)
+        if not text:
+            lines.append("")
+            continue
+        wrapped = wrap(
+            text,
+            width=max(4, width),
+            break_long_words=False,
+            break_on_hyphens=False,
+            drop_whitespace=True,
+        )
+        lines.extend(wrapped or [text])
+    return lines or [""]
 
 
 def _decimal(value: object) -> Decimal:
@@ -2016,11 +2180,21 @@ def _money(value: object) -> str:
 
 
 def _unit_value(unit: object) -> str:
-    return str(getattr(unit, "value", unit))
+    value = str(getattr(unit, "value", unit)).lower()
+    if value == BaseUnit.KG.value:
+        return "Kg"
+    if value == BaseUnit.UNIT.value:
+        return "Unit"
+    return _normalize_report_text(str(getattr(unit, "value", unit)))
 
 
 def _quantity_with_unit(value: object, unit: object) -> str:
     return f"{_quantity(value)} {_unit_value(unit)}"
+
+
+def _normalize_report_text(value: str) -> str:
+    text = value.replace("\r", " ").replace("\u00a0", " ")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _quantity(value: object) -> str:
@@ -2057,6 +2231,62 @@ class OverallReportPDF(FPDF):
         self.cell(0, 10, text=f"Page {self.page_no()}", align="R")
 
 
+def _fpdf_set_cell_font(pdf: FPDF, text: str, *, is_header: bool) -> None:
+    font_size = OVER_REPORT_SHEET_HEADER_FONT_SIZE_FPDF if is_header else OVER_REPORT_SHEET_DATA_FONT_SIZE_FPDF
+    style = "B" if is_header else ""
+    if _has_tamil_text(text):
+        pdf.set_font("NotoSansTamil", style=style, size=font_size)
+    else:
+        pdf.set_font("NotoSans", style=style, size=font_size)
+
+
+def _fpdf_wrap_cell_lines(pdf: FPDF, text: str, inner_width: float, *, is_header: bool) -> list[str]:
+    if not text:
+        return [""]
+    _fpdf_set_cell_font(pdf, text, is_header=is_header)
+    if pdf.get_string_width(text) <= inner_width:
+        return [text]
+    words = text.split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        _fpdf_set_cell_font(pdf, candidate, is_header=is_header)
+        if pdf.get_string_width(candidate) <= inner_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        _fpdf_set_cell_font(pdf, word, is_header=is_header)
+        current = word if pdf.get_string_width(word) <= inner_width else ""
+        if not current:
+            lines.append(word)
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _fpdf_cell_lines(
+    pdf: FPDF,
+    value: object,
+    width: float,
+    padding: float,
+    *,
+    is_header: bool,
+) -> list[str]:
+    text = str(value) if value is not None else ""
+    if is_header:
+        return [line for line in text.split("\n")] or [""]
+    inner_width = max(8.0, width - padding * 2)
+    lines: list[str] = []
+    for segment in text.split("\n"):
+        if not segment:
+            lines.append("")
+            continue
+        lines.extend(_fpdf_wrap_cell_lines(pdf, segment, inner_width, is_header=False))
+    return lines or [""]
+
+
 def _fpdf_draw_row(
     pdf: FPDF,
     widths: list[int],
@@ -2069,11 +2299,10 @@ def _fpdf_draw_row(
     is_header: bool = False,
     header_drawer: object = None,
 ) -> None:
-    cell_lines = []
-    for val, w in zip(row_values, widths):
-        txt = str(val) if val is not None else ""
-        lines = pdf.multi_cell(w - padding * 2, text=txt, dry_run=True, output="LINES")
-        cell_lines.append(lines)
+    cell_lines = [
+        _fpdf_cell_lines(pdf, val, w, padding, is_header=is_header)
+        for val, w in zip(row_values, widths, strict=True)
+    ]
         
     max_lines = max((len(lines) for lines in cell_lines), default=1)
     row_height = max_lines * line_height + padding * 2
@@ -2088,16 +2317,19 @@ def _fpdf_draw_row(
     y_start = pdf.get_y()
     
     current_x = x_start
-    for lines, w, align in zip(cell_lines, widths, alignments):
+    for lines, w, align in zip(cell_lines, widths, alignments, strict=True):
         if fill:
             pdf.set_fill_color(*fill_color)
             pdf.rect(current_x, y_start, w, row_height, style="DF")
         else:
             pdf.rect(current_x, y_start, w, row_height, style="D")
             
-        align_code = align[0].upper() if align else "L"
+        align_code = "C" if is_header else (align[0].upper() if align else "L")
+        block_height = line_height * len(lines)
+        y_offset = padding + (row_height - padding * 2 - block_height) / 2
         for idx, line in enumerate(lines):
-            pdf.set_xy(current_x + padding, y_start + padding + idx * line_height)
+            _fpdf_set_cell_font(pdf, line, is_header=is_header)
+            pdf.set_xy(current_x + padding, y_start + y_offset + idx * line_height)
             pdf.cell(w - padding * 2, line_height, text=line, align=align_code)
             
         current_x += w
@@ -2256,9 +2488,15 @@ async def _generate_over_report_fpdf_pdf(
             pdf.cell(0, 20, text="No allocated inventory items found for this branch and period.", align="C")
             continue
 
-        headers = OVER_REPORT_SHEET_HEADERS_TAMIL if use_tamil else OVER_REPORT_SHEET_HEADERS
-        widths = OVER_REPORT_SHEET_WIDTHS
-        alignments = OVER_REPORT_SHEET_ALIGNMENTS
+        headers = _over_report_sheet_headers(use_tamil=use_tamil)
+        sheet_rows = [
+            row
+            for stmt in statements
+            for row in _over_report_sheet_rows(stmt, use_tamil=use_tamil)
+        ]
+        widths = _fpdf_over_report_sheet_widths(pdf, headers, sheet_rows)
+        alignments = list(OVER_REPORT_SHEET_ALIGNMENTS)
+        header_alignments = list(OVER_REPORT_SHEET_HEADER_ALIGNMENTS)
 
         def draw_header_row() -> None:
             pdf.set_font("NotoSans", style="B", size=6.5)
@@ -2267,7 +2505,7 @@ async def _generate_over_report_fpdf_pdf(
             _fpdf_draw_row(
                 pdf,
                 widths,
-                alignments,
+                header_alignments,
                 headers,
                 line_height=7,
                 padding=4,
@@ -2308,7 +2546,6 @@ async def _generate_over_report_fpdf_pdf(
         total_sales = sum((_decimal(s.sales_amount) for s in statements), Decimal("0"))
         total_expense = sum((_decimal(s.expense_amount) for s in statements), Decimal("0"))
         total_balance = total_sales - total_expense
-        _fpdf_draw_grand_total_summary(pdf, total_sales, total_expense, total_balance)
+        _fpdf_draw_grand_total_summary(pdf, total_sales, total_expense, total_balance, table_width=sum(widths))
 
     return bytes(pdf.output())
-

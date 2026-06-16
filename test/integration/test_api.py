@@ -1965,6 +1965,7 @@ class BackendApiIntegrationTests(BackendTestCase):
 
                 listed_shops = await get_shops(db)
                 self.assertEqual(len(listed_shops), 1)
+                self.assertIsNone(listed_shops[0].last_active_at)
 
                 await self.harness.create_items_for_shop(shop_id, ("Chicken", "Duck"))
                 items = session.scalars(
@@ -2008,6 +2009,9 @@ class BackendApiIntegrationTests(BackendTestCase):
                     .options(selectinload(User.shop))
                     .where(User.id == shop_login.user.id)
                 )
+                self.assertIsNotNone(shop_user.last_login_at)
+                listed_shops = await get_shops(db)
+                self.assertEqual(listed_shops[0].last_active_at, shop_user.last_login_at)
                 shop_session = await me(current_user=shop_user, db=db)
                 self.assertEqual(shop_session.shop_id, shop_id)
 

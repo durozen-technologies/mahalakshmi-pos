@@ -78,7 +78,12 @@ from app.services.pricing import (
     get_global_bootstrap,
     get_shop_price_history,
 )
-from app.services.reports import build_overall_report, generate_admin_report_pdf
+from app.services.reports import (
+    _over_report_sheet_headers,
+    _over_report_sheet_widths,
+    build_overall_report,
+    generate_admin_report_pdf,
+)
 
 
 def _square_image_bytes(size: int = 400, image_format: str = "PNG") -> bytes:
@@ -88,6 +93,47 @@ def _square_image_bytes(size: int = 400, image_format: str = "PNG") -> bytes:
 
 
 class ServiceUnitTests(BackendTestCase):
+    def test_over_report_sheet_widths_fit_header_lines(self) -> None:
+        def measure(text: str) -> float:
+            return len(text) * 4.0
+
+        for use_tamil in (False, True):
+            headers = _over_report_sheet_headers(use_tamil=use_tamil)
+            rows = [
+                [
+                    "16/06/2026",
+                    "Chicken Stock",
+                    "10 Kg",
+                    "5 Kg",
+                    "15 Kg",
+                    "Kitchen Use\n4 Kg",
+                    "11 Kg",
+                    "Chicken",
+                    "3 Kg",
+                    "2 Kg",
+                    "1 Kg",
+                    "Rs. 100.00",
+                    "Rs. 200.00",
+                    "Rs. 100.00",
+                ],
+            ]
+            widths = _over_report_sheet_widths(
+                headers,
+                line_width=measure,
+                available_width=2000,
+                rows=rows,
+                data_line_width=measure,
+            )
+            self.assertEqual(len(widths), len(headers))
+            for header, width in zip(headers, widths, strict=True):
+                for line in header.split("\n"):
+                    self.assertLessEqual(measure(line) + 16, width)
+            for row in rows:
+                for cell, width in zip(row, widths, strict=True):
+                    for line in str(cell).split("\n"):
+                        if line:
+                            self.assertLessEqual(measure(line) + 12, width)
+
     def test_register_admin_rejects_second_admin(self) -> None:
         self.run_async(self.harness.create_admin_user())
 
@@ -528,6 +574,7 @@ class ServiceUnitTests(BackendTestCase):
                     self.assertIn("SK NAGAR - BRANCH", text_content)
                     self.assertIn("Inventory Item", text_content)
                     self.assertIn("Used Stock", text_content)
+                    self.assertIn("Kg/Unit", text_content)
                     self.assertIn("Assumption Amount", text_content)
                     self.assertIn("Total Available Stock", text_content)
                     self.assertIn("Chicken", text_content)
@@ -537,7 +584,7 @@ class ServiceUnitTests(BackendTestCase):
                     self.assertIn("No Mapping Stock", text_content)
                     self.assertIn("Chicken With", text_content)
                     self.assertIn("Chicken Without", text_content)
-                    self.assertIn("3 unit", text_content)
+                    self.assertIn("3 Unit", text_content)
                     self.assertIn("No mapped billing sales", text_content)
                     self.assertIn("Rs. 936.00", text_content)
                     self.assertIn("Rs. 250.00", text_content)

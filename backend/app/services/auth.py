@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -110,6 +110,10 @@ async def login_user(db: AsyncSession, username: str, password: str) -> LoginRes
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Shop account is disabled"
         )
+
+    user.last_login_at = datetime.now(UTC)
+    await db.flush()
+    await db.commit()
 
     token = create_access_token(user.id)
     session = await build_user_session(db, user)

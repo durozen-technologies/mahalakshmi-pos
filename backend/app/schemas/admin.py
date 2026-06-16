@@ -75,6 +75,7 @@ class ShopRead(ORMModel):
     is_active: bool
     created_at: datetime
     username: str
+    last_active_at: datetime | None = None
 
 
 class ItemCategoryCreate(BaseModel):

@@ -53,11 +53,16 @@ type ReportLanguage = "en" | "ta";
 /** Font family name for Tamil script — registered in App.tsx via expo-font */
 const TAMIL_FONT = "NotoSansTamil";
 
+/** Constant unit suffix — never translated */
+const KG_UNIT_LABEL = "(Kg/Unit)";
+
 type SheetColumn = {
   key: string;
   label: string;
   /** Proper Tamil Unicode label — rendered with NotoSansTamil font */
   tamilLabel: string;
+  /** When true, appends {@link KG_UNIT_LABEL} in Latin script after the label */
+  kgUnit?: boolean;
   width: number;
   align?: "left" | "center" | "right";
 };
@@ -70,19 +75,52 @@ type SheetRow = {
 const SHEET_COLUMNS: SheetColumn[] = [
   { key: "date",              label: "Date",                            tamilLabel: "\u0ba4\u0bc7\u0ba4\u0bbf",                                               width: 92,  align: "center" },
   { key: "inventory",         label: "Inventory Item",                  tamilLabel: "\u0b9a\u0bb0\u0b95\u0bcd\u0b95\u0bc1 \u0baa\u0bca\u0bb0\u0bc1\u0bb3\u0bcd",                      width: 132 },
-  { key: "old",               label: "Old Stock (kg / Unit)",           tamilLabel: "\u0baa\u0bb4\u0bc8\u0baf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",                  width: 118, align: "right" },
-  { key: "adding",            label: "Adding Stock (kg / Unit)",        tamilLabel: "\u0b9a\u0bc7\u0bb0\u0bcd\u0b95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",      width: 126, align: "right" },
-  { key: "available",         label: "Total Available Stock (kg / Unit)",tamilLabel: "\u0bae\u0bca\u0ba4\u0bcd\u0ba4 \u0b95\u0bbf\u0b9f\u0bc8\u0b95\u0bcd\u0b95\u0bc1\u0bae\u0bcd \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",    width: 136, align: "right" },
-  { key: "used",              label: "Used Stock (kg / Unit)",          tamilLabel: "\u0baa\u0baf\u0ba9\u0bcd\u0baa\u0b9f\u0bc1\u0ba4\u0bcd\u0ba4\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",  width: 138 },
-  { key: "remaining",         label: "Remaining Stock (kg / Unit)",     tamilLabel: "\u0bae\u0bc0\u0ba4\u0bbf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1 (kg/Unit)",                  width: 126, align: "right" },
+  { key: "old",               label: "Old Stock",                       tamilLabel: "\u0baa\u0bb4\u0bc8\u0baf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1",                  width: 118, align: "right", kgUnit: true },
+  { key: "adding",            label: "Adding Stock",                    tamilLabel: "\u0b9a\u0bc7\u0bb0\u0bcd\u0b95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1",      width: 126, align: "right", kgUnit: true },
+  { key: "available",         label: "Total Available Stock",           tamilLabel: "\u0bae\u0bca\u0ba4\u0bcd\u0ba4 \u0b95\u0bbf\u0b9f\u0bc8\u0b95\u0bcd\u0b95\u0bc1\u0bae\u0bcd \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1",    width: 136, align: "right", kgUnit: true },
+  { key: "used",              label: "Used Stock",                      tamilLabel: "\u0baa\u0baf\u0ba9\u0bcd\u0baa\u0b9f\u0bc1\u0ba4\u0bcd\u0ba4\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1",  width: 138, kgUnit: true },
+  { key: "remaining",         label: "Remaining Stock",                 tamilLabel: "\u0bae\u0bc0\u0ba4\u0bbf \u0b87\u0bb0\u0bc1\u0baa\u0bcd\u0baa\u0bc1",                  width: 126, align: "right", kgUnit: true },
   { key: "billing",           label: "Billing Items",                   tamilLabel: "\u0baa\u0bbf\u0bb2\u0bcd\u0bb2\u0bbf\u0b99\u0bcd \u0baa\u0bca\u0bb0\u0bc1\u0bb3\u0bcd\u0b95\u0bb3\u0bcd",                  width: 142 },
-  { key: "assumption",        label: "Assumption (kg / Unit)",          tamilLabel: "\u0b85\u0ba9\u0bc1\u0bae\u0bbe\u0ba9\u0bae\u0bcd (kg/Unit)",                    width: 132, align: "right" },
-  { key: "sales",             label: "Sales (kg / Unit)",               tamilLabel: "\u0bb5\u0bbf\u0bb1\u0bcd\u0baa\u0ba9\u0bc8 (kg/Unit)",                        width: 112, align: "right" },
-  { key: "difference",        label: "Difference (kg / Unit)",          tamilLabel: "\u0bb5\u0bbf\u0ba4\u0bcd\u0ba4\u0bbf\u0baf\u0bbe\u0b9a\u0bae\u0bcd (kg/Unit)",                  width: 120, align: "right" },
+  { key: "assumption",        label: "Assumption",                      tamilLabel: "\u0b85\u0ba9\u0bc1\u0bae\u0bbe\u0ba9\u0bae\u0bcd",                    width: 132, align: "right", kgUnit: true },
+  { key: "sales",             label: "Sales",                           tamilLabel: "\u0bb5\u0bbf\u0bb1\u0bcd\u0baa\u0ba9\u0bc8",                        width: 112, align: "right", kgUnit: true },
+  { key: "difference",        label: "Difference",                      tamilLabel: "\u0bb5\u0bbf\u0ba4\u0bcd\u0ba4\u0bbf\u0baf\u0bbe\u0b9a\u0bae\u0bcd",                  width: 120, align: "right", kgUnit: true },
   { key: "assumption_amount", label: "Assumption Amount",               tamilLabel: "\u0b85\u0ba9\u0bc1\u0bae\u0bbe\u0ba9 \u0ba4\u0bca\u0b95\u0bc8",                          width: 124, align: "right" },
   { key: "sales_amount",      label: "Sales Amount",                    tamilLabel: "\u0bb5\u0bbf\u0bb1\u0bcd\u0baa\u0ba9\u0bc8 \u0ba4\u0bca\u0b95\u0bc8",                          width: 112, align: "right" },
   { key: "difference_amount", label: "Difference Amount",               tamilLabel: "\u0bb5\u0bbf\u0ba4\u0bcd\u0ba4\u0bbf\u0baf\u0bbe\u0b9a \u0ba4\u0bca\u0b95\u0bc8",                        width: 124, align: "right" },
 ];
+
+const TAMIL_SCRIPT = /[\u0b80-\u0bff]/;
+const SHEET_CELL_HORIZONTAL_PADDING = 24;
+
+function estimateTextWidth(text: string): number {
+  let width = 0;
+  for (const character of text) {
+    width += TAMIL_SCRIPT.test(character) ? 8.5 : 6.2;
+  }
+  return width;
+}
+
+function estimateColumnWidth(column: SheetColumn, useTamil: boolean, sampleValues: string[] = []): number {
+  const label = useTamil ? column.tamilLabel : column.label;
+  const lines = column.kgUnit ? [label, KG_UNIT_LABEL] : [label];
+  const headerWidth = Math.max(...lines.map(estimateTextWidth));
+  const dataWidth = sampleValues.reduce(
+    (max, value) => Math.max(max, ...value.split("\n").map(estimateTextWidth)),
+    0,
+  );
+  return Math.max(column.width, Math.ceil(Math.max(headerWidth, dataWidth)) + SHEET_CELL_HORIZONTAL_PADDING);
+}
+
+function buildColumnWidths(language: ReportLanguage, rows: SheetRow[] = []): number[] {
+  const useTamil = language === "ta";
+  return SHEET_COLUMNS.map((column, index) =>
+    estimateColumnWidth(
+      column,
+      useTamil,
+      rows.map((row) => row.cells[index] ?? ""),
+    ),
+  );
+}
 
 function unitLabel(unit: BaseUnit) {
   return unit === BaseUnit.KG ? "kg" : "unit";
@@ -115,7 +153,7 @@ function formatStatementDate(statement: OverallReportStatement) {
 
 function formatUsedBreakdown(row: OverallReportUsedStockBreakdown | undefined, unit: BaseUnit) {
   if (!row) return "";
-  return `${row.label}: ${formatReportQuantityWithUnit(row.quantity, unit)}`;
+  return `${row.label}\n${formatReportQuantityWithUnit(row.quantity, unit)}`;
 }
 
 function buildStatementRows(statement: OverallReportStatement, language: ReportLanguage): SheetRow[] {
@@ -157,7 +195,7 @@ function buildInventoryRows(
         isFirst ? formatReportQuantityWithUnit(item.adding_stock, item.unit) : "",
         isFirst ? formatReportQuantityWithUnit(item.total_available_stock, item.unit) : "",
         formatUsedBreakdown(usedRow, item.unit),
-        isFirst ? formatReportQuantityWithUnit(item.remaining_stock, item.unit) : "",
+        formatReportQuantityWithUnit(item.remaining_stock, item.unit),
         billingDisplayName ?? (isFirst && billingRows.length === 0 ? "No mapped billing sales" : ""),
         billingRow ? formatReportQuantityWithUnit(billingRow.assumption_quantity, billingRow.unit) : "",
         billingRow ? formatReportQuantityWithUnit(billingRow.sales_quantity, billingRow.unit) : "",
@@ -183,6 +221,12 @@ export function AdminOverallReportPreviewScreen({
   const [generating, setGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [language, setLanguage] = useState<ReportLanguage>(route.params.language ?? "en");
+  const sheetRows = useMemo(
+    () =>
+      (report?.statements ?? []).flatMap((statement) => buildStatementRows(statement, language)),
+    [language, report?.statements],
+  );
+  const columnWidths = useMemo(() => buildColumnWidths(language, sheetRows), [language, sheetRows]);
 
   const reportParams = useMemo<FetchOverallReportParams>(
     () => ({
@@ -290,16 +334,26 @@ export function AdminOverallReportPreviewScreen({
     rowId: string,
     rowIndex: number,
     isTamil: boolean,
+    cellWidth: number,
   ) => {
     const isHeader = rowIndex === -1;
+    const textAlign = isHeader ? "center" : (column.align ?? "left");
+    const headerTextStyle = [
+      isHeader ? styles.sheetHeaderText : styles.sheetCellText,
+      {
+        color: isHeader ? palette.textPrimary : palette.textSecondary,
+        textAlign,
+      },
+    ];
     return (
       <View
         key={`${rowId}-${column.key}`}
         style={[
           styles.sheetCell,
           {
-            width: column.width,
+            width: cellWidth,
             minHeight: isHeader ? 58 : 48,
+            alignItems: isHeader ? "center" : undefined,
             backgroundColor: isHeader
               ? palette.surfaceMuted
               : rowIndex % 2 === 0
@@ -309,19 +363,43 @@ export function AdminOverallReportPreviewScreen({
           },
         ]}
       >
-        <Text
-          style={[
-            isHeader ? styles.sheetHeaderText : styles.sheetCellText,
-            {
-              color: isHeader ? palette.textPrimary : palette.textSecondary,
-              textAlign: column.align ?? "left",
+        {isHeader && column.kgUnit ? (
+          <View style={styles.sheetHeaderStack}>
+            <Text
+              style={[
+                ...headerTextStyle,
+                isTamil ? { fontFamily: TAMIL_FONT } : undefined,
+              ]}
+            >
+              {isTamil ? column.tamilLabel : column.label}
+            </Text>
+            <Text style={headerTextStyle}>{KG_UNIT_LABEL}</Text>
+          </View>
+        ) : value.includes("\n") ? (
+          <View style={styles.sheetCellStack}>
+            {value.split("\n").map((line, lineIndex) => (
+              <Text
+                key={`${rowId}-${column.key}-${lineIndex}`}
+                style={[
+                  ...headerTextStyle,
+                  lineIndex > 0 && column.align === "right" ? { textAlign: "right" as const } : undefined,
+                ]}
+              >
+                {line}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <Text
+            style={[
+              ...headerTextStyle,
               // Apply NotoSansTamil so Tamil Unicode renders correctly instead of squares
-              fontFamily: isTamil ? TAMIL_FONT : undefined,
-            },
-          ]}
-        >
-          {value}
-        </Text>
+              isTamil ? { fontFamily: TAMIL_FONT } : undefined,
+            ]}
+          >
+            {value}
+          </Text>
+        )}
       </View>
     );
   };
@@ -361,13 +439,14 @@ export function AdminOverallReportPreviewScreen({
             <View>
               {/* Header row */}
               <View style={styles.sheetRow}>
-                {SHEET_COLUMNS.map((column) =>
+                {SHEET_COLUMNS.map((column, columnIndex) =>
                   renderCell(
                     column,
                     isTamil ? column.tamilLabel : column.label,
                     "header",
                     -1,
                     isTamil,
+                    columnWidths[columnIndex] ?? column.width,
                   ),
                 )}
               </View>
@@ -382,6 +461,7 @@ export function AdminOverallReportPreviewScreen({
                       index,
                       // Use Tamil font for inventory/billing name columns when in Tamil mode
                       isTamil && (column.key === "inventory" || column.key === "billing"),
+                      columnWidths[columnIndex] ?? column.width,
                     ),
                   )}
                 </View>
@@ -586,7 +666,7 @@ export function AdminOverallReportPreviewScreen({
         maxToRenderPerBatch={6}
         updateCellsBatchingPeriod={48}
         windowSize={7}
-        extraData={`${refreshing}-${loading}-${generating}-${errorMessage ?? ""}-${language}`}
+        extraData={`${refreshing}-${loading}-${generating}-${errorMessage ?? ""}-${language}-${columnWidths.join(",")}`}
         showsVerticalScrollIndicator={false}
       />
       {renderFooter()}
@@ -643,7 +723,9 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     justifyContent: "center",
   },
-  sheetHeaderText: { fontSize: 10, lineHeight: 14, fontWeight: "900" },
+  sheetHeaderText: { fontSize: 10, lineHeight: 14, fontWeight: "900", textAlign: "center" },
+  sheetHeaderStack: { alignItems: "center", gap: 2 },
+  sheetCellStack: { width: "100%", gap: 2 },
   sheetCellText: { fontSize: 10, lineHeight: 14, fontWeight: "700" },
   reportEmptyRow: {
     minHeight: 52,

@@ -237,11 +237,6 @@ export function useAdminDashboardData({
     [dashboardData.dailyBillStats],
   );
 
-  const latestBillAtByShopId = useMemo(
-    () => new Map(dashboardData.dailyBillStats.map((stat) => [stat.shopId, stat.lastBillAt])),
-    [dashboardData.dailyBillStats],
-  );
-
   const salesByShopId = useMemo(
     () => new Map(dashboardData.salesSummary.map((item) => [item.shop_id, item.total_sales])),
     [dashboardData.salesSummary],
@@ -260,9 +255,8 @@ export function useAdminDashboardData({
 
   const shopRows = useMemo<ShopDashboardRow[]>(() => {
     return dashboardData.shops.map((shop) => {
-      const latestBillAt = latestBillAtByShopId.get(shop.id);
       const payment = paymentsByShopId.get(shop.id);
-      const lastActivityAt = shop.last_active_at ?? latestBillAt ?? null;
+      const lastActivityAt = shop.last_active_at ?? null;
 
       return {
         shop,
@@ -274,7 +268,7 @@ export function useAdminDashboardData({
         status: getShopStatus(shop, lastActivityAt),
       };
     });
-  }, [billCountByShopId, latestBillAtByShopId, paymentsByShopId, salesByShopId, dashboardData.shops]);
+  }, [billCountByShopId, paymentsByShopId, salesByShopId, dashboardData.shops]);
 
   const selectedShopName = useMemo(
     () => (selectedShopId ? dashboardData.shops.find((shop) => shop.id === selectedShopId)?.name ?? "Selected Branch" : "All Branches"),

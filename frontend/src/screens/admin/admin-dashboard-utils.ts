@@ -87,7 +87,7 @@ export function formatCompactCurrency(value: string | number) {
 
 export function formatRelativeTime(value?: string | null) {
   if (!value) {
-    return "No recent sync";
+    return "Never logged in";
   }
 
   const date = new Date(value);

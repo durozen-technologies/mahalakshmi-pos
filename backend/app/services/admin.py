@@ -20,10 +20,8 @@ from app.models import (
     Bill,
     BillItem,
     DailyPrice,
-    ExpenseEntry,
     InventoryItem,
     InventoryItemCategory,
-    InventoryMovement,
     Item,
     ItemAssumptionStatus,
     ItemCategory,
@@ -75,7 +73,7 @@ def _shop_to_read(shop: Shop, last_active_at: datetime | None = None) -> ShopRea
         is_active=shop.is_active,
         created_at=shop.created_at,
         username=shop.owner.username,
-        last_active_at=last_active_at,
+        last_active_at=last_active_at if last_active_at is not None else shop.owner.last_login_at,
     )
 
 
@@ -2299,20 +2297,7 @@ async def create_shop_account(db: AsyncSession, payload: ShopCreate, actor: User
     db.add_all([user, shop])
     await db.flush()
     await db.commit()
-    return _shop_to_read(shop, last_active_at=None)
-
-
-async def _query_shop_last_active_at(db: AsyncSession, shop_id: UUID) -> datetime | None:
-    result = await db.execute(
-        select(
-            select(func.max(Bill.created_at)).where(Bill.shop_id == shop_id).scalar_subquery(),
-            select(func.max(DailyPrice.created_at)).where(DailyPrice.shop_id == shop_id).scalar_subquery(),
-            select(func.max(ExpenseEntry.created_at)).where(ExpenseEntry.shop_id == shop_id).scalar_subquery(),
-            select(func.max(InventoryMovement.created_at)).where(InventoryMovement.shop_id == shop_id).scalar_subquery(),
-        )
-    )
-    times = result.first()
-    return max((t for t in times if t is not None), default=None) if times else None
+    return _shop_to_read(shop)
 
 
 async def update_shop_account(db: AsyncSession, shop_id: UUID, payload: ShopUpdate) -> ShopRead:
@@ -2364,13 +2349,11 @@ async def update_shop_account(db: AsyncSession, shop_id: UUID, payload: ShopUpda
         has_changes = True
 
     if not has_changes:
-        last_active_at = await _query_shop_last_active_at(db, shop.id)
-        return _shop_to_read(shop, last_active_at=last_active_at)
+        return _shop_to_read(shop)
 
     await db.flush()  # batch both UPDATEs before the commit
     await db.commit()
-    last_active_at = await _query_shop_last_active_at(db, shop.id)
-    return _shop_to_read(shop, last_active_at=last_active_at)
+    return _shop_to_read(shop)
 
 
 async def delete_shop_account(db: AsyncSession, shop_id: UUID) -> None:
@@ -2432,11 +2415,6 @@ async def list_shops(db: AsyncSession) -> list[ShopRead]:
     ``User`` row (including ``hashed_password``, ``role``, etc.) is never
     loaded into Python memory.
     """
-    bill_sub = select(func.max(Bill.created_at)).where(Bill.shop_id == Shop.id).correlate(Shop).scalar_subquery()
-    price_sub = select(func.max(DailyPrice.created_at)).where(DailyPrice.shop_id == Shop.id).correlate(Shop).scalar_subquery()
-    expense_sub = select(func.max(ExpenseEntry.created_at)).where(ExpenseEntry.shop_id == Shop.id).correlate(Shop).scalar_subquery()
-    inventory_sub = select(func.max(InventoryMovement.created_at)).where(InventoryMovement.shop_id == Shop.id).correlate(Shop).scalar_subquery()
-
     rows = await db.execute(
         select(
             Shop.id,
@@ -2444,10 +2422,7 @@ async def list_shops(db: AsyncSession) -> list[ShopRead]:
             Shop.is_active,
             Shop.created_at,
             User.username,
-            bill_sub.label("last_bill"),
-            price_sub.label("last_price"),
-            expense_sub.label("last_expense"),
-            inventory_sub.label("last_inventory"),
+            User.last_login_at,
         )
         .join(Shop.owner)
         .order_by(Shop.id.asc())
@@ -2459,10 +2434,7 @@ async def list_shops(db: AsyncSession) -> list[ShopRead]:
             is_active=r["is_active"],
             created_at=r["created_at"],
             username=r["username"],
-            last_active_at=max(
-                (t for t in (r["last_bill"], r["last_price"], r["last_expense"], r["last_inventory"]) if t is not None),
-                default=None
-            ),
+            last_active_at=r["last_login_at"],
         )
         for r in rows.mappings()
     ]
@@ -2474,11 +2446,6 @@ async def get_shop_by_id(db: AsyncSession, shop_id: UUID) -> ShopRead:
     One SQL JOIN selecting only the columns ShopRead needs — no ORM object
     instantiation, no secondary SELECT for the owner row.
     """
-    bill_sub = select(func.max(Bill.created_at)).where(Bill.shop_id == shop_id).scalar_subquery()
-    price_sub = select(func.max(DailyPrice.created_at)).where(DailyPrice.shop_id == shop_id).scalar_subquery()
-    expense_sub = select(func.max(ExpenseEntry.created_at)).where(ExpenseEntry.shop_id == shop_id).scalar_subquery()
-    inventory_sub = select(func.max(InventoryMovement.created_at)).where(InventoryMovement.shop_id == shop_id).scalar_subquery()
-
     row = await db.execute(
         select(
             Shop.id,
@@ -2486,10 +2453,7 @@ async def get_shop_by_id(db: AsyncSession, shop_id: UUID) -> ShopRead:
             Shop.is_active,
             Shop.created_at,
             User.username,
-            bill_sub.label("last_bill"),
-            price_sub.label("last_price"),
-            expense_sub.label("last_expense"),
-            inventory_sub.label("last_inventory"),
+            User.last_login_at,
         )
         .join(Shop.owner)
         .where(Shop.id == shop_id)
@@ -2497,18 +2461,14 @@ async def get_shop_by_id(db: AsyncSession, shop_id: UUID) -> ShopRead:
     result = row.mappings().one_or_none()
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
-    
-    last_active_at = max(
-        (t for t in (result["last_bill"], result["last_price"], result["last_expense"], result["last_inventory"]) if t is not None),
-        default=None
-    )
+
     return ShopRead(
         id=result["id"],
         name=result["name"],
         is_active=result["is_active"],
         created_at=result["created_at"],
         username=result["username"],
-        last_active_at=last_active_at,
+        last_active_at=result["last_login_at"],
     )
 
 
@@ -2956,8 +2916,7 @@ async def set_shop_active_state(db: AsyncSession, shop_id: UUID, is_active: bool
     shop.owner.is_active = is_active
     await db.flush()  # batch both UPDATEs before the commit
     await db.commit()
-    last_active_at = await _query_shop_last_active_at(db, shop_id)
-    return _shop_to_read(shop, last_active_at=last_active_at)
+    return _shop_to_read(shop)
 
 
 async def get_bill_by_id(db: AsyncSession, bill_id: UUID) -> BillRead:
