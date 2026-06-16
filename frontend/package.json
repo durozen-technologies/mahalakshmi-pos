@@ -32,7 +32,8 @@
     "web": "expo start --web",
     "lint": "eslint App.tsx src --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
-    "icons:android": "python3 ./scripts/generate-android-icons.py"
+    "icons:android": "python3 ./scripts/generate-android-icons.py",
+    "build:apk": "bash ./scripts/build-apk.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

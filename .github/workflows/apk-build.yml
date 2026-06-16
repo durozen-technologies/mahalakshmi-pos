@@ -1,0 +1,145 @@
+name: Build Local APK Without EAS
+
+on:
+  push:
+    branches:
+      - prod
+      - dev
+    paths:
+      - "frontend/**"
+      - ".github/workflows/apk-build.yml"
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: Override EXPO_PUBLIC_API_BASE_URL for this run (optional)
+        type: string
+        required: false
+
+concurrency:
+  group: apk-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  JAVA_VERSION: "17"
+  PYTHON_VERSION: "3.12"
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Xmx4096m
+  APK_OUTPUT: frontend/android/app/build/outputs/apk/release/app-release.apk
+
+jobs:
+  build-android:
+    name: Build Android APK (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve API base URL from secrets
+        id: config
+        working-directory: .
+        env:
+          SECRET_API_URL: ${{ secrets.EXPO_PUBLIC_API_BASE_URL }}
+          SECRET_CADDY_HOST: ${{ secrets.CADDY_PUBLIC_HOST }}
+          INPUT_API_URL: ${{ github.event.inputs.api_base_url }}
+        run: |
+          if [[ -n "$INPUT_API_URL" ]]; then
+            API_URL="$INPUT_API_URL"
+          elif [[ -n "$SECRET_API_URL" ]]; then
+            API_URL="$SECRET_API_URL"
+          elif [[ -n "$SECRET_CADDY_HOST" ]]; then
+            API_URL="https://${SECRET_CADDY_HOST}"
+          else
+            echo "Set EXPO_PUBLIC_API_BASE_URL or CADDY_PUBLIC_HOST in GitHub secrets." >&2
+            exit 1
+          fi
+          if [[ ! "$API_URL" =~ ^https?:// ]]; then
+            echo "API base URL must start with http:// or https://" >&2
+            exit 1
+          fi
+          echo "EXPO_PUBLIC_API_BASE_URL=$API_URL" >> "$GITHUB_ENV"
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python deps for icon generation
+        run: pip install pillow
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json', 'frontend/app.config.js') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Prebuild and compile APK
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ env.EXPO_PUBLIC_API_BASE_URL }}
+        run: npm run build:apk
+
+      - name: Verify APK output
+        working-directory: .
+        run: |
+          APK="${{ env.APK_OUTPUT }}"
+          if [[ ! -f "$APK" ]]; then
+            echo "APK not found at $APK" >&2
+            exit 1
+          fi
+          ls -lh "$APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meat-billing-pos-${{ github.ref_name }}-${{ github.run_number }}
+          path: ${{ env.APK_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build summary
+        if: success()
+        working-directory: .
+        run: |
+          {
+            echo "## Android APK build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| API URL | \`${{ steps.config.outputs.api_url }}\` |"
+            echo "| APK size | $(du -h "${{ env.APK_OUTPUT }}" | cut -f1) |"
+            echo ""
+            echo "Download the APK from the **Artifacts** section of this workflow run."
+          } >> "$GITHUB_STEP_SUMMARY"
