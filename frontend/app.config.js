@@ -24,6 +24,9 @@ const expoPublicApiBaseUrl =
   readEnvFileValue("EXPO_PUBLIC_API_BASE_URL");
 const logoPath = "./assets/Logo.png";
 const splashBackgroundColor = "#F7F1E8";
+const androidIconForeground = "./assets/images/android-icon-foreground.png";
+const androidIconBackground = "./assets/images/android-icon-background.png";
+const androidIconMonochrome = "./assets/images/android-icon-monochrome.png";
 
 const config = {
   name: "Meat Billing POS",
@@ -44,8 +47,10 @@ const config = {
   },
   android: {
     adaptiveIcon: {
-      foregroundImage: logoPath,
-      backgroundColor: "#ffffff",
+      backgroundColor: splashBackgroundColor,
+      foregroundImage: androidIconForeground,
+      backgroundImage: androidIconBackground,
+      monochromeImage: androidIconMonochrome,
     },
     splash: {
       image: logoPath,

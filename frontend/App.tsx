@@ -4,15 +4,22 @@ import "./global.css";
 import "./src/navigation/bootstrap";
 
 import { useFonts } from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import { useCallback, useState } from "react";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { TamaguiProvider } from "tamagui";
 
+import { AnimatedBrandSplash } from "@/components/animated-brand-splash";
 import { appTheme } from "@/constants/theme";
 import { AppNavigator } from "@/navigation/app-navigator";
 import { tamaguiConfig } from "./tamagui.config";
+
+SplashScreen.preventAutoHideAsync().catch(() => {
+  /* splash already hidden on web reload */
+});
 
 if (__DEV__ && Constants.appOwnership !== "expo") {
   void import("expo-dev-client");
@@ -32,10 +39,17 @@ const navigationTheme = {
 };
 
 export default function App() {
-  // Load NotoSansTamil so Tamil script renders correctly throughout the app
+  const [splashAnimationDone, setSplashAnimationDone] = useState(false);
   const [fontsLoaded] = useFonts({
     NotoSansTamil: require("./assets/fonts/NotoSansTamil.ttf"),
   });
+
+  const handleSplashFinish = useCallback(async () => {
+    await SplashScreen.hideAsync();
+    setSplashAnimationDone(true);
+  }, []);
+
+  const appReady = fontsLoaded && splashAnimationDone;
 
   return (
     <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
@@ -43,8 +57,11 @@ export default function App() {
         <SafeAreaProvider>
           <NavigationContainer theme={navigationTheme}>
             <StatusBar style="dark" />
-            <AppNavigator />
+            {appReady ? <AppNavigator /> : null}
           </NavigationContainer>
+          {fontsLoaded && !splashAnimationDone ? (
+            <AnimatedBrandSplash onFinish={handleSplashFinish} />
+          ) : null}
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </TamaguiProvider>

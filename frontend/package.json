@@ -31,7 +31,8 @@
     "preweb": "node ./scripts/cleanup-bundled-native-deps.js",
     "web": "expo start --web",
     "lint": "eslint App.tsx src --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "icons:android": "python3 ./scripts/generate-android-icons.py"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
