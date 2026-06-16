@@ -28,7 +28,18 @@ compose() {
   if [[ -f "${DEPLOY_ROOT}/docker-compose.prod.override.yml" ]]; then
     args+=(-f "${DEPLOY_ROOT}/docker-compose.prod.override.yml")
   fi
-  docker compose "${args[@]}" "$@"
+  if ! docker compose "${args[@]}" "$@"; then
+    log "docker compose failed: compose ${args[*]} $*"
+    return 1
+  fi
+}
+
+validate_compose_config() {
+  log "Validating compose configuration"
+  if ! compose config >/dev/null; then
+    log "Compose config invalid — check .env and required secrets"
+    exit 1
+  fi
 }
 
 service_container_id() {
@@ -134,8 +145,9 @@ bootstrap_infra() {
 }
 
 sync_compose_project() {
-  log "Applying compose/network changes without recreating containers"
-  compose up -d --no-recreate --pull never
+  # ponytail: infra-only — app images are pulled explicitly later; up-all + --pull never exits 125 without local images
+  log "Applying compose/network changes (infra only, no image pull)"
+  compose up -d --no-recreate --pull never postgres rustfs
 }
 
 resolve_image_tags() {
@@ -344,6 +356,7 @@ main() {
   setup_home_symlinks
   read_state
   docker_login
+  validate_compose_config
   deploy_app
 }
 

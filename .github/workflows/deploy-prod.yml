@@ -201,49 +201,72 @@ jobs:
           BACKEND_SECRET_KEY: ${{ secrets.BACKEND_SECRET_KEY }}
           CADDY_ACME_EMAIL: ${{ secrets.CADDY_ACME_EMAIL }}
           BACKEND_RUSTFS_BUCKET_NAME: ${{ secrets.BACKEND_RUSTFS_BUCKET_NAME }}
+          BACKEND_ALLOWED_HOSTS: '["${{ secrets.CADDY_PUBLIC_HOST }}","127.0.0.1","localhost","backend"]'
+          BACKEND_CORS_ORIGINS: '["*"]'
+          BACKEND_TRUSTED_PROXIES: '[]'
         run: |
-          if [ -z "${CADDY_PUBLIC_HOST}" ]; then
-            echo "CADDY_PUBLIC_HOST GitHub secret is required" >&2
+          missing=()
+          for key in CADDY_PUBLIC_HOST DOCKERHUB_USERNAME POSTGRES_PASSWORD \
+            RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY RUSTFS_SERVER_DOMAINS \
+            BACKEND_SECRET_KEY CADDY_ACME_EMAIL; do
+            if [ -z "${!key}" ]; then
+              missing+=("${key}")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required GitHub secrets: ${missing[*]}" >&2
             exit 1
           fi
 
-          BACKEND_ALLOWED_HOSTS='["'"${CADDY_PUBLIC_HOST}"'","127.0.0.1","localhost","backend"]'
-          BACKEND_CORS_ORIGINS='["*"]'
-          BACKEND_TRUSTED_PROXIES='[]'
+          python3 <<'PY'
+          import os
+          import re
 
-          : > .env.deploy
-          echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}" >> .env.deploy
-          echo "BACKEND_IMAGE_REPO=${BACKEND_IMAGE:-mlb-pos-backend}" >> .env.deploy
-          echo "CADDY_IMAGE_REPO=${CADDY_IMAGE:-mlb-pos-caddy}" >> .env.deploy
-          echo "BACKEND_IMAGE_TAG=${BACKEND_IMAGE_TAG}" >> .env.deploy
-          echo "CADDY_IMAGE_TAG=${CADDY_IMAGE_TAG}" >> .env.deploy
-          echo "DEPLOY_BACKEND=${DEPLOY_BACKEND}" >> .env.deploy
-          echo "DEPLOY_CADDY=${DEPLOY_CADDY}" >> .env.deploy
-          echo "SYNC_COMPOSE=${SYNC_COMPOSE}" >> .env.deploy
-          echo "POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data" >> .env.deploy
-          echo "RUSTFS_DATA_DIR=/home/ubuntu/rustfs/data" >> .env.deploy
-          echo "POSTGRES_DB=${POSTGRES_DB:-meat_billing}" >> .env.deploy
-          echo "POSTGRES_USER=${POSTGRES_USER:-postgres}" >> .env.deploy
-          echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" >> .env.deploy
-          echo "RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}" >> .env.deploy
-          echo "RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}" >> .env.deploy
-          echo "RUSTFS_SERVER_DOMAINS=${RUSTFS_SERVER_DOMAINS}" >> .env.deploy
-          echo "BACKEND_SECRET_KEY=${BACKEND_SECRET_KEY}" >> .env.deploy
-          echo "BACKEND_PRODUCTION=True" >> .env.deploy
-          echo "BACKEND_ALLOWED_HOSTS='${BACKEND_ALLOWED_HOSTS}'" >> .env.deploy
-          echo "BACKEND_CORS_ORIGINS='${BACKEND_CORS_ORIGINS}'" >> .env.deploy
-          echo "BACKEND_TRUSTED_PROXIES='${BACKEND_TRUSTED_PROXIES}'" >> .env.deploy
-          echo "BACKEND_RUSTFS_BUCKET_NAME=${BACKEND_RUSTFS_BUCKET_NAME:-pos-mlb-items}" >> .env.deploy
-          echo "CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL}" >> .env.deploy
-          echo "CADDY_PUBLIC_HOST=${CADDY_PUBLIC_HOST}" >> .env.deploy
-          echo "CADDY_UPSTREAM=backend:8000" >> .env.deploy
+          def env_line(key: str, value: str) -> str:
+              if re.search(r'[\s#"\\]', value):
+                  escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+                  return f'{key}="{escaped}"\n'
+              return f"{key}={value}\n"
+
+          pairs = {
+              "DOCKERHUB_USERNAME": os.environ["DOCKERHUB_USERNAME"],
+              "BACKEND_IMAGE_REPO": os.environ.get("BACKEND_IMAGE", "mlb-pos-backend"),
+              "CADDY_IMAGE_REPO": os.environ.get("CADDY_IMAGE", "mlb-pos-caddy"),
+              "BACKEND_IMAGE_TAG": os.environ.get("BACKEND_IMAGE_TAG", "latest"),
+              "CADDY_IMAGE_TAG": os.environ.get("CADDY_IMAGE_TAG", "latest"),
+              "DEPLOY_BACKEND": os.environ.get("DEPLOY_BACKEND", "false"),
+              "DEPLOY_CADDY": os.environ.get("DEPLOY_CADDY", "false"),
+              "SYNC_COMPOSE": os.environ.get("SYNC_COMPOSE", "false"),
+              "POSTGRES_DATA_DIR": "/home/ubuntu/pos-postgress/data",
+              "RUSTFS_DATA_DIR": "/home/ubuntu/rustfs/data",
+              "POSTGRES_DB": os.environ.get("POSTGRES_DB", "meat_billing"),
+              "POSTGRES_USER": os.environ.get("POSTGRES_USER", "postgres"),
+              "POSTGRES_PASSWORD": os.environ["POSTGRES_PASSWORD"],
+              "RUSTFS_ACCESS_KEY": os.environ["RUSTFS_ACCESS_KEY"],
+              "RUSTFS_SECRET_KEY": os.environ["RUSTFS_SECRET_KEY"],
+              "RUSTFS_SERVER_DOMAINS": os.environ["RUSTFS_SERVER_DOMAINS"],
+              "BACKEND_SECRET_KEY": os.environ["BACKEND_SECRET_KEY"],
+              "BACKEND_PRODUCTION": "True",
+              "BACKEND_ALLOWED_HOSTS": f"'{os.environ['BACKEND_ALLOWED_HOSTS']}'",
+              "BACKEND_CORS_ORIGINS": f"'{os.environ['BACKEND_CORS_ORIGINS']}'",
+              "BACKEND_TRUSTED_PROXIES": f"'{os.environ['BACKEND_TRUSTED_PROXIES']}'",
+              "BACKEND_RUSTFS_BUCKET_NAME": os.environ.get("BACKEND_RUSTFS_BUCKET_NAME", "pos-mlb-items"),
+              "CADDY_ACME_EMAIL": os.environ["CADDY_ACME_EMAIL"],
+              "CADDY_PUBLIC_HOST": os.environ["CADDY_PUBLIC_HOST"],
+              "CADDY_UPSTREAM": "backend:8000",
+          }
+
+          with open(".env.deploy", "w", encoding="utf-8") as fh:
+              for key, value in pairs.items():
+                  fh.write(env_line(key, value))
+          PY
 
       - uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "docker-compose.prod.yml,docker-compose.prod.override.yml,.env.deploy,scripts/deploy-prod.sh,scripts/pos-logs.sh,scripts/postgres-recover.sh"
+          source: "docker-compose.prod.yml,.env.deploy,scripts/deploy-prod.sh,scripts/pos-logs.sh,scripts/postgres-recover.sh"
           target: ${{ secrets.DEPLOY_PATH }}
           strip_components: 0
 
