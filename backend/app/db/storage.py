@@ -10,7 +10,7 @@ from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import boto3
@@ -27,7 +27,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import get_settings
+from ..core.config import S3_BUCKET_NAME_PATTERN, get_settings
 from ..core.ids import uuid7
 from ..models import ExpenseItem, InventoryItem, Item
 from ..schemas.expenses import ExpenseItemImageRead
@@ -222,6 +222,41 @@ def _get_storage_client():
     )
 
 
+def _rustfs_endpoint_host_header() -> str:
+    endpoint = (settings.rustfs_endpoint_url or "").strip()
+    if not endpoint:
+        return ""
+    parsed = urlparse(endpoint)
+    if parsed.hostname:
+        if parsed.port:
+            return f"{parsed.hostname}:{parsed.port}"
+        return parsed.hostname
+    return endpoint.removeprefix("http://").removeprefix("https://").rstrip("/")
+
+
+def _raise_rustfs_head_bucket_error(exc: ClientError) -> None:
+    status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    if status_code != 400:
+        raise exc
+
+    bucket_name = settings.rustfs_bucket_name
+    if not S3_BUCKET_NAME_PATTERN.fullmatch(bucket_name):
+        raise RuntimeError(
+            "RustFS rejected the bucket name. "
+            f"'{bucket_name}' is not a valid S3 bucket name. "
+            "Use lowercase letters, numbers, and hyphens only."
+        ) from exc
+
+    host_header = _rustfs_endpoint_host_header()
+    raise RuntimeError(
+        "RustFS rejected the S3 request Host header. "
+        f"Endpoint: {settings.rustfs_endpoint_url}, "
+        f"Host header sent: {host_header or '(unknown)'}. "
+        "When RUSTFS_SERVER_DOMAINS is set, it must include that host:port "
+        "(production compose appends rustfs:9000 automatically)."
+    ) from exc
+
+
 async def ensure_bucket_exists() -> None:
     global _bucket_ready, _public_read_policy_ready
 
@@ -244,11 +279,7 @@ async def ensure_bucket_exists() -> None:
                     error_code = str(exc.response.get("Error", {}).get("Code", "")).strip()
                     status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
                     if status_code == 400:
-                        raise RuntimeError(
-                            "RustFS rejected the bucket name. "
-                            f"'{settings.rustfs_bucket_name}' is not a valid S3 bucket name. "
-                            "Use lowercase letters, numbers, and hyphens only."
-                        ) from exc
+                        _raise_rustfs_head_bucket_error(exc)
                     if error_code not in {"404", "NoSuchBucket", "NotFound"}:
                         raise
                     client.create_bucket(Bucket=settings.rustfs_bucket_name)

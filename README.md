@@ -355,7 +355,7 @@ Password: <POSTGRES_PASSWORD secret>
 | `POSTGRES_PASSWORD` | Database password (must match existing data dir) |
 | `POSTGRES_DB`, `POSTGRES_USER` | Optional overrides (default `meat_billing` / `postgres`) |
 | `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | Object storage |
-| `RUSTFS_SERVER_DOMAINS` | RustFS console domain (e.g. `16.112.68.20:9001`) |
+| `RUSTFS_SERVER_DOMAINS` | RustFS virtual-host domains, comma-separated (e.g. `16.112.68.20:9000,16.112.68.20:9001`). Must include S3 API port `:9000`; compose auto-appends `rustfs:9000` for backend Docker networking. Default bucket is `pos-mlb-items`. |
 | `BACKEND_SECRET_KEY` | 32+ char JWT secret |
 | `BACKEND_RUSTFS_BUCKET_NAME` | Optional |
 
@@ -501,7 +501,7 @@ curl -sS https://<CADDY_PUBLIC_HOST>/api/v1/health
    - `DEPLOY_HOST` → new VM IP/hostname
    - `CADDY_PUBLIC_HOST` → new public DNS name
    - `POSTGRES_PASSWORD` → **same password** as old DB (data dir expects it)
-   - `RUSTFS_SERVER_DOMAINS` → new IP:9001
+   - `RUSTFS_SERVER_DOMAINS` → new IP:9000 and IP:9001 (S3 API and console ports)
 
 4. Run **Deploy Production** workflow — infra starts, backend migrates, caddy gets TLS for new hostname
 

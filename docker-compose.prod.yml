@@ -49,7 +49,7 @@ services:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY}
       RUSTFS_CONSOLE_ENABLE: "true"
-      RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:?Set RUSTFS_SERVER_DOMAINS}
+      RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:?Set RUSTFS_SERVER_DOMAINS},rustfs:9000
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -60,7 +60,7 @@ services:
       - :9000
       - --console-enable
       - --server-domains
-      - ${RUSTFS_SERVER_DOMAINS:?Set RUSTFS_SERVER_DOMAINS}
+      - ${RUSTFS_SERVER_DOMAINS:?Set RUSTFS_SERVER_DOMAINS},rustfs:9000
       - --access-key
       - ${RUSTFS_ACCESS_KEY:?Set RUSTFS_ACCESS_KEY}
       - --secret-key

@@ -11,6 +11,7 @@ from uuid import UUID
 
 from test.support import AsyncSessionAdapter, BackendTestCase
 
+from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from PIL import Image
 from pydantic import ValidationError
@@ -637,6 +638,36 @@ class ServiceUnitTests(BackendTestCase):
                 self.assertIsNone(chicken.image_content_type)
 
         self.run_async(scenario())
+
+    def test_rustfs_endpoint_host_header_from_url(self) -> None:
+        original = item_storage.settings.rustfs_endpoint_url
+        try:
+            item_storage.settings.rustfs_endpoint_url = "http://rustfs:9000"
+            self.assertEqual(item_storage._rustfs_endpoint_host_header(), "rustfs:9000")
+        finally:
+            item_storage.settings.rustfs_endpoint_url = original
+
+    def test_rustfs_head_bucket_400_on_valid_bucket_reports_host_mismatch(self) -> None:
+        original_bucket = item_storage.settings.rustfs_bucket_name
+        original_endpoint = item_storage.settings.rustfs_endpoint_url
+        item_storage.settings.rustfs_bucket_name = "pos-mlb-items"
+        item_storage.settings.rustfs_endpoint_url = "http://rustfs:9000"
+        try:
+            exc = ClientError(
+                {
+                    "Error": {"Code": "InvalidBucketName"},
+                    "ResponseMetadata": {"HTTPStatusCode": 400},
+                },
+                "HeadBucket",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                item_storage._raise_rustfs_head_bucket_error(exc)
+            message = str(ctx.exception)
+            self.assertIn("Host header", message)
+            self.assertIn("rustfs:9000", message)
+        finally:
+            item_storage.settings.rustfs_bucket_name = original_bucket
+            item_storage.settings.rustfs_endpoint_url = original_endpoint
 
     def test_item_image_variants_use_thumbnails_and_uuid7_keys(self) -> None:
         original, original_content_type, thumbnail, thumbnail_content_type = (
