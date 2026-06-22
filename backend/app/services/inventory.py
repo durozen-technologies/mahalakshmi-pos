@@ -40,6 +40,7 @@ from app.schemas.inventory import (
     InventoryItemCounts,
     InventoryItemCreate,
     InventoryItemImageRead,
+    InventoryItemPurchaseRateUpdate,
     InventoryItemRead,
     InventoryItemRowsPage,
     InventoryItemStockRead,
@@ -153,6 +154,7 @@ def _inventory_item_to_read_with_categories(
         base_unit=item.base_unit,
         sort_order=item.sort_order,
         is_active=item.is_active,
+        purchase_rate=item.purchase_rate,
         billing_item_id=(
             item_level_mapping.billing_item_id if item_level_mapping is not None else None
         ),
@@ -199,6 +201,7 @@ def _inventory_item_row_to_read(
         base_unit=row.base_unit,
         sort_order=row.sort_order,
         is_active=row.is_active,
+        purchase_rate=row.purchase_rate,
         billing_item_id=(
             item_level_mapping.billing_item_id if item_level_mapping is not None else None
         ),
@@ -575,6 +578,7 @@ def _inventory_items_row_query(*, q: str | None = None, active: bool | None = No
         InventoryItem.base_unit,
         InventoryItem.sort_order,
         InventoryItem.is_active,
+        InventoryItem.purchase_rate,
         InventoryItem.created_at,
         InventoryItem.updated_at,
         InventoryItem.image_object_key,
@@ -1035,6 +1039,32 @@ async def update_inventory_item(
     return await get_inventory_item(db, item.id)
 
 
+async def update_inventory_item_purchase_rate(
+    db: AsyncSession,
+    item_id: UUID,
+    payload: InventoryItemPurchaseRateUpdate,
+) -> InventoryItemRead:
+    item = await db.scalar(
+        select(InventoryItem).where(InventoryItem.id == item_id).with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found")
+    item.purchase_rate = payload.purchase_rate
+    await db.commit()
+    return await get_inventory_item(db, item_id)
+
+
+async def confirm_inventory_purchase_rates_today(db: AsyncSession) -> int:
+    now = datetime.now(UTC)
+    result = await db.execute(
+        update(InventoryItem)
+        .where(InventoryItem.is_active.is_(True))
+        .values(updated_at=now)
+    )
+    await db.commit()
+    return int(result.rowcount or 0)
+
+
 async def upload_inventory_item_image(
     db: AsyncSession,
     item_id: UUID,
@@ -1081,30 +1111,63 @@ async def _movement_totals(
     db: AsyncSession,
     shop_id: UUID,
     item_ids: list[UUID],
+    *,
+    used_since: date | None = None,
 ) -> tuple[dict[UUID, Decimal], dict[UUID, Decimal], dict[tuple[UUID, UUID], Decimal]]:
+    """Return (added, used, category_used) totals for the given items.
+
+    ``added`` is always the all-time total so that available stock is correct.
+    ``used`` / ``category_used`` are filtered to movements on or after
+    ``used_since`` when that parameter is supplied (e.g. today's date), which
+    lets the shop screen display a daily-resetting used counter without losing
+    any data in the database or history view.
+    """
     if not item_ids:
         return {}, {}, {}
-    rows = (
+
+    # ADD movements — always all-time so that available_quantity is correct
+    add_rows = (
         await db.execute(
             select(
                 InventoryMovement.inventory_item_id,
-                InventoryMovement.movement_type,
                 func.coalesce(func.sum(InventoryMovement.quantity), 0).label("quantity"),
             )
             .where(
                 InventoryMovement.shop_id == shop_id,
                 InventoryMovement.inventory_item_id.in_(item_ids),
+                InventoryMovement.movement_type == InventoryMovementType.ADD,
             )
-            .group_by(InventoryMovement.inventory_item_id, InventoryMovement.movement_type)
+            .group_by(InventoryMovement.inventory_item_id)
         )
     ).all()
-    added: dict[UUID, Decimal] = {}
-    used: dict[UUID, Decimal] = {}
-    for row in rows:
-        if row.movement_type == InventoryMovementType.ADD:
-            added[row.inventory_item_id] = row.quantity or ZERO
-        else:
-            used[row.inventory_item_id] = row.quantity or ZERO
+    added: dict[UUID, Decimal] = {
+        row.inventory_item_id: row.quantity or ZERO for row in add_rows
+    }
+
+    # USE movements — optionally scoped to a start date
+    use_filter = [
+        InventoryMovement.shop_id == shop_id,
+        InventoryMovement.inventory_item_id.in_(item_ids),
+        InventoryMovement.movement_type == InventoryMovementType.USE,
+    ]
+    if used_since is not None:
+        use_filter.append(
+            InventoryMovement.created_at >= datetime.combine(used_since, time.min, tzinfo=UTC)
+        )
+
+    use_rows = (
+        await db.execute(
+            select(
+                InventoryMovement.inventory_item_id,
+                func.coalesce(func.sum(InventoryMovement.quantity), 0).label("quantity"),
+            )
+            .where(*use_filter)
+            .group_by(InventoryMovement.inventory_item_id)
+        )
+    ).all()
+    used: dict[UUID, Decimal] = {
+        row.inventory_item_id: row.quantity or ZERO for row in use_rows
+    }
 
     category_rows = (
         await db.execute(
@@ -1114,9 +1177,7 @@ async def _movement_totals(
                 func.coalesce(func.sum(InventoryMovement.quantity), 0).label("quantity"),
             )
             .where(
-                InventoryMovement.shop_id == shop_id,
-                InventoryMovement.inventory_item_id.in_(item_ids),
-                InventoryMovement.movement_type == InventoryMovementType.USE,
+                *use_filter,
                 InventoryMovement.category_id.is_not(None),
             )
             .group_by(InventoryMovement.inventory_item_id, InventoryMovement.category_id)
@@ -1134,10 +1195,18 @@ def _stock_item_from_inventory_item(
     allocation: ShopInventoryAllocation | None,
     added_quantity: Decimal,
     used_quantity: Decimal,
+    available_quantity: Decimal | None = None,
     category_used: dict[tuple[UUID, UUID], Decimal],
 ) -> InventoryItemStockRead:
+    """Build a stock read object.
+
+    ``available_quantity`` may be supplied explicitly when the caller has
+    separate all-time and display (e.g. today-scoped) ``used_quantity`` values.
+    If omitted it is computed as ``added_quantity - used_quantity``.
+    """
     base = _inventory_item_to_read(item)
-    available_quantity = added_quantity - used_quantity
+    if available_quantity is None:
+        available_quantity = added_quantity - used_quantity
     category_usage = [
         InventoryCategoryUsageRead(
             category_id=category.id,
@@ -1323,15 +1392,23 @@ async def list_inventory_stock_rows(
     page_rows = rows[:limit]
     has_more = len(rows) > limit
     item_ids = [row[0].id for row in page_rows]
-    added, used, category_used = await _movement_totals(db, shop.id, item_ids)
+    # Fetch all-time totals for correct available_quantity, and today-only
+    # totals for the displayed used_quantity (which resets each day).
+    added, used_alltime, _ = await _movement_totals(db, shop.id, item_ids)
+    _, used_today, category_used_today = await _movement_totals(
+        db, shop.id, item_ids, used_since=date.today()
+    )
 
     stock_items = [
         _stock_item_from_inventory_item(
             item,
             allocation=allocation,
             added_quantity=added.get(item.id, ZERO),
-            used_quantity=used.get(item.id, ZERO),
-            category_used=category_used,
+            # Display: today's usage (resets daily)
+            used_quantity=used_today.get(item.id, ZERO),
+            # Availability: all-time usage (prevents over-use)
+            available_quantity=added.get(item.id, ZERO) - used_alltime.get(item.id, ZERO),
+            category_used=category_used_today,
         )
         for item, allocation in page_rows
     ]
@@ -1488,14 +1565,30 @@ async def _stock_item_for_shop_inventory_item(
     shop: Shop,
     item: InventoryItem,
     allocation: ShopInventoryAllocation,
+    *,
+    used_since: date | None = None,
 ) -> InventoryItemStockRead:
-    added, used, category_used = await _movement_totals(db, shop.id, [item.id])
+    """Return stock data for a single item.
+
+    When ``used_since`` is set the displayed ``used_quantity`` is scoped to
+    movements on or after that date, while ``available_quantity`` is always
+    computed from all-time totals to stay correct for capacity checks.
+    """
+    added, used_alltime, category_used_alltime = await _movement_totals(db, shop.id, [item.id])
+    if used_since is not None:
+        _, used_display, category_used_display = await _movement_totals(
+            db, shop.id, [item.id], used_since=used_since
+        )
+    else:
+        used_display = used_alltime
+        category_used_display = category_used_alltime
     return _stock_item_from_inventory_item(
         item,
         allocation=allocation,
         added_quantity=added.get(item.id, ZERO),
-        used_quantity=used.get(item.id, ZERO),
-        category_used=category_used,
+        used_quantity=used_display.get(item.id, ZERO),
+        available_quantity=added.get(item.id, ZERO) - used_alltime.get(item.id, ZERO),
+        category_used=category_used_display,
     )
 
 
@@ -1515,6 +1608,8 @@ def _movement_to_read(movement: InventoryMovement) -> InventoryMovementRead:
         movement_type=movement.movement_type,
         quantity=movement.quantity,
         unit=item.base_unit if item is not None else BaseUnit.KG,
+        driver_name=movement.driver_name,
+        vehicle_number=movement.vehicle_number,
         created_at=movement.created_at,
     )
 
@@ -1587,6 +1682,8 @@ async def add_shop_inventory_stock(
         inventory_item_id=item.id,
         movement_type=InventoryMovementType.ADD,
         quantity=quantity,
+        driver_name=payload.driver_name.strip(),
+        vehicle_number=payload.vehicle_number.strip(),
     )
     db.add(movement)
     await db.commit()
@@ -1605,7 +1702,9 @@ async def add_shop_inventory_stock(
         summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
         stock_item = next(item for item in summary.items if item.id == item_id)
     else:
-        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
+        stock_item = await _stock_item_for_shop_inventory_item(
+            db, shop, item, allocation, used_since=date.today()
+        )
     return InventoryMovementCreateResult(
         movement=_movement_to_read(movement),
         item=stock_item,
@@ -1664,7 +1763,9 @@ async def use_shop_inventory_stock(
         summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
         stock_item = next(item for item in summary.items if item.id == item_id)
     else:
-        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
+        stock_item = await _stock_item_for_shop_inventory_item(
+            db, shop, item, allocation, used_since=date.today()
+        )
     return InventoryMovementCreateResult(
         movement=_movement_to_read(movement),
         item=stock_item,
@@ -1742,7 +1843,9 @@ async def use_shop_inventory_stock_split(
         summary = await get_inventory_summary(db, shop, include_unallocated=False, active_allocations_only=True)
         stock_item = next(item for item in summary.items if item.id == item_id)
     else:
-        stock_item = await _stock_item_for_shop_inventory_item(db, shop, item, allocation)
+        stock_item = await _stock_item_for_shop_inventory_item(
+            db, shop, item, allocation, used_since=date.today()
+        )
     return InventoryMovementSplitCreateResult(
         movements=[_movement_to_read(movement) for movement in saved_movements],
         item=stock_item,

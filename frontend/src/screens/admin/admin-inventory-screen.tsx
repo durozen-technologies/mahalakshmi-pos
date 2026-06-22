@@ -30,6 +30,8 @@ import {
   fetchShopInventoryAllocationRows,
   fetchShops,
   updateInventoryCategory,
+  confirmInventoryPurchaseRatesToday,
+  updateInventoryItemPurchaseRate,
   updateShopInventoryAllocation,
 } from "@/api/admin";
 import { isApiRequestCanceled, toApiError } from "@/api/client";
@@ -59,7 +61,7 @@ import { AdminHeaderActions } from "./components/admin-header-actions";
 import { useAdminTheme } from "./use-admin-theme";
 import type { AdminInventoryScreenProps } from "@/navigation/types";
 
-type InventoryTab = "items" | "categories" | "shops";
+type InventoryTab = "items" | "categories" | "purchaseRates" | "shops";
 type MovementHistoryMode = "date" | "range";
 type MovementHistoryCalendarTarget = "date" | "start" | "end";
 const INVENTORY_ITEM_PAGE_SIZE = 50;
@@ -87,6 +89,17 @@ function formatInventoryQuantity(value: string | number, unit: BaseUnit) {
     ? `${numeric}`
     : numeric.toFixed(unit === BaseUnit.UNIT ? 0 : 3).replace(/\.?0+$/, "");
   return `${display || "0"} ${unit === BaseUnit.KG ? "kg" : numeric === 1 ? "unit" : "units"}`;
+}
+
+function formatPurchaseRate(value: string | number, unit: BaseUnit) {
+  return `₹${money(value).toFixed(2)}/${unit === BaseUnit.KG ? "kg" : "unit"}`;
+}
+
+function isPurchaseRateUpdatedToday(updatedAt?: string | null) {
+  if (!updatedAt) {
+    return false;
+  }
+  return toDateInputValue(new Date(updatedAt)) === toDateInputValue(new Date());
 }
 
 function inventoryItemBillingNames(item: InventoryItemRead) {
@@ -170,6 +183,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const [categoryDraft, setCategoryDraft] = useState("");
   const [editingCategoryId, setEditingCategoryId] = useState<UUID | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [editingStockKey, setEditingStockKey] = useState<string | null>(null);
+  const [editingStockValue, setEditingStockValue] = useState("");
+  const [editingPurchaseRateId, setEditingPurchaseRateId] = useState<UUID | null>(null);
+  const [editingPurchaseRateValue, setEditingPurchaseRateValue] = useState("");
+  const [savingPurchaseRateId, setSavingPurchaseRateId] = useState<UUID | null>(null);
+  const [savingAllPurchaseRates, setSavingAllPurchaseRates] = useState(false);
   const debouncedSearchRef = useRef("");
   const loadedItemsQueryRef = useRef<string | null>(null);
   const itemsAbortRef = useRef<AbortController | null>(null);
@@ -750,13 +769,108 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     }
   }, [allocationBusyItemId, selectedShopId]);
 
+  const handleSaveStockValue = useCallback(() => {
+    if (!editingStockKey) return;
+    const [itemId, type] = editingStockKey.split(":");
+    const numValue = parseFloat(editingStockValue) || 0;
+
+    setStockItems((currentItems) => {
+      return currentItems.map((item) => {
+        if (item.id !== itemId) return item;
+
+        if (type === "available") {
+          return { ...item, available_quantity: numValue.toString() };
+        } else if (type === "used") {
+          return { ...item, used_quantity: numValue.toString() };
+        } else {
+          let newTotalUsed = 0;
+          const newCategoryUsage = (item.category_usage || []).map((cat) => {
+            if (cat.category_id === type) {
+              newTotalUsed += numValue;
+              return { ...cat, used_quantity: numValue.toString() };
+            }
+            newTotalUsed += parseFloat(cat.used_quantity) || 0;
+            return cat;
+          });
+          return { ...item, category_usage: newCategoryUsage, used_quantity: newTotalUsed.toString() };
+        }
+      });
+    });
+    setEditingStockKey(null);
+  }, [editingStockKey, editingStockValue]);
+
+  const toggleStockEdit = useCallback((key: string, currentValue: string) => {
+    if (editingStockKey === key) {
+      handleSaveStockValue();
+    } else {
+      setEditingStockKey(key);
+      setEditingStockValue(currentValue);
+    }
+  }, [editingStockKey, handleSaveStockValue]);
+
+  const handleSavePurchaseRate = useCallback(async (itemId: UUID) => {
+    const nextRate = editingPurchaseRateValue.trim();
+    if (!nextRate || money(nextRate).lessThan(0)) {
+      Alert.alert("Invalid purchase rate", "Enter a valid amount.");
+      return;
+    }
+    setSavingPurchaseRateId(itemId);
+    setErrorMessage(null);
+    try {
+      const updatedItem = await updateInventoryItemPurchaseRate(itemId, money(nextRate).toFixed(2));
+      setItems((currentItems) => currentItems.map((item) => (item.id === itemId ? updatedItem : item)));
+      setEditingPurchaseRateId(null);
+      setEditingPurchaseRateValue("");
+    } catch (error) {
+      triggerHaptic();
+      setErrorMessage(getRequestMessage(error, "Unable to update purchase rate."));
+    } finally {
+      setSavingPurchaseRateId(null);
+    }
+  }, [editingPurchaseRateValue]);
+
+  const togglePurchaseRateEdit = useCallback((item: InventoryItemRead) => {
+    if (editingPurchaseRateId === item.id) {
+      void handleSavePurchaseRate(item.id);
+      return;
+    }
+    setEditingPurchaseRateId(item.id);
+    setEditingPurchaseRateValue(item.purchase_rate ?? "0");
+  }, [editingPurchaseRateId, handleSavePurchaseRate]);
+
+  const handleSaveAllPurchaseRates = useCallback(async () => {
+    setSavingAllPurchaseRates(true);
+    setErrorMessage(null);
+    try {
+      if (editingPurchaseRateId) {
+        const nextRate = editingPurchaseRateValue.trim();
+        if (!nextRate || money(nextRate).lessThan(0)) {
+          Alert.alert("Invalid purchase rate", "Enter a valid amount before saving.");
+          return;
+        }
+        await updateInventoryItemPurchaseRate(editingPurchaseRateId, money(nextRate).toFixed(2));
+        setEditingPurchaseRateId(null);
+        setEditingPurchaseRateValue("");
+      }
+      await confirmInventoryPurchaseRatesToday();
+      await loadInventoryRows();
+    } catch (error) {
+      triggerHaptic();
+      setErrorMessage(getRequestMessage(error, "Unable to save today's purchase rates."));
+    } finally {
+      setSavingAllPurchaseRates(false);
+    }
+  }, [editingPurchaseRateId, editingPurchaseRateValue, loadInventoryRows]);
+
   const renderTabs = () => (
-    <View style={[styles.tabs, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}>
-      {[
-        { key: "items", label: "Items", icon: "package-variant-closed" },
-        { key: "categories", label: "Categories", icon: "shape-outline" },
-        { key: "shops", label: "Branch stock", icon: "storefront-outline" },
-      ].map((tab) => {
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+      <View style={[styles.tabs, { borderColor: palette.border, backgroundColor: palette.surfaceMuted }]}>
+        {[
+          { key: "items", label: "Items", icon: "package-variant-closed" },
+          { key: "categories", label: "Categories", icon: "shape-outline" },
+          { key: "purchaseRates", label: "Purchase rate", icon: "currency-inr" },
+          { key: "shops", label: "Branch stock", icon: "storefront-outline" },
+        ].map((tab) => {
         const active = activeTab === tab.key;
         return (
           <Pressable
@@ -777,7 +891,8 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           </Pressable>
         );
       })}
-    </View>
+      </View>
+    </ScrollView>
   );
 
   const renderItemsHeader = () => (
@@ -848,6 +963,107 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           <IconButton icon="pencil-outline" label="Edit" palette={palette} onPress={() => openEditEditor(item)} />
           <IconButton icon="delete-outline" label="Delete" palette={palette} danger onPress={() => confirmDeleteItem(item)} />
         </View>
+      </View>
+    );
+  };
+
+  const renderPurchaseRateHeader = () => (
+    <View style={styles.itemsHeader}>
+      <Text style={[styles.purchaseRateIntro, { color: palette.textSecondary }]}>
+        Set today&apos;s purchase rate for each inventory item, then tap Save to confirm all existing rates.
+      </Text>
+      <View style={styles.row}>
+        <View style={[styles.search, { borderColor: palette.border, backgroundColor: palette.card }]}>
+          <MaterialCommunityIcons name="magnify" size={18} color={palette.textMuted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search inventory"
+            placeholderTextColor={palette.textMuted}
+            style={[styles.input, { color: palette.textPrimary }]}
+          />
+        </View>
+        <ActionButton
+          label={savingAllPurchaseRates ? "Saving..." : "Save"}
+          icon="calendar-check-outline"
+          palette={palette}
+          active
+          loading={savingAllPurchaseRates}
+          disabled={items.length === 0 || savingAllPurchaseRates || Boolean(savingPurchaseRateId)}
+          onPress={() => void handleSaveAllPurchaseRates()}
+        />
+      </View>
+    </View>
+  );
+
+  const renderPurchaseRateRow = ({ item }: { item: InventoryItemRead }) => {
+    const editing = editingPurchaseRateId === item.id;
+    const saving = savingPurchaseRateId === item.id;
+    const updatedToday = isPurchaseRateUpdatedToday(item.updated_at);
+    return (
+      <View style={[styles.itemRow, { borderColor: palette.border, backgroundColor: palette.card }]}>
+        <ItemThumbnail
+          uri={getItemThumbnailUri(item)}
+          recyclingKey={item.id}
+          size={52}
+          borderRadius={10}
+          backgroundColor={palette.surfaceMuted}
+          icon="package-variant-closed"
+          iconColor={palette.textMuted}
+        />
+        <View style={styles.itemText}>
+          <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
+          <Text style={[styles.itemSub, { color: palette.textSecondary }]}>{item.tamil_name}</Text>
+          <Text style={[styles.itemMeta, { color: palette.textMuted }]}>
+            {item.base_unit.toUpperCase()} · {inventoryItemCategoryLabel(item)}
+          </Text>
+          <View style={styles.purchaseRateBlock}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Purchase rate</Text>
+              <Pressable onPress={() => togglePurchaseRateEdit(item)} disabled={saving} hitSlop={10}>
+                <MaterialCommunityIcons
+                  name={editing ? "check" : "pencil-outline"}
+                  size={14}
+                  color={palette.textMuted}
+                />
+              </Pressable>
+            </View>
+            {editing ? (
+              <TextInput
+                value={editingPurchaseRateValue}
+                onChangeText={setEditingPurchaseRateValue}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={palette.textMuted}
+                style={[
+                  styles.quantityValue,
+                  {
+                    color: palette.textPrimary,
+                    borderBottomWidth: 1,
+                    borderBottomColor: palette.border,
+                    minWidth: 90,
+                    padding: 0,
+                  },
+                ]}
+                onSubmitEditing={() => void handleSavePurchaseRate(item.id)}
+                autoFocus
+              />
+            ) : (
+              <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
+                {formatPurchaseRate(item.purchase_rate ?? "0", item.base_unit)}
+              </Text>
+            )}
+            <Text
+              style={[
+                styles.purchaseRateStatus,
+                { color: updatedToday ? palette.inventoryStrong : palette.danger },
+              ]}
+            >
+              {updatedToday ? "Updated today" : "Needs today's rate"}
+            </Text>
+          </View>
+        </View>
+        {saving ? <ActivityIndicator color={palette.inventory} /> : null}
       </View>
     );
   };
@@ -1027,16 +1243,50 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
             <Text style={[styles.itemName, { color: palette.textPrimary }]}>{item.name}</Text>
             <View style={styles.itemQuantityRow}>
               <View style={styles.itemQuantityGroup}>
-                <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Available</Text>
-                <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
-                  {formatInventoryQuantity(item.available_quantity, item.base_unit)}
-                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Available</Text>
+                  <Pressable onPress={() => toggleStockEdit(`${item.id}:available`, item.available_quantity)} hitSlop={10}>
+                    <MaterialCommunityIcons name={editingStockKey === `${item.id}:available` ? "check" : "pencil-outline"} size={14} color={palette.textMuted} />
+                  </Pressable>
+                </View>
+                {editingStockKey === `${item.id}:available` ? (
+                  <TextInput
+                    value={editingStockValue}
+                    onChangeText={setEditingStockValue}
+                    keyboardType="numeric"
+                    style={[styles.quantityValue, { color: palette.textPrimary, borderBottomWidth: 1, borderBottomColor: palette.border, minWidth: 60, padding: 0 }]}
+                    onSubmitEditing={handleSaveStockValue}
+                    autoFocus
+                  />
+                ) : (
+                  <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
+                    {formatInventoryQuantity(item.available_quantity, item.base_unit)}
+                  </Text>
+                )}
               </View>
               <View style={styles.itemQuantityGroup}>
-                <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Used</Text>
-                <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
-                  {formatInventoryQuantity(item.used_quantity, item.base_unit)}
-                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Text style={[styles.quantityLabel, { color: palette.textMuted }]}>Used</Text>
+                  {categoryUsage.length === 0 && (
+                    <Pressable onPress={() => toggleStockEdit(`${item.id}:used`, item.used_quantity)} hitSlop={10}>
+                      <MaterialCommunityIcons name={editingStockKey === `${item.id}:used` ? "check" : "pencil-outline"} size={14} color={palette.textMuted} />
+                    </Pressable>
+                  )}
+                </View>
+                {editingStockKey === `${item.id}:used` ? (
+                  <TextInput
+                    value={editingStockValue}
+                    onChangeText={setEditingStockValue}
+                    keyboardType="numeric"
+                    style={[styles.quantityValue, { color: palette.textPrimary, borderBottomWidth: 1, borderBottomColor: palette.border, minWidth: 60, padding: 0 }]}
+                    onSubmitEditing={handleSaveStockValue}
+                    autoFocus
+                  />
+                ) : (
+                  <Text style={[styles.quantityValue, { color: palette.textPrimary }]}>
+                    {formatInventoryQuantity(item.used_quantity, item.base_unit)}
+                  </Text>
+                )}
               </View>
             </View>
           </View>
@@ -1084,10 +1334,26 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
                 </Text>
                 <View style={styles.categoryUsageTotals}>
                   <View style={styles.categoryUsageTotal}>
-                    <Text style={[styles.categoryUsageLabel, { color: palette.textMuted }]}>Used</Text>
-                    <Text style={[styles.categoryUsageValue, { color: palette.textPrimary }]}>
-                      {formatInventoryQuantity(category.used_quantity, item.base_unit)}
-                    </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                      <Text style={[styles.categoryUsageLabel, { color: palette.textMuted }]}>Used</Text>
+                      <Pressable onPress={() => toggleStockEdit(`${item.id}:${category.category_id}`, category.used_quantity)} hitSlop={10}>
+                        <MaterialCommunityIcons name={editingStockKey === `${item.id}:${category.category_id}` ? "check" : "pencil-outline"} size={14} color={palette.textMuted} />
+                      </Pressable>
+                    </View>
+                    {editingStockKey === `${item.id}:${category.category_id}` ? (
+                      <TextInput
+                        value={editingStockValue}
+                        onChangeText={setEditingStockValue}
+                        keyboardType="numeric"
+                        style={[styles.categoryUsageValue, { color: palette.textPrimary, borderBottomWidth: 1, borderBottomColor: palette.border, minWidth: 60, padding: 0 }]}
+                        onSubmitEditing={handleSaveStockValue}
+                        autoFocus
+                      />
+                    ) : (
+                      <Text style={[styles.categoryUsageValue, { color: palette.textPrimary }]}>
+                        {formatInventoryQuantity(category.used_quantity, item.base_unit)}
+                      </Text>
+                    )}
                   </View>
                 </View>
               </View>
@@ -1240,7 +1506,7 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
         </Pressable>
         <View style={styles.titleWrap}>
           <Text style={[styles.title, { color: palette.onShell }]}>Inventory</Text>
-          <Text style={[styles.subtitle, { color: palette.onShellMuted }]}>Items, categories, and branch stock</Text>
+          <Text style={[styles.subtitle, { color: palette.onShellMuted }]}>Items, categories, purchase rates, and branch stock</Text>
         </View>
         <AdminHeaderActions
           refreshing={refreshing}
@@ -1273,6 +1539,29 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
               contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
               ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
               ListHeaderComponent={renderItemsHeader}
+              ListEmptyComponent={
+                !itemsLoading ? (
+                  <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
+                ) : null
+              }
+              ListFooterComponent={renderItemsFooter}
+              onEndReached={() => void loadInventoryRows({ append: true })}
+              onEndReachedThreshold={0.35}
+            />
+          )}
+
+          {activeTab === "purchaseRates" && (
+            <FlatList
+              data={items}
+              keyExtractor={(item) => item.id}
+              renderItem={renderPurchaseRateRow}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => void loadBaseData(true)} tintColor={palette.inventory} colors={[palette.inventory]} />
+              }
+              contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
+              ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+              ListHeaderComponent={renderPurchaseRateHeader}
               ListEmptyComponent={
                 !itemsLoading ? (
                   <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
@@ -1424,8 +1713,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: "900", letterSpacing: 0 },
   subtitle: { fontSize: 12, fontWeight: "700", letterSpacing: 0 },
   content: { padding: 16, gap: 14 },
+  tabsScroll: { flexGrow: 0 },
   tabs: { flexDirection: "row", borderWidth: 1, borderRadius: 12, padding: 4, gap: 4 },
-  tab: { flex: 1, minHeight: 42, borderRadius: 9, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
+  tab: { minHeight: 42, borderRadius: 9, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, paddingHorizontal: 12 },
   tabText: { fontSize: 12, fontWeight: "800", letterSpacing: 0 },
   section: { gap: 10 },
   itemsHeader: { gap: 10 },
@@ -1469,6 +1759,9 @@ const styles = StyleSheet.create({
   itemName: { fontSize: 14, fontWeight: "900", letterSpacing: 0 },
   itemSub: { fontSize: 13, fontWeight: "700", letterSpacing: 0 },
   itemMeta: { fontSize: 12, fontWeight: "700", letterSpacing: 0 },
+  purchaseRateIntro: { fontSize: 13, fontWeight: "700", lineHeight: 18 },
+  purchaseRateBlock: { marginTop: 8, gap: 4 },
+  purchaseRateStatus: { fontSize: 11, fontWeight: "800", letterSpacing: 0 },
   mappingSummary: { marginTop: 8, gap: 6 },
   mappingHeader: { flexDirection: "row", alignItems: "center", gap: 5 },
   mappingLabel: { fontSize: 10, fontWeight: "900", letterSpacing: 0, textTransform: "uppercase" },

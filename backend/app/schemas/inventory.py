@@ -61,6 +61,14 @@ class InventoryItemUpdate(InventoryItemCreate):
     pass
 
 
+class InventoryItemPurchaseRateUpdate(BaseModel):
+    purchase_rate: Decimal = Field(ge=0)
+
+
+class InventoryPurchaseRatesConfirmRead(BaseModel):
+    updated_count: int = 0
+
+
 class InventoryItemRead(ORMModel):
     id: UUID
     name: str
@@ -69,6 +77,7 @@ class InventoryItemRead(ORMModel):
     base_unit: BaseUnit
     is_active: bool
     sort_order: int = 0
+    purchase_rate: Decimal = Decimal("0")
     billing_item_id: UUID | None = None
     billing_item_ids: list[UUID] = Field(default_factory=list)
     billing_items: list[InventoryBillingItemMappingRead] = Field(default_factory=list)
@@ -169,6 +178,8 @@ class InventoryMovementRead(BaseModel):
     movement_type: InventoryMovementType
     quantity: Decimal
     unit: BaseUnit
+    driver_name: str | None = None
+    vehicle_number: str | None = None
     created_at: datetime
 
 
@@ -180,6 +191,8 @@ class InventoryMovementPage(BaseModel):
 
 class InventoryAddRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
+    driver_name: str = Field(min_length=1, max_length=100)
+    vehicle_number: str = Field(min_length=1, max_length=50)
 
 
 class InventoryUseRequest(BaseModel):

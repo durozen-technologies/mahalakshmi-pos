@@ -18,6 +18,7 @@ import {
   InventoryItemImageRead,
   InventoryItemRead,
   InventoryItemRowsPage,
+  InventoryPurchaseRatesConfirmRead,
   InventoryBillingItemMappingWrite,
   InventoryItemStockRead,
   InventoryMovementPage,
@@ -754,6 +755,21 @@ export async function updateInventoryItemMetadata(itemId: UUID, payload: Invento
   const { data } = await apiClient.patch<InventoryItemRead>(
     `/api/v1/admin/inventory/items/${itemId}/metadata`,
     payload,
+  );
+  return data;
+}
+
+export async function updateInventoryItemPurchaseRate(itemId: UUID, purchaseRate: string) {
+  const { data } = await apiClient.patch<InventoryItemRead>(
+    `/api/v1/admin/inventory/items/${itemId}/purchase-rate`,
+    { purchase_rate: purchaseRate },
+  );
+  return data;
+}
+
+export async function confirmInventoryPurchaseRatesToday() {
+  const { data } = await apiClient.post<InventoryPurchaseRatesConfirmRead>(
+    "/api/v1/admin/inventory/items/purchase-rates/confirm-today",
   );
   return data;
 }

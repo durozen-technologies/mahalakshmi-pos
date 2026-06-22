@@ -171,7 +171,7 @@ export function AdminItemCategoriesScreen({ navigation }: AdminItemCategoriesScr
     ]);
   }, [deleteCategory]);
 
-  const renderHeader = () => (
+  const headerElement = (
     <YStack gap={14}>
       {errorMessage ? (
         <View style={[styles.errorBox, { backgroundColor: palette.dangerSoft, borderColor: palette.danger }]}>
@@ -261,7 +261,7 @@ export function AdminItemCategoriesScreen({ navigation }: AdminItemCategoriesScr
           refreshing={refreshing}
           onRefresh={() => void loadCategories(undefined, true)}
           contentContainerStyle={[styles.content, { paddingBottom: 34 + insets.bottom }]}
-          ListHeaderComponent={renderHeader}
+          ListHeaderComponent={headerElement}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           ListEmptyComponent={
             <View style={[styles.emptyBox, { backgroundColor: palette.card, borderColor: palette.border }]}>

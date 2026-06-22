@@ -70,6 +70,9 @@ class InventoryItem(Base, BaseModelMixin):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true"), nullable=False
     )
+    purchase_rate: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), server_default=text("0.00"), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -310,7 +313,35 @@ class InventoryMovement(Base, BaseModelMixin):
         Enum(InventoryMovementType), nullable=False
     )
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    driver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     shop = relationship("Shop", back_populates="inventory_movements")
     item = relationship("InventoryItem", back_populates="movements")
     category = relationship("InventoryCategory", back_populates="movements")
+    splits = relationship("InventoryMovementSplit", back_populates="movement", cascade="all, delete-orphan")
+
+
+class InventoryMovementSplit(Base, BaseModelMixin):
+    __tablename__ = "inventory_movement_splits"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_inventory_movement_splits_quantity_positive"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID_SQL_TYPE, primary_key=True, index=True, default=uuid7)
+    movement_id: Mapped[UUID] = mapped_column(
+        UUID_SQL_TYPE,
+        ForeignKey("inventory_movements.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    category_id: Mapped[UUID] = mapped_column(
+        UUID_SQL_TYPE,
+        ForeignKey("inventory_categories.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+
+    movement = relationship("InventoryMovement", back_populates="splits")
+    category = relationship("InventoryCategory")

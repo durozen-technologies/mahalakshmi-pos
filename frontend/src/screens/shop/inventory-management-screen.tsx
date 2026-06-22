@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -14,6 +16,7 @@ import {
   Text,
   TextInput,
   View,
+  type ScrollView as ScrollViewType,
 } from "react-native";
 
 import {
@@ -145,6 +148,15 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
   const [selectedItem, setSelectedItem] = useState<InventoryItemStockRead | null>(null);
   const [mode, setMode] = useState<MovementMode>(InventoryMovementType.ADD);
   const [quantity, setQuantity] = useState("");
+  const [driverName, setDriverName] = useState("");
+  const [vehicleNumber, setVehicleNumber] = useState("");
+  const movementScrollRef = useRef<ScrollViewType>(null);
+  const movementScrollOffsetRef = useRef(0);
+  const movementQuantityFieldRef = useRef<View | null>(null);
+  const movementCategoryFieldRefs = useRef<Record<UUID, View | null>>({});
+  const movementActiveFieldRef = useRef<View | null>(null);
+  const keyboardInsetRef = useRef(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [categoryQuantities, setCategoryQuantities] = useState<Record<UUID, string>>({});
   const inventoryCursorRef = useRef<InventoryCursor>(EMPTY_INVENTORY_CURSOR);
   const inventoryHasMoreRef = useRef(false);
@@ -183,15 +195,15 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     () =>
       historyMode === "date"
         ? {
-            reference_date: historyDate,
-            range_start_date: null,
-            range_end_date: null,
-          }
+          reference_date: historyDate,
+          range_start_date: null,
+          range_end_date: null,
+        }
         : {
-            reference_date: null,
-            range_start_date: historyRangeStart,
-            range_end_date: historyRangeEnd,
-          },
+          reference_date: null,
+          range_start_date: historyRangeStart,
+          range_end_date: historyRangeEnd,
+        },
     [historyDate, historyMode, historyRangeEnd, historyRangeStart],
   );
   const movementHistoryKey = useMemo(
@@ -397,32 +409,89 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     setSelectedItem(item);
     setMode(nextMode);
     setQuantity("");
+    setDriverName("");
+    setVehicleNumber("");
     setCategoryQuantities({});
   }, [loadInventory]);
 
   const closeMovement = useCallback(() => {
     setSelectedItem(null);
     setQuantity("");
+    setDriverName("");
+    setVehicleNumber("");
     setCategoryQuantities({});
+    setKeyboardInset(0);
+    keyboardInsetRef.current = 0;
+    movementScrollOffsetRef.current = 0;
+    movementActiveFieldRef.current = null;
   }, []);
+
+  const scrollMovementFieldIntoView = useCallback((field: View | null, inset = keyboardInsetRef.current) => {
+    if (!field || inset <= 0) {
+      return;
+    }
+    const runScroll = () => {
+      field.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get("window").height - inset;
+        const targetBottom = keyboardTop - 40;
+        const overlap = y + height - targetBottom;
+        if (overlap > 0) {
+          movementScrollRef.current?.scrollTo({
+            y: movementScrollOffsetRef.current + overlap,
+            animated: true,
+          });
+        }
+      });
+    };
+    requestAnimationFrame(runScroll);
+    setTimeout(runScroll, Platform.OS === "android" ? 280 : 120);
+  }, []);
+
+  const focusMovementField = useCallback((field: View | null) => {
+    movementActiveFieldRef.current = field;
+    scrollMovementFieldIntoView(field);
+    setTimeout(() => scrollMovementFieldIntoView(field), 80);
+    setTimeout(() => scrollMovementFieldIntoView(field), Platform.OS === "android" ? 320 : 180);
+  }, [scrollMovementFieldIntoView]);
+
+  useEffect(() => {
+    if (!selectedItem) {
+      setKeyboardInset(0);
+      keyboardInsetRef.current = 0;
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      const inset = event.endCoordinates.height;
+      keyboardInsetRef.current = inset;
+      setKeyboardInset(inset);
+      const activeField = movementActiveFieldRef.current ?? movementQuantityFieldRef.current;
+      requestAnimationFrame(() => {
+        scrollMovementFieldIntoView(activeField, inset);
+      });
+      setTimeout(() => scrollMovementFieldIntoView(activeField, inset), Platform.OS === "android" ? 320 : 120);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      keyboardInsetRef.current = 0;
+      setKeyboardInset(0);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [selectedItem, scrollMovementFieldIntoView]);
 
   const splitState = useMemo(() => {
     if (!selectedItem) {
       return {
         splitTotal: money(0),
-        remaining: money(0),
         hasValidTotal: false,
-        hasValidSplit: false,
-        splitMatchesTotal: false,
         canSave: false,
       };
     }
-    const total = parseQuantityDraft(quantity);
-    const hasValidTotal = Boolean(
-      total &&
-        total.greaterThan(0) &&
-        (selectedItem.base_unit !== BaseUnit.UNIT || isWholeDecimalValue(total)),
-    );
+    const hasCategories = selectedItem.category_usage.length > 0;
+    const useAutoTotal = mode === InventoryMovementType.USE && hasCategories;
     let hasInvalidSplit = false;
     const splitTotal = selectedItem.category_usage.reduce((currentTotal, category) => {
       const parsed = parseQuantityDraft(categoryQuantities[category.category_id] ?? "");
@@ -436,35 +505,35 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       }
       return currentTotal.plus(parsed);
     }, money(0));
-    const normalizedTotal = total?.toDecimalPlaces(3) ?? money(0);
-    const normalizedSplitTotal = splitTotal.toDecimalPlaces(3);
-    const splitMatchesTotal = hasValidTotal && normalizedSplitTotal.equals(normalizedTotal);
+    const manualTotal = parseQuantityDraft(quantity);
+    const total = useAutoTotal ? (hasInvalidSplit ? null : splitTotal) : manualTotal;
+    const hasValidTotal = Boolean(
+      total &&
+      total.greaterThan(0) &&
+      (selectedItem.base_unit !== BaseUnit.UNIT || isWholeDecimalValue(total)),
+    );
     const withinAvailable = total
       ? total.toDecimalPlaces(3).lessThanOrEqualTo(money(selectedItem.available_quantity).toDecimalPlaces(3))
       : false;
-    const hasCategories = selectedItem.category_usage.length > 0;
-    const hasValidSplit =
-      !hasInvalidSplit &&
-      hasCategories &&
-      splitTotal.greaterThan(0) &&
-      splitMatchesTotal;
     return {
       splitTotal,
-      remaining: normalizedTotal.minus(normalizedSplitTotal),
       hasValidTotal,
-      hasValidSplit,
-      splitMatchesTotal,
       canSave: mode === InventoryMovementType.ADD
-        ? hasValidTotal
-        : (hasCategories ? hasValidSplit : hasValidTotal) && withinAvailable,
+        ? hasValidTotal && Boolean(driverName.trim()) && Boolean(vehicleNumber.trim())
+        : useAutoTotal
+          ? !hasInvalidSplit && splitTotal.greaterThan(0) && withinAvailable
+          : hasValidTotal && withinAvailable,
     };
-  }, [categoryQuantities, mode, quantity, selectedItem]);
+  }, [categoryQuantities, mode, quantity, selectedItem, driverName, vehicleNumber]);
 
   const saveMovement = useCallback(async () => {
     if (!selectedItem) {
       return;
     }
-    const rawQuantity = quantity.trim();
+    const hasCategorySplit = mode === InventoryMovementType.USE && selectedItem.category_usage.length > 0;
+    const rawQuantity = hasCategorySplit
+      ? splitState.splitTotal.toDecimalPlaces(3).toString()
+      : quantity.trim();
     if (!rawQuantity || money(rawQuantity).lessThanOrEqualTo(0)) {
       Alert.alert(t("inventory.invalidQuantityTitle"), t("inventory.invalidQuantityMessage"));
       return;
@@ -487,7 +556,16 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     try {
       let changedItem: InventoryItemStockRead;
       if (mode === InventoryMovementType.ADD) {
-        const result = await addShopInventoryStock(selectedItem.id, { quantity: rawQuantity });
+        if (!driverName.trim() || !vehicleNumber.trim()) {
+          Alert.alert(t("inventory.driverVehicleRequiredTitle" as any), t("inventory.driverVehicleRequiredMessage" as any));
+          setSaving(false);
+          return;
+        }
+        const result = await addShopInventoryStock(selectedItem.id, {
+          quantity: rawQuantity,
+          driver_name: driverName.trim(),
+          vehicle_number: vehicleNumber.trim(),
+        });
         changedItem = result.item;
         if (result.summary) {
           setItems(visibleStockRows(result.summary.items));
@@ -542,6 +620,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
   }, [
     categoryQuantities,
     closeMovement,
+    driverName,
     historyOpen,
     language,
     loadInventory,
@@ -551,6 +630,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     selectedItem,
     splitState.canSave,
     t,
+    vehicleNumber,
   ]);
 
   if (loading && items.length === 0) {
@@ -761,6 +841,11 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                     <Text className="mt-0.5 text-xs font-semibold text-muted" numberOfLines={1}>
                       {movementLabel} · {formatQuantity(movement.quantity, movement.unit)}
                     </Text>
+                    {movement.driver_name || movement.vehicle_number ? (
+                      <Text className="mt-0.5 text-[11px] font-semibold text-muted" numberOfLines={1}>
+                        {movement.driver_name ? `Driver: ${movement.driver_name}` : ""}{movement.driver_name && movement.vehicle_number ? " · " : ""}{movement.vehicle_number ? `Vehicle: ${movement.vehicle_number}` : ""}
+                      </Text>
+                    ) : null}
                     <Text className="mt-0.5 text-[11px] font-semibold text-muted">
                       {formatDateTime(movement.created_at)}
                     </Text>
@@ -825,140 +910,171 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       <Modal visible={Boolean(selectedItem)} animationType="fade" transparent onRequestClose={closeMovement}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          className={
-            mode === InventoryMovementType.USE
-              ? "flex-1 justify-start bg-black/45 px-4"
-              : "flex-1 justify-center bg-black/45 px-4"
-          }
+          className="flex-1"
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
         >
-          <View
-            className="w-full self-center rounded-[20px] border border-border bg-card p-4 shadow-soft"
-            style={{ maxHeight: "88%", maxWidth: 460 }}
-          >
-            {selectedItem ? (
-              <>
-                <View className="flex-row items-start justify-between gap-3">
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-lg font-extrabold text-ink">
-                      {mode === InventoryMovementType.ADD ? t("inventory.addStock") : t("inventory.useStock")}
-                    </Text>
-                    <Text className="mt-1 text-sm font-semibold text-muted" numberOfLines={2}>
-                      {getLocalizedItemName(language, selectedItem.name, selectedItem.tamil_name)}
-                    </Text>
-                  </View>
-                  <Pressable accessibilityRole="button" onPress={closeMovement} className="h-10 w-10 items-center justify-center">
-                    <MaterialCommunityIcons name="close" size={22} color="#1E2B22" />
-                  </Pressable>
-                </View>
-
-                <ScrollView
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ gap: 12, paddingTop: 10, paddingBottom: 2 }}
-                >
-                  {mode === InventoryMovementType.USE ? (
-                    <View className="items-center rounded-[16px] border border-accent bg-accentSoft px-4 py-3">
-                      <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
-                        {t("inventory.available")}
-                      </Text>
-                      <Text className="mt-1 text-3xl font-extrabold text-ink">
-                        {formatQuantity(selectedItem.available_quantity, selectedItem.base_unit)}
-                      </Text>
+          <View className="flex-1 bg-black/45">
+            <ScrollView
+              ref={movementScrollRef}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onScroll={(event) => {
+                movementScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+              }}
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: keyboardInset > 0 ? "flex-start" : "center",
+                paddingHorizontal: 16,
+                paddingTop: 24,
+                paddingBottom: keyboardInset > 0 ? keyboardInset + 48 : 24,
+              }}
+            >
+              <View
+                className="w-full self-center rounded-[20px] border border-border bg-card p-4 shadow-soft"
+                style={{ maxWidth: 460 }}
+              >
+                {selectedItem ? (
+                  <View className="gap-3">
+                    <View className="flex-row items-start justify-between gap-3">
+                      <View className="min-w-0 flex-1">
+                        <Text className="text-lg font-extrabold text-ink">
+                          {mode === InventoryMovementType.ADD ? t("inventory.addStock") : t("inventory.useStock")}
+                        </Text>
+                        <Text className="mt-1 text-sm font-semibold text-muted" numberOfLines={2}>
+                          {getLocalizedItemName(language, selectedItem.name, selectedItem.tamil_name)}
+                        </Text>
+                      </View>
+                      <Pressable accessibilityRole="button" onPress={closeMovement} className="h-10 w-10 items-center justify-center">
+                        <MaterialCommunityIcons name="close" size={22} color="#1E2B22" />
+                      </Pressable>
                     </View>
-                  ) : null}
-                  <TextField
-                    label={mode === InventoryMovementType.USE
-                      ? selectedItem.base_unit === BaseUnit.KG
-                        ? "Total to use (kg)"
-                        : "Total to use (units)"
-                      : selectedItem.base_unit === BaseUnit.KG
-                        ? t("common.quantityKg")
-                        : t("common.quantityUnits")}
-                    keyboardType="decimal-pad"
-                    placeholder={selectedItem.base_unit === BaseUnit.KG ? t("common.exampleKg") : t("common.exampleUnits")}
-                    value={quantity}
-                    onChangeText={setQuantity}
-                    suffix={selectedItem.base_unit}
-                    autoFocus={mode === InventoryMovementType.USE}
-                    selectTextOnFocus
-                    className={mode === InventoryMovementType.USE ? "text-center text-2xl font-extrabold" : undefined}
-                  />
-                  {mode === InventoryMovementType.USE && selectedItem.category_usage.length > 0 ? (
-                    <View className="gap-2">
-                      <View className="flex-row items-center justify-between gap-3">
-                        <Text className="text-[11px] font-semibold uppercase text-muted">{t("inventory.category")}</Text>
-                        <Text className="text-[11px] font-semibold uppercase text-muted">Split</Text>
+
+                    {mode === InventoryMovementType.USE ? (
+                      <View className="items-center rounded-[16px] border border-accent bg-accentSoft px-4 py-3">
+                        <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
+                          {t("inventory.available")}
+                        </Text>
+                        <Text className="mt-1 text-3xl font-extrabold text-ink">
+                          {formatQuantity(selectedItem.available_quantity, selectedItem.base_unit)}
+                        </Text>
                       </View>
-                      <View className="gap-2">
-                        {selectedItem.category_usage.map((category) => (
-                          <View
-                            key={category.category_id}
-                            className="min-h-[62px] flex-row items-center gap-3 rounded-[14px] border border-border bg-surface px-3 py-2"
-                          >
-                            <View className="min-w-0 flex-1">
-                              <Text className="text-sm font-semibold text-ink" numberOfLines={1}>
-                                {category.category_name}
-                              </Text>
-                              <Text className="mt-0.5 text-xs font-semibold text-muted">
-                                {t("inventory.used")} {formatQuantity(category.used_quantity, selectedItem.base_unit)}
-                              </Text>
-                            </View>
-                            <View className="h-14 w-40 flex-row items-center rounded-[12px] border border-border bg-card px-3">
-                              <TextInput
-                                keyboardType="decimal-pad"
-                                placeholder={selectedItem.base_unit === BaseUnit.KG ? t("common.exampleKg") : t("common.exampleUnits")}
-                                placeholderTextColor="#95A293"
-                                value={categoryQuantities[category.category_id] ?? ""}
-                                onChangeText={(nextQuantity) =>
-                                  setCategoryQuantities((current) => ({
-                                    ...current,
-                                    [category.category_id]: nextQuantity,
-                                  }))
-                                }
-                                selectTextOnFocus
-                                autoCorrect={false}
-                                underlineColorAndroid="transparent"
-                                selectionColor="#244734"
-                                cursorColor="#244734"
-                                className="min-w-0 flex-1 text-center text-xl font-extrabold text-ink"
-                              />
-                              <Text className="ml-2 text-xs font-semibold uppercase text-muted">{selectedItem.base_unit}</Text>
-                            </View>
-                          </View>
-                        ))}
+                    ) : null}
+                    {mode === InventoryMovementType.USE && selectedItem.category_usage.length > 0 ? (
+                      <View className="items-center rounded-[16px] border border-border bg-card px-4 py-3">
+                        <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
+                          {selectedItem.base_unit === BaseUnit.KG ? "Total to use (kg)" : "Total to use (units)"}
+                        </Text>
+                        <Text className="mt-1 text-3xl font-extrabold text-ink">
+                          {formatQuantity(splitState.splitTotal.toString(), selectedItem.base_unit)}
+                        </Text>
                       </View>
-                      <View className="rounded-[14px] border border-border bg-card px-4 py-3">
-                        <View className="flex-row items-center justify-between gap-3">
-                          <Text className="text-xs font-semibold uppercase text-muted">Split total</Text>
-                          <Text className="text-xl font-extrabold text-ink">
-                            {formatQuantity(splitState.splitTotal.toString(), selectedItem.base_unit)}
-                          </Text>
-                        </View>
-                        {!splitState.splitMatchesTotal ? (
-                          <View className="mt-2 flex-row items-center justify-between gap-3">
-                            <Text className="text-xs font-semibold uppercase text-muted">Remaining</Text>
-                            <Text className="text-xl font-extrabold text-[#9F4335]">
-                              {formatQuantity(splitState.remaining.abs().toString(), selectedItem.base_unit)}
-                            </Text>
+                    ) : (
+                      <View
+                        ref={(node) => {
+                          movementQuantityFieldRef.current = node;
+                        }}
+                      >
+                        <TextField
+                          label={selectedItem.base_unit === BaseUnit.KG ? t("common.quantityKg") : t("common.quantityUnits")}
+                          keyboardType="decimal-pad"
+                          placeholder={selectedItem.base_unit === BaseUnit.KG ? t("common.exampleKg") : t("common.exampleUnits")}
+                          value={quantity}
+                          onChangeText={setQuantity}
+                          suffix={selectedItem.base_unit}
+                          autoFocus={mode === InventoryMovementType.USE}
+                          selectTextOnFocus={false}
+                          onFocus={() => focusMovementField(movementQuantityFieldRef.current)}
+                          className={mode === InventoryMovementType.USE ? "text-center text-2xl font-extrabold" : undefined}
+                        />
+                        {mode === InventoryMovementType.ADD ? (
+                          <View className="mt-4 gap-4">
+                            <TextField
+                              label={t("inventory.driverName" as any)}
+                              placeholder={t("inventory.driverNamePlaceholder" as any)}
+                              value={driverName}
+                              onChangeText={setDriverName}
+                              selectTextOnFocus={false}
+                            />
+                            <TextField
+                              label={t("inventory.vehicleNumber" as any)}
+                              placeholder={t("inventory.vehicleNumberPlaceholder" as any)}
+                              value={vehicleNumber}
+                              onChangeText={setVehicleNumber}
+                              selectTextOnFocus={false}
+                              autoCapitalize="characters"
+                            />
                           </View>
                         ) : null}
                       </View>
-                    </View>
-                  ) : null}
-                </ScrollView>
+                    )}
+                    {mode === InventoryMovementType.USE && selectedItem.category_usage.length > 0 ? (
+                      <View className="gap-2">
+                        <View className="flex-row items-center justify-between gap-3">
+                          <Text className="text-[11px] font-semibold uppercase text-muted">{t("inventory.category")}</Text>
+                          <Text className="text-[11px] font-semibold uppercase text-muted">Split</Text>
+                        </View>
+                        <View className="gap-2">
+                          {selectedItem.category_usage.map((category) => (
+                            <View
+                              key={category.category_id}
+                              ref={(node) => {
+                                movementCategoryFieldRefs.current[category.category_id] = node;
+                              }}
+                              className="min-h-[62px] flex-row items-center gap-3 rounded-[14px] border border-border bg-surface px-3 py-2"
+                            >
+                              <View className="min-w-0 flex-1">
+                                <Text className="text-sm font-semibold text-ink" numberOfLines={1}>
+                                  {category.category_name}
+                                </Text>
+                                <Text className="mt-0.5 text-xs font-semibold text-muted">
+                                  {t("inventory.used")} {formatQuantity(category.used_quantity, selectedItem.base_unit)}
+                                </Text>
+                              </View>
+                              <View className="h-14 w-40 flex-row items-center rounded-[12px] border border-border bg-card px-3">
+                                <TextInput
+                                  keyboardType="decimal-pad"
+                                  placeholder={selectedItem.base_unit === BaseUnit.KG ? t("common.exampleKg") : t("common.exampleUnits")}
+                                  placeholderTextColor="#95A293"
+                                  value={categoryQuantities[category.category_id] ?? ""}
+                                  onChangeText={(nextQuantity) =>
+                                    setCategoryQuantities((current) => ({
+                                      ...current,
+                                      [category.category_id]: nextQuantity,
+                                    }))
+                                  }
+                                  onFocus={() => focusMovementField(movementCategoryFieldRefs.current[category.category_id])}
+                                  selectTextOnFocus={false}
+                                  autoCorrect={false}
+                                  underlineColorAndroid="transparent"
+                                  selectionColor="#244734"
+                                  cursorColor="#244734"
+                                  className="min-w-0 flex-1 text-center text-xl font-extrabold text-ink"
+                                />
+                                <Text className="ml-2 text-xs font-semibold uppercase text-muted">{selectedItem.base_unit}</Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
 
-                <View className="mt-3 flex-row gap-2">
-                  <Button label={t("action.cancel")} onPress={closeMovement} variant="secondary" className="flex-1" />
-                  <Button
-                    label={saving ? t("inventory.saving") : t("inventory.save")}
-                    onPress={() => void saveMovement()}
-                    loading={saving}
-                    disabled={!splitState.canSave}
-                    className="flex-1"
-                  />
-                </View>
-              </>
-            ) : null}
+                    <View className="flex-row gap-2 pt-1">
+                      <Button label={t("action.cancel")} onPress={closeMovement} variant="secondary" className="flex-1" />
+                      <Button
+                        label={saving ? t("inventory.saving") : t("inventory.save")}
+                        onPress={() => void saveMovement()}
+                        loading={saving}
+                        disabled={!splitState.canSave}
+                        className="flex-1"
+                      />
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>

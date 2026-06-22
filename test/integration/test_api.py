@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from test.support import AsyncSessionAdapter, BackendTestCase  # isort: skip
@@ -21,6 +21,7 @@ from app.models import (
     BillStatus,
     DailyPrice,
     ExpenseItem,
+    InventoryItem,
     Item,
     ItemChangeEvent,
     Payment,
@@ -43,11 +44,13 @@ from app.routers.admin import (
     create_inventory_item,
     create_shop,
     create_shop_inventory_item,
+    confirm_admin_inventory_purchase_rates_today,
     deallocate_shop_catalogue_item,
     delete_admin_inventory_item_image,
     delete_admin_item_category,
     delete_inventory_item,
     delete_inventory_item_image,
+    get_admin_inventory_item,
     get_catalogue_item_counts,
     get_catalogue_item_detail,
     get_catalogue_item_rows,
@@ -68,6 +71,8 @@ from app.routers.admin import (
     get_shop_items,
     get_shops,
     patch_admin_inventory_item_metadata,
+    patch_admin_inventory_item_purchase_rate,
+    confirm_admin_inventory_purchase_rates_today,
     patch_inventory_item_metadata,
     payment_summary,
     sales_summary,
@@ -132,6 +137,7 @@ from app.schemas.inventory import (
     InventoryItemCreate as InventoryItemCreatePayload,
 )
 from app.schemas.inventory import (
+    InventoryItemPurchaseRateUpdate,
     InventoryItemUpdate as InventoryItemUpdatePayload,
 )
 from app.schemas.pricing import DailyPriceCreate, DailyPriceEntry, DailyPriceUpdate
@@ -1546,6 +1552,72 @@ class BackendApiIntegrationTests(BackendTestCase):
                 self.assertEqual(image_result.inventory_item_id, updated_item.id)
                 self.assertIsNone(image_result.image_path)
                 self.assertIsNone(image_result.image_content_type)
+
+        self.run_async(scenario())
+
+    def test_inventory_item_purchase_rate_can_be_updated(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                created_item = await create_admin_inventory_item_metadata(
+                    InventoryItemCreatePayload(
+                        name="Chicken Whole",
+                        tamil_name="முழு கோழி",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=1,
+                        category_ids=[],
+                    ),
+                    db,
+                )
+                self.assertEqual(str(created_item.purchase_rate), "0.00")
+
+                updated_item = await patch_admin_inventory_item_purchase_rate(
+                    created_item.id,
+                    InventoryItemPurchaseRateUpdate(purchase_rate=Decimal("285.50")),
+                    db,
+                )
+                self.assertEqual(str(updated_item.purchase_rate), "285.50")
+
+        self.run_async(scenario())
+
+    def test_inventory_item_purchase_rates_can_be_confirmed_for_today(self) -> None:
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                created_item = await create_admin_inventory_item_metadata(
+                    InventoryItemCreatePayload(
+                        name="Mutton Curry Cut",
+                        tamil_name="ஆட்டிறைச் சதை",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        sort_order=2,
+                        category_ids=[],
+                    ),
+                    db,
+                )
+                await patch_admin_inventory_item_purchase_rate(
+                    created_item.id,
+                    InventoryItemPurchaseRateUpdate(purchase_rate=Decimal("640.00")),
+                    db,
+                )
+                yesterday = datetime.now(UTC) - timedelta(days=1)
+                await db.execute(
+                    update(InventoryItem)
+                    .where(InventoryItem.id == created_item.id)
+                    .values(updated_at=yesterday)
+                )
+                await db.commit()
+
+                result = await confirm_admin_inventory_purchase_rates_today(db)
+                self.assertEqual(result.updated_count, 1)
+
+                refreshed = await get_admin_inventory_item(created_item.id, db)
+                self.assertEqual(str(refreshed.purchase_rate), "640.00")
+                self.assertEqual(
+                    refreshed.updated_at.date() if refreshed.updated_at else None,
+                    datetime.now(UTC).date(),
+                )
 
         self.run_async(scenario())
 

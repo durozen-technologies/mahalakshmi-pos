@@ -69,6 +69,7 @@ from .inventory import (
     InventoryCategoryUpdate,
     InventoryItemCounts,
     InventoryItemCreate,
+    InventoryItemPurchaseRateUpdate,
     InventoryItemRead,
     InventoryItemRowsPage,
     InventoryItemStockRead,

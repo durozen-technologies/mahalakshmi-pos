@@ -431,22 +431,29 @@ export function ShopEditorSheet({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.modalBackdrop, { backgroundColor: palette.overlay }]}>
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        style={[styles.centeredModalBackdrop, { backgroundColor: palette.overlay }]}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={styles.centeredKeyboardWrap} pointerEvents="box-none">
           <View
             style={[
-              styles.bottomSheet,
               adminShadow(palette.shadow, 0.16, 18, 24),
               {
+                width: "100%",
+                maxWidth: 540,
+                maxHeight: "86%",
+                borderRadius: 24,
+                borderWidth: 1,
+                padding: 18,
                 backgroundColor: palette.card,
                 borderColor: palette.border,
-                paddingBottom: bottomInset + 16,
               },
             ]}
           >
-            <View style={[styles.sheetHandle, { backgroundColor: palette.border }]} />
             <View style={styles.sheetHeader}>
               <View style={styles.headerTextWrap}>
                 <Text style={[styles.sheetTitle, { color: palette.textPrimary }]}>{isEdit ? "Manage Shop" : "Create Shop"}</Text>
@@ -672,8 +679,8 @@ export function ShopEditorSheet({
               </View>
             )}
           </View>
-        </KeyboardAvoidingView>
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

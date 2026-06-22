@@ -147,6 +147,7 @@ export interface InventoryItemRead {
   base_unit: BaseUnit;
   is_active: boolean;
   sort_order: number;
+  purchase_rate: string;
   billing_item_id?: UUID | null;
   billing_item_ids: UUID[];
   billing_items: InventoryBillingItemMappingRead[];
@@ -173,6 +174,10 @@ export interface InventoryItemCounts {
   all: number;
   active: number;
   paused: number;
+}
+
+export interface InventoryPurchaseRatesConfirmRead {
+  updated_count: number;
 }
 
 export interface InventoryItemImageRead {
@@ -231,6 +236,8 @@ export interface InventoryMovementRead {
   movement_type: InventoryMovementType;
   quantity: string;
   unit: BaseUnit;
+  driver_name?: string | null;
+  vehicle_number?: string | null;
   created_at: string;
 }
 
@@ -242,6 +249,8 @@ export interface InventoryMovementPage {
 
 export interface InventoryAddRequest {
   quantity: string;
+  driver_name: string;
+  vehicle_number: string;
 }
 
 export interface InventoryUseRequest {

@@ -87,11 +87,13 @@ from app.schemas.inventory import (
     InventoryItemCounts,
     InventoryItemCreate,
     InventoryItemImageRead,
+    InventoryItemPurchaseRateUpdate,
     InventoryItemRead,
     InventoryItemRowsPage,
     InventoryItemStockRead,
     InventoryItemUpdate,
     InventoryMovementPage,
+    InventoryPurchaseRatesConfirmRead,
     InventoryStockRowsPage,
     InventorySummaryRead,
     ShopInventoryAllocationBulkCreate,
@@ -166,6 +168,7 @@ from app.services.expenses import (
 )
 from app.services.inventory import (
     allocate_shop_inventory_items,
+    confirm_inventory_purchase_rates_today,
     count_inventory_items,
     create_inventory_category,
     delete_inventory_category,
@@ -177,6 +180,7 @@ from app.services.inventory import (
     list_inventory_movements,
     list_inventory_stock_rows,
     update_inventory_category,
+    update_inventory_item_purchase_rate,
     update_shop_inventory_allocation,
 )
 from app.services.inventory import (
@@ -784,6 +788,32 @@ async def patch_admin_inventory_item_metadata(
     db: DBSession,
 ) -> InventoryItemRead:
     return await update_inventory_management_item(db, item_id, payload)
+
+
+@router.patch(
+    "/inventory/items/{item_id}/purchase-rate",
+    response_model=InventoryItemRead,
+    response_model_exclude_unset=True,
+    summary="Update Inventory Item Purchase Rate",
+)
+async def patch_admin_inventory_item_purchase_rate(
+    item_id: UUID,
+    payload: InventoryItemPurchaseRateUpdate,
+    db: DBSession,
+) -> InventoryItemRead:
+    return await update_inventory_item_purchase_rate(db, item_id, payload)
+
+
+@router.post(
+    "/inventory/items/purchase-rates/confirm-today",
+    response_model=InventoryPurchaseRatesConfirmRead,
+    summary="Confirm Today's Inventory Purchase Rates",
+)
+async def confirm_admin_inventory_purchase_rates_today(
+    db: DBSession,
+) -> InventoryPurchaseRatesConfirmRead:
+    updated_count = await confirm_inventory_purchase_rates_today(db)
+    return InventoryPurchaseRatesConfirmRead(updated_count=updated_count)
 
 
 @router.put(
