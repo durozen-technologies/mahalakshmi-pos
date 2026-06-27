@@ -1278,8 +1278,7 @@ def _stock_item_from_inventory_item(
     """
     base = _inventory_item_to_read(item)
     if available_quantity is None:
-        # ponytail: available stock does not depend on used stock
-        available_quantity = added_quantity
+        available_quantity = added_quantity - used_quantity
 
     category_usage = [
         InventoryCategoryUsageRead(
@@ -1358,7 +1357,7 @@ async def get_inventory_summary(
             allocation=allocations_by_item_id.get(item.id),
             added_quantity=added.get(item.id, ZERO),
             used_quantity=used.get(item.id, ZERO),
-            available_quantity=added.get(item.id, ZERO) - transferred_out.get(item.id, ZERO),
+            available_quantity=added.get(item.id, ZERO) - used.get(item.id, ZERO) - transferred_out.get(item.id, ZERO),
             category_used=category_used,
         )
         for item in items
@@ -1486,8 +1485,8 @@ async def list_inventory_stock_rows(
             added_quantity=added.get(item.id, ZERO),
             # Display: today's usage (resets daily)
             used_quantity=used_today.get(item.id, ZERO),
-            # Availability: does not depend on used stock
-            available_quantity=added.get(item.id, ZERO) - transferred_alltime.get(item.id, ZERO),
+            # Availability: reduced by used_alltime stock
+            available_quantity=added.get(item.id, ZERO) - used_alltime.get(item.id, ZERO) - transferred_alltime.get(item.id, ZERO),
             category_used=category_used_today,
         )
         for item, allocation in page_rows
@@ -1636,8 +1635,8 @@ async def _get_allocated_inventory_item_for_shop(
 
 
 async def _available_quantity_for_item(db: AsyncSession, shop_id: UUID, item_id: UUID) -> Decimal:
-    added, _, _, transferred = await _movement_totals(db, shop_id, [item_id])
-    return added.get(item_id, ZERO) - transferred.get(item_id, ZERO)
+    added, used, _, transferred = await _movement_totals(db, shop_id, [item_id])
+    return added.get(item_id, ZERO) - used.get(item_id, ZERO) - transferred.get(item_id, ZERO)
 
 
 async def _stock_item_for_shop_inventory_item(
@@ -1667,7 +1666,7 @@ async def _stock_item_for_shop_inventory_item(
         allocation=allocation,
         added_quantity=added.get(item.id, ZERO),
         used_quantity=used_display.get(item.id, ZERO),
-        available_quantity=added.get(item.id, ZERO) - transferred_alltime.get(item.id, ZERO),
+        available_quantity=added.get(item.id, ZERO) - used_alltime.get(item.id, ZERO) - transferred_alltime.get(item.id, ZERO),
         category_used=category_used_display,
     )
 
@@ -2027,23 +2026,12 @@ async def admin_set_shop_inventory_stock(
     added, used_alltime, _, transferred_alltime = await _movement_totals(db, shop.id, [item_id])
     _, used_today, _, _ = await _movement_totals(db, shop.id, [item_id], used_since=date.today())
 
-    current_available = added.get(item_id, ZERO) - transferred_alltime.get(item_id, ZERO)
+    current_available = added.get(item_id, ZERO) - used_alltime.get(item.id, ZERO) - transferred_alltime.get(item.id, ZERO)
     current_used_today = used_today.get(item_id, ZERO)
 
     movements_added: list[InventoryMovement] = []
 
-    if payload.available_quantity is not None:
-        target_available = _normalize_nonnegative_quantity(item.base_unit, payload.available_quantity)
-        delta = target_available - current_available
-        if delta != ZERO:
-            # ponytail: adjust available via ADD (positive or negative) without touching used
-            movements_added.append(InventoryMovement(
-                shop_id=shop.id,
-                inventory_item_id=item_id,
-                movement_type=InventoryMovementType.ADD,
-                quantity=delta,
-            ))
-
+    delta_used = ZERO
     if payload.used_quantity is not None:
         target_used = _normalize_nonnegative_quantity(item.base_unit, payload.used_quantity)
         if payload.category_id:
@@ -2052,15 +2040,27 @@ async def admin_set_shop_inventory_stock(
         else:
             current_used = current_used_today
 
-        delta = target_used - current_used
-        if delta != ZERO:
-            # ponytail: adjust used via USE (positive or negative) without touching available
+        delta_used = target_used - current_used
+        if delta_used != ZERO:
+            # ponytail: adjust used via USE (positive or negative)
             movements_added.append(InventoryMovement(
                 shop_id=shop.id,
                 inventory_item_id=item_id,
                 category_id=payload.category_id,
                 movement_type=InventoryMovementType.USE,
-                quantity=delta,
+                quantity=delta_used,
+            ))
+
+    if payload.available_quantity is not None:
+        target_available = _normalize_nonnegative_quantity(item.base_unit, payload.available_quantity)
+        # ponytail: adjust available via ADD (positive or negative), counteracting any delta_used so target is hit exactly
+        delta_available = (target_available - current_available) + delta_used
+        if delta_available != ZERO:
+            movements_added.append(InventoryMovement(
+                shop_id=shop.id,
+                inventory_item_id=item_id,
+                movement_type=InventoryMovementType.ADD,
+                quantity=delta_available,
             ))
 
     for movement in movements_added:
