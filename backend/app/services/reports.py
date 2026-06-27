@@ -1506,10 +1506,7 @@ async def _build_overall_report_statement(
         (_decimal(item.difference_amount) for item in inventory_items.values()),
         Decimal("0"),
     )
-    purchase_amount = sum(
-        (_decimal(item.purchase_amount) for item in inventory_items.values()),
-        Decimal("0"),
-    )
+
     return OverallReportStatement(
         shop_id=shop_id,
         shop_name=shop_name,
@@ -1524,7 +1521,6 @@ async def _build_overall_report_statement(
         difference_amount=difference_amount,
         sales_minus_expense_amount=sales_amount - expense_amount,
         sales_minus_assumption_amount=sales_amount - assumption_amount,
-        purchase_amount=purchase_amount,
         inventory_items=list(inventory_items.values()),
     )
 
