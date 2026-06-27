@@ -2112,7 +2112,6 @@ def _over_report_sheet_rows(
                     else "",
                     _money(billing_row.assumption_amount) if billing_row is not None else "",
                     _money(billing_row.sales_amount) if billing_row is not None else "",
-                    _money(item.purchase_amount) if is_first else "",
                     _money(billing_row.difference_amount) if billing_row is not None else "",
                 ]
             )
