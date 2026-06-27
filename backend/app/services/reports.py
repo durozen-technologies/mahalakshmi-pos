@@ -1684,7 +1684,7 @@ async def _overall_report_inventory_items(
         used_stock = _decimal(row.used_stock)
         transfer_stock = _decimal(row.transfer_stock)
         purchase_rate = _decimal(row.purchase_rate) if row.purchase_rate is not None else None
-        purchase_amount = (adding_stock * purchase_rate) if purchase_rate is not None else Decimal("0")
+        purchase_amount = (used_stock * purchase_rate) if purchase_rate is not None else Decimal("0")
         items[row.inventory_item_id] = OverallReportInventoryItem(
             inventory_item_id=row.inventory_item_id,
             item_name=row.item_name,
