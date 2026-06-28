@@ -71,8 +71,8 @@ const SHOP_CALENDAR_COLORS: CalendarPickerColors = {
   border: "#D8E0D8",
   textPrimary: "#1E2B22",
   textSecondary: "#4B5C50",
-  textMuted: "#64748B",
-  accent: "#4F46E5",
+  textMuted: "#4B6356",
+  accent: "#0F7642",
   accentSoft: "#DDEEE6",
   onAccent: "#FFFFFF",
 };
@@ -131,7 +131,7 @@ function ExpenseRow({
           backgroundColor="#DDEEE6"
           borderColor="#B9DCCB"
           icon="cash-minus"
-          iconColor="#4F46E5"
+          iconColor="#0F7642"
           iconSize={22}
         />
         <View className="min-w-0 flex-1">
@@ -145,7 +145,7 @@ function ExpenseRow({
             {tapToUpdateLabel}
           </Text>
         </View>
-        <MaterialCommunityIcons name="chevron-right" size={22} color="#64748B" />
+        <MaterialCommunityIcons name="chevron-right" size={22} color="#4B6356" />
       </View>
     </Pressable>
   );
@@ -156,7 +156,7 @@ function HistoryRow({ entry }: { entry: ExpenseEntryRead }) {
     <View className="mb-3 rounded-card border border-border bg-card p-4">
       <View className="flex-row items-start gap-3">
         <View className="h-10 w-10 items-center justify-center rounded-[13px] bg-accentSoft">
-          <MaterialCommunityIcons name="receipt-text-clock-outline" size={20} color="#4F46E5" />
+          <MaterialCommunityIcons name="receipt-text-clock-outline" size={20} color="#0F7642" />
         </View>
         <View className="min-w-0 flex-1">
           <View className="flex-row items-start gap-3">
@@ -303,9 +303,9 @@ function ShopHistoryFilterControls({
         <MaterialCommunityIcons
           name={selectedOption.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
           size={20}
-          color="#4F46E5"
+          color="#0F7642"
         />
-        <MaterialCommunityIcons name="chevron-down" size={22} color="#64748B" />
+        <MaterialCommunityIcons name="chevron-down" size={22} color="#4B6356" />
       </Pressable>
 
       {inputForInterval}
@@ -350,12 +350,12 @@ function ShopHistoryFilterControls({
                   <MaterialCommunityIcons
                     name={option.icon as React.ComponentProps<typeof MaterialCommunityIcons>["name"]}
                     size={18}
-                    color={selected ? "#4F46E5" : "#64748B"}
+                    color={selected ? "#0F7642" : "#4B6356"}
                   />
                   <Text className="min-w-0 flex-1 text-sm font-extrabold text-ink" numberOfLines={1}>
                     {option.label}
                   </Text>
-                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#4F46E5" /> : null}
+                  {selected ? <MaterialCommunityIcons name="check" size={18} color="#0F7642" /> : null}
                 </Pressable>
               );
             })}
@@ -394,7 +394,7 @@ function ShopHistoryInput({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#64748B"
+        placeholderTextColor="#4B6356"
         autoCapitalize="none"
         keyboardType="numbers-and-punctuation"
         className="min-h-[46px] rounded-control border border-border bg-background px-3 text-sm font-bold text-ink"
@@ -666,7 +666,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
 
   const renderListFooter = () => (
     <View className="gap-4 pt-2">
-      {loadingMore ? <ActivityIndicator color="#4F46E5" style={styles.footerLoader} /> : null}
+      {loadingMore ? <ActivityIndicator color="#0F7642" style={styles.footerLoader} /> : null}
       <Button
         label={historyOpen ? "Hide history" : "History"}
         onPress={toggleHistory}
@@ -682,7 +682,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
             onChange={setHistoryFilter}
           />
           {historyLoading && historyRows.length === 0 ? (
-            <ActivityIndicator color="#4F46E5" />
+            <ActivityIndicator color="#0F7642" />
           ) : historyRows.length === 0 ? (
             <EmptyState title="No expense history" description="Recorded expense entries will show here." />
           ) : (
@@ -728,7 +728,7 @@ export function ShopExpensesScreen(_: ShopExpensesScreenProps) {
           />
         }
         ListFooterComponent={renderListFooter}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadItems(true)} tintColor="#4F46E5" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadItems(true)} tintColor="#0F7642" />}
         onEndReached={loadMoreItems}
         onEndReachedThreshold={0.45}
         keyboardShouldPersistTaps="handled"

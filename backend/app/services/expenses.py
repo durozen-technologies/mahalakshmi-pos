@@ -11,6 +11,7 @@ from app.schemas.expenses import (
     ExpenseEntryCreate,
     ExpenseEntryPage,
     ExpenseEntryRead,
+    ExpenseEntryUpdate,
     ExpenseItemCounts,
     ExpenseItemCreate,
     ExpenseItemRead,
@@ -652,6 +653,34 @@ async def list_current_shop_expense_items(
     return page
 
 
+def _expense_entry_to_read(
+    *,
+    entry: ExpenseEntry,
+    shop_name: str,
+    item: ExpenseItem,
+) -> ExpenseEntryRead:
+    return ExpenseEntryRead(
+        id=entry.id,
+        shop_id=entry.shop_id,
+        shop_name=shop_name,
+        expense_item_id=entry.expense_item_id,
+        expense_name=entry.expense_name,
+        expense_tamil_name=entry.expense_tamil_name,
+        image_path=build_expense_item_image_path(item.id, item.image_object_key, item.image_content_type),
+        image_thumb_path=build_expense_item_image_thumb_path(
+            item.id,
+            item.image_thumbnail_object_key,
+            item.image_thumbnail_content_type,
+            original_object_key=item.image_object_key,
+        ),
+        image_content_type=item.image_content_type,
+        amount=entry.amount,
+        spent_at=entry.spent_at,
+        note=entry.note,
+        created_at=entry.created_at,
+    )
+
+
 def _date_range_filters(
     range_start_date: date | None,
     range_end_date: date | None,
@@ -702,26 +731,32 @@ async def create_shop_expense_entry(
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
-    return ExpenseEntryRead(
-        id=entry.id,
-        shop_id=shop.id,
-        shop_name=shop.name,
-        expense_item_id=entry.expense_item_id,
-        expense_name=entry.expense_name,
-        expense_tamil_name=entry.expense_tamil_name,
-        image_path=build_expense_item_image_path(item.id, item.image_object_key, item.image_content_type),
-        image_thumb_path=build_expense_item_image_thumb_path(
-            item.id,
-            item.image_thumbnail_object_key,
-            item.image_thumbnail_content_type,
-            original_object_key=item.image_object_key,
-        ),
-        image_content_type=item.image_content_type,
-        amount=entry.amount,
-        spent_at=entry.spent_at,
-        note=entry.note,
-        created_at=entry.created_at,
-    )
+    return _expense_entry_to_read(entry=entry, shop_name=shop.name, item=item)
+
+
+async def update_expense_entry(
+    db: AsyncSession,
+    entry_id: UUID,
+    payload: ExpenseEntryUpdate,
+) -> ExpenseEntryRead:
+    entry = await db.get(ExpenseEntry, entry_id, with_for_update=True)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense entry not found")
+    entry.amount = Decimal(payload.amount).quantize(Decimal("0.01"))
+    entry.spent_at = payload.spent_at
+    entry.note = _normalize_note(payload.note)
+    await db.commit()
+    await db.refresh(entry)
+    row = (
+        await db.execute(
+            select(Shop.name.label("shop_name"), ExpenseItem)
+            .select_from(ExpenseEntry)
+            .join(Shop, Shop.id == ExpenseEntry.shop_id)
+            .join(ExpenseItem, ExpenseItem.id == ExpenseEntry.expense_item_id)
+            .where(ExpenseEntry.id == entry_id)
+        )
+    ).one()
+    return _expense_entry_to_read(entry=entry, shop_name=row.shop_name, item=row.ExpenseItem)
 
 
 async def list_expense_entries(
@@ -767,29 +802,10 @@ async def list_expense_entries(
     ).all()
     page_rows = rows[:limit]
     items = [
-        ExpenseEntryRead(
-            id=row.ExpenseEntry.id,
-            shop_id=row.ExpenseEntry.shop_id,
+        _expense_entry_to_read(
+            entry=row.ExpenseEntry,
             shop_name=row.shop_name,
-            expense_item_id=row.ExpenseEntry.expense_item_id,
-            expense_name=row.ExpenseEntry.expense_name,
-            expense_tamil_name=row.ExpenseEntry.expense_tamil_name,
-            image_path=build_expense_item_image_path(
-                row.ExpenseItem.id,
-                row.ExpenseItem.image_object_key,
-                row.ExpenseItem.image_content_type,
-            ),
-            image_thumb_path=build_expense_item_image_thumb_path(
-                row.ExpenseItem.id,
-                row.ExpenseItem.image_thumbnail_object_key,
-                row.ExpenseItem.image_thumbnail_content_type,
-                original_object_key=row.ExpenseItem.image_object_key,
-            ),
-            image_content_type=row.ExpenseItem.image_content_type,
-            amount=row.ExpenseEntry.amount,
-            spent_at=row.ExpenseEntry.spent_at,
-            note=row.ExpenseEntry.note,
-            created_at=row.ExpenseEntry.created_at,
+            item=row.ExpenseItem,
         )
         for row in page_rows
     ]

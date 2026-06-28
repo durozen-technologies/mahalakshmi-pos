@@ -72,7 +72,7 @@ type MovementHistoryParams = {
   range_end_date: string | null;
 };
 type MaterialIconName = ComponentProps<typeof MaterialCommunityIcons>["name"];
-const HISTORY_BUTTON_GREEN = "#4F46E5";
+const HISTORY_BUTTON_GREEN = "#0F7642";
 const SHOP_INVENTORY_PAGE_SIZE = 50;
 
 type InventoryCursor = {
@@ -697,7 +697,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
             borderRadius={14}
             backgroundColor="#F4F7F2"
             icon="warehouse"
-            iconColor="#64748B"
+            iconColor="#4B6356"
           />
           <View className="min-w-0 flex-1">
             <Text className="text-base font-extrabold text-ink" numberOfLines={2}>{itemName}</Text>

@@ -109,7 +109,7 @@ const CatalogueDropdown = memo(function CatalogueDropdown({
         className="rounded-card border border-border bg-card px-4 py-3"
       >
         <View className="flex-row items-center gap-3">
-          <MaterialCommunityIcons name="filter-variant" size={20} color="#64748B" />
+          <MaterialCommunityIcons name="filter-variant" size={20} color="#4B6356" />
 
           <View className="min-w-0 flex-1">
             <Text className="text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -127,7 +127,7 @@ const CatalogueDropdown = memo(function CatalogueDropdown({
           <MaterialCommunityIcons
             name={open ? "chevron-up" : "chevron-down"}
             size={22}
-            color="#64748B"
+            color="#4B6356"
           />
         </View>
       </Pressable>
@@ -155,7 +155,7 @@ const CatalogueDropdown = memo(function CatalogueDropdown({
                 <MaterialCommunityIcons
                   name={optionIcon}
                   size={18}
-                  color={selected ? "#4F46E5" : "#64748B"}
+                  color={selected ? "#0F7642" : "#4B6356"}
                 />
                 <Text
                   className={cn(
@@ -207,9 +207,9 @@ const ProductCard = memo(
                 recyclingKey={item.item_id}
                 size={108}
                 borderRadius={8}
-                backgroundColor="#E2E8F0"
+                backgroundColor="#E6EFE9"
                 icon="food-drumstick-outline"
-                iconColor="#64748B"
+                iconColor="#4B6356"
                 iconSize={28}
               />
             </View>
@@ -218,7 +218,7 @@ const ProductCard = memo(
               className="w-[108px] items-center justify-center rounded-control border border-dashed border-border bg-surface"
               style={{ aspectRatio: 1 }}
             >
-              <MaterialCommunityIcons name="food-drumstick-outline" size={28} color="#64748B" />
+              <MaterialCommunityIcons name="food-drumstick-outline" size={28} color="#4B6356" />
             </View>
           )}
 
@@ -776,8 +776,8 @@ export function BillingScreen({
             <RefreshControl
               refreshing={loading}
               onRefresh={handleRefreshBilling}
-              tintColor="#147D52"
-              colors={["#147D52"]}
+              tintColor="#0F7642"
+              colors={["#0F7642"]}
             />
           }
           contentContainerStyle={{

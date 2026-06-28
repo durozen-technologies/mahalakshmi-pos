@@ -36,6 +36,7 @@ import {
   fetchShopExpenseItemCandidateRows,
   fetchShopExpenseItemRows,
   replaceExpenseItemImageFile,
+  updateAdminExpenseEntry,
   updateExpenseItem,
   updateShopExpenseAllocation,
   type ExpenseItemImageUploadFile,
@@ -229,6 +230,34 @@ function mergeById<T extends { id: UUID }>(current: T[], nextRows: T[]) {
 
 function formatCount(value: number, label: string) {
   return `${value} ${label}${value === 1 ? "" : "s"}`;
+}
+
+function isValidExpenseAmount(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return false;
+  }
+  return Number(trimmed) > 0;
+}
+
+function entrySpentAtDateValue(spentAt: string) {
+  return toDateInputValue(new Date(spentAt));
+}
+
+function entrySpentAtTimeValue(spentAt: string) {
+  const date = new Date(spentAt);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function buildSpentAtPayload(dateValue: string, timeValue: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
+  const hours = match ? match[1] : "00";
+  const minutes = match ? match[2] : "00";
+  const parsed = new Date(`${dateValue}T${hours}:${minutes}:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
 }
 
 function parseExpenseLocalDateValue(value: string) {
@@ -1280,9 +1309,13 @@ function AllocationRow({
 function HistoryRow({
   entry,
   palette,
+  onEdit,
+  busy = false,
 }: {
   entry: ExpenseEntryRead;
   palette: ReturnType<typeof useAdminTheme>["palette"];
+  onEdit: (entry: ExpenseEntryRead) => void;
+  busy?: boolean;
 }) {
   const imageUri = getItemThumbnailUri(entry);
   return (
@@ -1309,6 +1342,15 @@ function HistoryRow({
         <Text numberOfLines={1} style={[styles.rowMeta, { color: palette.textMuted }]}>
           {formatDateTime(entry.spent_at)}{entry.note ? ` · ${entry.note}` : ""}
         </Text>
+      </View>
+      <View style={styles.historyRowAction}>
+        <IconButton
+          label="Edit expense history entry"
+          icon="pencil-outline"
+          tone={palette.cash}
+          loading={busy}
+          onPress={() => onEdit(entry)}
+        />
       </View>
     </View>
   );
@@ -1355,6 +1397,14 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
   });
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyEditorOpen, setHistoryEditorOpen] = useState(false);
+  const [editingHistoryEntry, setEditingHistoryEntry] = useState<ExpenseEntryRead | null>(null);
+  const [historyAmountDraft, setHistoryAmountDraft] = useState("");
+  const [historyDateDraft, setHistoryDateDraft] = useState("");
+  const [historyTimeDraft, setHistoryTimeDraft] = useState("");
+  const [historyNoteDraft, setHistoryNoteDraft] = useState("");
+  const [savingHistoryEntry, setSavingHistoryEntry] = useState(false);
+  const [historyBusyId, setHistoryBusyId] = useState<UUID | null>(null);
 
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1610,6 +1660,62 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
     setImageStatus(null);
     setEditorOpen(false);
   }, [imageDraft, savingItem]);
+
+  const openHistoryEditor = useCallback((entry: ExpenseEntryRead) => {
+    setEditingHistoryEntry(entry);
+    setHistoryAmountDraft(entry.amount);
+    setHistoryDateDraft(entrySpentAtDateValue(entry.spent_at));
+    setHistoryTimeDraft(entrySpentAtTimeValue(entry.spent_at));
+    setHistoryNoteDraft(entry.note ?? "");
+    setHistoryEditorOpen(true);
+  }, []);
+
+  const closeHistoryEditor = useCallback(() => {
+    if (savingHistoryEntry) {
+      return;
+    }
+    setHistoryEditorOpen(false);
+    setEditingHistoryEntry(null);
+  }, [savingHistoryEntry]);
+
+  const saveHistoryEntry = useCallback(async () => {
+    if (!editingHistoryEntry) {
+      return;
+    }
+    if (!isValidExpenseAmount(historyAmountDraft)) {
+      Alert.alert("Check amount", "Enter a valid rupee amount with up to 2 decimals.");
+      return;
+    }
+    const spentAt = buildSpentAtPayload(historyDateDraft, historyTimeDraft);
+    if (!spentAt) {
+      Alert.alert("Check date", "Enter a valid spent date and time.");
+      return;
+    }
+    setSavingHistoryEntry(true);
+    setHistoryBusyId(editingHistoryEntry.id);
+    try {
+      await updateAdminExpenseEntry(editingHistoryEntry.id, {
+        amount: Number(historyAmountDraft).toFixed(2),
+        spent_at: spentAt,
+        note: historyNoteDraft.trim() || null,
+      });
+      setHistoryEditorOpen(false);
+      setEditingHistoryEntry(null);
+      await loadHistory();
+    } catch (error) {
+      Alert.alert("Save failed", toApiError(error).message || "Unable to save expense history entry.");
+    } finally {
+      setSavingHistoryEntry(false);
+      setHistoryBusyId(null);
+    }
+  }, [
+    editingHistoryEntry,
+    historyAmountDraft,
+    historyDateDraft,
+    historyNoteDraft,
+    historyTimeDraft,
+    loadHistory,
+  ]);
 
   const hasStoredImage = Boolean(editingItem?.image_path || editingItem?.image_thumb_path);
   const currentImageUri = removeImageRequested
@@ -2053,7 +2159,14 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
       <FlatList
         data={historyRows}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <HistoryRow entry={item} palette={palette} />}
+        renderItem={({ item }) => (
+          <HistoryRow
+            entry={item}
+            palette={palette}
+            onEdit={openHistoryEditor}
+            busy={historyBusyId === item.id}
+          />
+        )}
         ListHeaderComponent={<>{renderHeader()}{historyHeader()}</>}
         ListEmptyComponent={<AdminEmptyState title="No expense history" description="Shop entries will appear here after they record expenses." palette={palette} />}
         ListFooterComponent={historyLoadingMore ? <ActivityIndicator color={palette.cash} style={styles.footerLoader} /> : null}
@@ -2218,6 +2331,97 @@ export function AdminExpensesScreen({ navigation, route }: AdminExpensesScreenPr
                   tone="success"
                   active
                   onPress={saveExpenseItem}
+                />
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={historyEditorOpen}
+        animationType="fade"
+        transparent
+        statusBarTranslucent
+        onRequestClose={closeHistoryEditor}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+          style={[styles.centeredModalBackdrop, { backgroundColor: palette.overlay }]}
+        >
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeHistoryEditor} />
+          <View style={styles.centeredKeyboardWrap} pointerEvents="box-none">
+            <View
+              style={[
+                styles.modalCard,
+                adminElevation(3),
+                { backgroundColor: palette.card },
+              ]}
+            >
+              <View style={styles.modalHeader}>
+                <View style={styles.rowBody}>
+                  <Text style={[styles.modalTitle, { color: palette.textPrimary }]}>Edit expense entry</Text>
+                  {editingHistoryEntry ? (
+                    <Text numberOfLines={2} style={[styles.rowMeta, { color: palette.textMuted }]}>
+                      {editingHistoryEntry.shop_name} · {editingHistoryEntry.expense_name}
+                    </Text>
+                  ) : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close expense history editor"
+                  onPress={closeHistoryEditor}
+                  style={[styles.modalCloseButton, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={palette.textPrimary} />
+                </Pressable>
+              </View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.modalScrollContent}
+              >
+                <AdminTextField
+                  label="Amount"
+                  value={historyAmountDraft}
+                  onChangeText={setHistoryAmountDraft}
+                  placeholder="0.00"
+                  palette={palette}
+                  keyboardType="decimal-pad"
+                />
+                <AdminTextField
+                  label="Spent date"
+                  value={historyDateDraft}
+                  onChangeText={setHistoryDateDraft}
+                  placeholder="YYYY-MM-DD"
+                  palette={palette}
+                />
+                <AdminTextField
+                  label="Spent time"
+                  value={historyTimeDraft}
+                  onChangeText={setHistoryTimeDraft}
+                  placeholder="HH:MM"
+                  palette={palette}
+                />
+                <AdminTextField
+                  label="Note"
+                  value={historyNoteDraft}
+                  onChangeText={setHistoryNoteDraft}
+                  placeholder="Optional note"
+                  palette={palette}
+                />
+              </ScrollView>
+              <View style={styles.modalActions}>
+                <ActionButton label="Cancel" icon="close" palette={palette} tone="warning" onPress={closeHistoryEditor} />
+                <ActionButton
+                  label="Save changes"
+                  icon="content-save-outline"
+                  palette={palette}
+                  tone="success"
+                  active
+                  disabled={savingHistoryEntry}
+                  onPress={saveHistoryEntry}
                 />
               </View>
             </View>
@@ -2452,6 +2656,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
+  },
+  historyRowAction: {
+    alignSelf: "center",
+    flexShrink: 0,
   },
   expenseItemCard: {
     borderRadius: 12,

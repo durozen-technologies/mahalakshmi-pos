@@ -5,11 +5,11 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        background: "#F1F5F9",
-        ink: "#0B0B0B",
-        accent: "#4F46E5",
-        accentDeep: "#4338CA",
-        accentSoft: "#E0E7FF",
+        background: "#F2F7F4", // Tinted neutral green
+        ink: "#0A110D", // Deep green ink
+        accent: "#0F7642", // Primary green
+        accentDeep: "#0A5C32", // Strong green
+        accentSoft: "#D7F0E0", // Soft green wash
         success: "#16A34A",
         successSoft: "#DCFCE7",
         warning: "#D97706",
@@ -17,9 +17,9 @@ module.exports = {
         danger: "#DC2626",
         dangerSoft: "#FEE2E2",
         card: "#FFFFFF",
-        muted: "#64748B",
-        border: "#CBD5E1",
-        surface: "#E2E8F0",
+        muted: "#4B6356", // Muted green text
+        border: "#B4C7BC", // Tinted green border
+        surface: "#E6EFE9", // Elevated green surface
       },
       borderRadius: {
         control: "8px",

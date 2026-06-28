@@ -71,9 +71,9 @@ const C = {
   manualPurpleBg: "#EDE9FE",
   surface: "#F7FAF8",
   card: "#FFFFFF",
-  border: "#E2E8F0",
+  border: "#E6EFE9",
   ink: "#0F172A",
-  muted: "#64748B",
+  muted: "#4B6356",
   mutedLight: "#94A3B8",
   white: "#FFFFFF",
 };

@@ -80,6 +80,7 @@ from app.routers.admin import (
     shop_daily_prices,
     shop_daily_prices_partial,
     shop_prices_bootstrap,
+    update_admin_expense_entry,
     update_admin_expense_item,
     update_admin_item_category,
     update_inventory_item,
@@ -124,6 +125,7 @@ from app.schemas.billing import (
 )
 from app.schemas.expenses import (
     ExpenseEntryCreate,
+    ExpenseEntryUpdate,
     ExpenseItemCreate,
     ExpenseItemUpdate,
     ShopExpenseAllocationBulkCreate,
@@ -1074,6 +1076,22 @@ class BackendApiIntegrationTests(BackendTestCase):
                 self.assertEqual([item.id for item in admin_history.items], [entry.id, older_entry.id])
                 self.assertEqual(admin_history.items[0].note, "Tea purchase")
                 self.assertEqual(admin_history.total_amount, Decimal("143.45"))
+
+                updated_entry = await update_admin_expense_entry(
+                    entry.id,
+                    ExpenseEntryUpdate(
+                        amount=Decimal("150.00"),
+                        spent_at=datetime(2026, 1, 15, 11, 0, tzinfo=UTC),
+                        note="Corrected tea purchase",
+                    ),
+                    db,
+                )
+                self.assertEqual(updated_entry.amount, Decimal("150.00"))
+                self.assertEqual(updated_entry.note, "Corrected tea purchase")
+
+                corrected_history = await get_expense_history(db, shop_id=current_shop.id, limit=10)
+                self.assertEqual(corrected_history.items[0].id, entry.id)
+                self.assertEqual(corrected_history.total_amount, Decimal("170.00"))
 
         self.run_async(scenario())
 

@@ -22,7 +22,7 @@ export function TextField({ label, error, suffix, className, ...props }: TextFie
       >
         <TextInput
           className={cn("flex-1 text-base text-ink", className)}
-          placeholderTextColor="#64748B"
+          placeholderTextColor="#4B6356"
           {...props}
         />
         {suffix ? <Text className="text-xs font-semibold text-muted">{suffix}</Text> : null}

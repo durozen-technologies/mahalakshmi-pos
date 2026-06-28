@@ -393,6 +393,12 @@ export interface ExpenseEntryCreate {
   note?: string | null;
 }
 
+export interface ExpenseEntryUpdate {
+  amount: string;
+  spent_at: string;
+  note?: string | null;
+}
+
 export interface ExpenseEntryRead {
   id: UUID;
   shop_id: UUID;

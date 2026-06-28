@@ -5,7 +5,7 @@ export const appTheme = {
   border: "#D7DECF",
   text: "#1E2B22",
   muted: "#657366",
-  accent: "#147D52",
+  accent: "#0F7642",
   accentDeep: "#0F5E3E",
   accentSoft: "#DDEEE6",
   success: "#2F6547",

@@ -50,9 +50,9 @@ export const ShopHeaderActions = memo(function ShopHeaderActions({
           }`}
         >
           {refreshing ? (
-            <ActivityIndicator size="small" color="#4F46E5" />
+            <ActivityIndicator size="small" color="#0F7642" />
           ) : (
-            <MaterialCommunityIcons name="sync" size={18} color="#4F46E5" />
+            <MaterialCommunityIcons name="sync" size={18} color="#0F7642" />
           )}
         </Pressable>
       ) : null}
@@ -71,7 +71,7 @@ export const ShopHeaderActions = memo(function ShopHeaderActions({
         onPress={() => setMenuOpen(true)}
         className="min-h-10 min-w-[70px] flex-row items-center justify-center gap-1 rounded-control border border-border bg-card px-2.5"
       >
-        <MaterialCommunityIcons name="menu" size={18} color="#4F46E5" />
+        <MaterialCommunityIcons name="menu" size={18} color="#0F7642" />
         <Text className="text-[11px] font-semibold leading-6 text-ink">Menu</Text>
       </Pressable>
 
@@ -123,9 +123,9 @@ function MenuItem({
       onPress={onPress}
       className="min-h-12 flex-row items-center gap-4 border-b border-border/70 px-4"
     >
-      <MaterialCommunityIcons name={icon} size={22} color="#4F46E5" />
+      <MaterialCommunityIcons name={icon} size={22} color="#0F7642" />
       <Text className="flex-1 text-base font-semibold text-ink">{label}</Text>
-      <MaterialCommunityIcons name="chevron-right" size={22} color="#64748B" />
+      <MaterialCommunityIcons name="chevron-right" size={22} color="#4B6356" />
     </Pressable>
   );
 }

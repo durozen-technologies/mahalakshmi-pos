@@ -14,7 +14,7 @@ type EmptyStateProps = {
 export function EmptyState({ title, description, actionLabel, onAction }: EmptyStateProps) {
   return (
     <Card className="items-center gap-4 border-dashed py-8">
-      <MaterialCommunityIcons name="clipboard-text-outline" size={28} color="#64748B" />
+      <MaterialCommunityIcons name="clipboard-text-outline" size={28} color="#4B6356" />
       <View className="items-center gap-2">
         <Text className="text-base font-semibold text-ink">{title}</Text>
         <Text className="max-w-[320px] text-center text-sm leading-5 text-muted">{description}</Text>

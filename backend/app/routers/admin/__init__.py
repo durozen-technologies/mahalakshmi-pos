@@ -87,6 +87,7 @@ from app.routers.admin.expenses import (  # noqa: E402, F401
     get_expense_items,
     get_shop_expense_item_candidates,
     get_shop_expense_items,
+    update_admin_expense_entry,
     update_admin_expense_item,
     update_shop_expense,
     update_shop_expense_order,

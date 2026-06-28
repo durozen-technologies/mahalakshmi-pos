@@ -255,6 +255,20 @@ async def update_shop_expense_order(
     return await update_shop_expense_items_order(db, shop, payload.expense_item_ids)
 
 
+@router.patch(
+    "/expenses/history/{entry_id}",
+    response_model=ExpenseEntryRead,
+    response_model_exclude_unset=True,
+    summary="Update Expense History Entry",
+)
+async def update_admin_expense_entry(
+    entry_id: UUID,
+    payload: ExpenseEntryUpdate,
+    db: DBSession,
+) -> ExpenseEntryRead:
+    return await update_expense_entry(db, entry_id, payload)
+
+
 @router.get(
     "/expenses/history",
     response_model=ExpenseEntryPage,

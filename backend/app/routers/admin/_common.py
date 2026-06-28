@@ -60,6 +60,8 @@ from app.schemas.admin import (
 from app.schemas.billing import BillDetailBatchRequest, BillRead
 from app.schemas.expenses import (
     ExpenseEntryPage,
+    ExpenseEntryRead,
+    ExpenseEntryUpdate,
     ExpenseItemCounts,
     ExpenseItemCreate,
     ExpenseItemRead,
@@ -163,6 +165,7 @@ from app.services.expenses import (
     list_shop_expense_candidate_rows,
     list_shop_expense_item_rows,
     remove_expense_item_image,
+    update_expense_entry,
     update_expense_item,
     update_shop_expense_allocation,
     update_shop_expense_items_order,

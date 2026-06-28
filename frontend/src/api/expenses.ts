@@ -5,6 +5,7 @@ import type {
   ExpenseEntryCreate,
   ExpenseEntryPage,
   ExpenseEntryRead,
+  ExpenseEntryUpdate,
   ExpenseItemCounts,
   ExpenseItemCreate,
   ExpenseItemRead,
@@ -270,6 +271,14 @@ export async function fetchAdminExpenseHistory(
     params: historyParams(params),
     signal: options.signal,
   });
+  return data;
+}
+
+export async function updateAdminExpenseEntry(entryId: UUID, payload: ExpenseEntryUpdate) {
+  const { data } = await apiClient.patch<ExpenseEntryRead>(
+    `/api/v1/admin/expenses/history/${entryId}`,
+    payload,
+  );
   return data;
 }
 
