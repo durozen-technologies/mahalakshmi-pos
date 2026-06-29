@@ -2,6 +2,7 @@ import logging
 
 from .database import get_engine, get_session_local
 from .schema_guards import (
+    _ensure_inventory_vehicle_number_column,
     _ensure_item_category_schema,
     _ensure_item_image_columns,
     _ensure_uuid_identifier_columns,
@@ -31,6 +32,7 @@ async def run_database_startup_tasks() -> None:
 
     async with get_engine().begin() as conn:
         await conn.run_sync(_ensure_item_category_schema)
+        await conn.run_sync(_ensure_inventory_vehicle_number_column)
         await conn.run_sync(_ensure_item_image_columns)
         await conn.run_sync(_ensure_uuid_identifier_columns)
     async with get_session_local()() as db:

@@ -8,9 +8,10 @@ type TextFieldProps = ComponentProps<typeof TextInput> & {
   error?: string;
   suffix?: string;
   className?: string;
+  containerClassName?: string;
 };
 
-export function TextField({ label, error, suffix, className, ...props }: TextFieldProps) {
+export function TextField({ label, error, suffix, className, containerClassName, ...props }: TextFieldProps) {
   return (
     <View className="gap-2">
       <Text className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</Text>
@@ -18,6 +19,7 @@ export function TextField({ label, error, suffix, className, ...props }: TextFie
         className={cn(
           "min-h-12 flex-row items-center rounded-control border px-4 border-border bg-surface",
           error && "border-danger",
+          containerClassName,
         )}
       >
         <TextInput

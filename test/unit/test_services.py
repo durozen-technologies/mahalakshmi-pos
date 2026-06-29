@@ -1632,6 +1632,64 @@ class ServiceUnitTests(BackendTestCase):
 
         self.run_async(scenario())
 
+    def test_inventory_add_stock_persists_full_vehicle_number(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+        long_vehicle = "Ashok Leyland Dost TN-38-AZ-1234 Extra Long Vehicle Description"
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Vehicle History")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Vehicle Stock",
+                        tamil_name="வாகன சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [item.id])
+
+                result = await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(
+                        quantity=Decimal("3"),
+                        driver_name="Test Driver",
+                        vehicle_number=long_vehicle,
+                    ),
+                )
+                page = await list_inventory_movements(db, shop_id=current_shop.id, item_id=item.id, limit=10)
+
+                self.assertEqual(result.movement.vehicle_number, long_vehicle)
+                self.assertEqual(page.items[0].vehicle_number, long_vehicle)
+
+        self.run_async(scenario())
+
+    def test_inventory_add_request_rejects_single_character_vehicle_number(self) -> None:
+        with self.assertRaises(ValidationError):
+            InventoryAddRequest(
+                quantity=Decimal("3"),
+                driver_name="Test Driver",
+                vehicle_number=" T ",
+            )
+
+    def test_inventory_add_request_normalizes_vehicle_number_whitespace(self) -> None:
+        payload = InventoryAddRequest(
+            quantity=Decimal("3"),
+            driver_name="  Test   Driver  ",
+            vehicle_number=" TN 38   AZ 1234 ",
+        )
+
+        self.assertEqual(payload.driver_name, "Test Driver")
+        self.assertEqual(payload.vehicle_number, "TN 38 AZ 1234")
+
     def test_inventory_item_rows_page_and_counts(self) -> None:
         async def scenario() -> None:
             with self.harness.session_factory() as session:

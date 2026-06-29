@@ -133,6 +133,8 @@ type SectionHintProps = {
   style?: StyleProp<ViewStyle>;
 };
 
+export type ActionTone = "primary" | "neutral" | "danger" | "success" | "warning" | "info";
+
 export function usePressAnimation(disabled = false) {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
@@ -814,6 +816,137 @@ export const TopAppBar = memo(function TopAppBar({
   );
 });
 
+export const ActionButton = memo(function ActionButton({
+  label,
+  icon,
+  palette,
+  tone = "neutral",
+  active = false,
+  danger = false,
+  loading = false,
+  disabled = false,
+  onPress,
+  compact = false,
+}: {
+  label: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  palette: ThemePalette;
+  tone?: ActionTone;
+  active?: boolean;
+  danger?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  compact?: boolean;
+}) {
+  let fg = disabled ? palette.textMuted : danger ? palette.danger : active ? palette.onPrimary : palette.textPrimary;
+  let bg = disabled ? palette.surfaceMuted : danger ? palette.dangerSoft : active ? palette.primary : palette.card;
+  let border = disabled ? palette.border : danger ? palette.danger : active ? palette.primary : palette.border;
+
+  if (tone === "danger") {
+    fg = palette.danger;
+    bg = active ? palette.dangerSoft : palette.card;
+    border = palette.danger;
+  } else if (tone === "success") {
+    fg = active ? palette.onPrimary : palette.success;
+    bg = active ? palette.success : palette.successSoft;
+    border = palette.success;
+  } else if (tone === "warning") {
+    fg = active ? palette.onCash : palette.warning;
+    bg = active ? palette.cash : palette.warningSoft;
+    border = palette.warning;
+  } else if (tone === "info") {
+    fg = active ? palette.onPrimary : palette.primaryStrong;
+    bg = active ? palette.primary : palette.primarySoft;
+    border = palette.primaryStrong;
+  } else if (tone === "primary") {
+    fg = active ? palette.onPrimary : palette.primaryStrong;
+    bg = active ? palette.primary : palette.primarySoft;
+    border = palette.primary;
+  }
+
+  const { scale, opacity, onPressIn, onPressOut } = usePressAnimation(disabled || loading);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || loading }}
+      disabled={disabled || loading}
+      onPress={() => {
+        if (!disabled && !loading) {
+          triggerHaptic(Haptics.ImpactFeedbackStyle.Light);
+          onPress();
+        }
+      }}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+    >
+      <Animated.View
+        style={[
+          styles.actionButton,
+          compact && styles.actionButtonCompact,
+          { borderColor: border, backgroundColor: bg, opacity: loading || disabled ? 0.65 : opacity, transform: [{ scale }] },
+        ]}
+      >
+        {icon ? <MaterialCommunityIcons name={icon} size={compact ? 14 : 16} color={fg} /> : null}
+        <Text numberOfLines={1} style={[styles.actionText, compact && styles.actionTextCompact, { color: fg }]}>
+          {loading ? "..." : label}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  );
+});
+
+export const IconButton = memo(function IconButton({
+  icon,
+  label,
+  palette,
+  tone,
+  danger = false,
+  disabled = false,
+  onPress,
+}: {
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  label: string;
+  palette: ThemePalette;
+  tone?: ActionTone;
+  danger?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  let fg = disabled ? palette.textMuted : danger ? palette.danger : palette.textMuted;
+  if (!danger && !disabled && tone) {
+    if (tone === "danger") fg = palette.danger;
+    else if (tone === "success") fg = palette.success;
+    else if (tone === "warning") fg = palette.warning;
+    else if (tone === "info") fg = palette.primaryStrong;
+    else if (tone === "primary") fg = palette.primary;
+  }
+
+  const { scale, opacity, onPressIn, onPressOut } = usePressAnimation(disabled);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => {
+        if (!disabled) {
+          triggerHaptic(Haptics.ImpactFeedbackStyle.Light);
+          onPress();
+        }
+      }}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+    >
+      <Animated.View style={[styles.iconButton, { opacity: disabled ? 0.5 : opacity, transform: [{ scale }] }]}>
+        <MaterialCommunityIcons name={icon} size={19} color={fg} />
+      </Animated.View>
+    </Pressable>
+  );
+});
+
 function TopAppBarIconRow({ onPress, label, children, palette, isPeriod }: { onPress: () => void; label: string; children: React.ReactNode; palette: ThemePalette; isPeriod: boolean }) {
   const { scale, opacity, onPressIn, onPressOut } = usePressAnimation();
   return (
@@ -914,14 +1047,14 @@ const styles = StyleSheet.create({
     ...adminTypography.body,
   },
   chipButton: {
-    minHeight: 36,
+    minHeight: 44,
     borderRadius: adminRadii.pill,
     borderWidth: 1,
-    paddingHorizontal: adminSpacing.sm,
-    paddingVertical: adminSpacing.xxs + 3,
+    paddingHorizontal: adminSpacing.md,
+    paddingVertical: adminSpacing.xs,
     flexDirection: "row",
     alignItems: "center",
-    gap: adminSpacing.xxs + 1,
+    gap: adminSpacing.xs,
   },
   chipText: adminTypography.bodyStrong,
   buttonBase: {
@@ -1105,5 +1238,34 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: adminRadii.pill,
+  },
+  actionButton: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  actionButtonCompact: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    gap: 6,
+    borderRadius: 6,
+  },
+  actionText: {
+    ...adminTypography.bodyStrong,
+    fontSize: 13,
+  },
+  actionTextCompact: {
+    fontSize: 12,
+  },
+  iconButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

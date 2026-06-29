@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -36,10 +36,6 @@ import {
   updateShopInventoryAllocation,
   adminSetShopInventoryStock,
 } from "@/api/admin";
-import {
-  fetchAdminInventoryBackdatePolicy,
-  updateAdminInventoryBackdatePolicy,
-} from "@/api/inventory";
 import { isApiRequestCanceled, toApiError } from "@/api/client";
 import {
   CalendarDateField,
@@ -52,7 +48,6 @@ import {
   BaseUnit,
   InventoryMovementType,
   type InventoryCategoryRead,
-  type InventoryBackdatePolicyRead,
   type InventoryItemRead,
   type InventoryItemStockRead,
   type InventoryMovementRead,
@@ -65,6 +60,7 @@ import { getItemThumbnailUri } from "@/utils/item-images";
 
 import type { ThemePalette } from "./admin-dashboard-theme";
 import { triggerHaptic } from "./admin-dashboard-utils";
+import { ActionButton, IconButton, EmptyStateCard, SearchField } from "./components/admin-dashboard-primitives";
 import { AdminHeaderActions } from "./components/admin-header-actions";
 import { AdminTransferShopsTab } from "./components/admin-transfer-shops-tab";
 import { useAdminTheme } from "./use-admin-theme";
@@ -177,8 +173,6 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const [movementCalendarTarget, setMovementCalendarTarget] = useState<MovementHistoryCalendarTarget | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [backdatePolicy, setBackdatePolicy] = useState<InventoryBackdatePolicyRead | null>(null);
-  const [backdatePolicySaving, setBackdatePolicySaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [itemsLoadingMore, setItemsLoadingMore] = useState(false);
@@ -441,14 +435,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
     }
     setErrorMessage(null);
     try {
-      const [nextCategories, nextShops, nextPolicy] = await Promise.all([
+      const [nextCategories, nextShops] = await Promise.all([
         fetchInventoryCategories(),
         fetchShops(),
-        fetchAdminInventoryBackdatePolicy(),
       ]);
       setCategories(nextCategories);
       setShops(nextShops);
-      setBackdatePolicy(nextPolicy);
       setSelectedShopId((currentShopId) =>
         currentShopId && nextShops.some((shop) => shop.id === currentShopId)
           ? currentShopId
@@ -475,47 +467,6 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       setRefreshing(false);
     }
   }, [loadInventoryRows]);
-
-  const saveBackdatePolicy = useCallback(async (windowDays: number) => {
-    if (!backdatePolicy || backdatePolicySaving) {
-      return;
-    }
-    setBackdatePolicySaving(true);
-    setErrorMessage(null);
-    try {
-      const updated = await updateAdminInventoryBackdatePolicy({
-        allow_shop_backdated_inventory: true,
-        shop_backdate_window_days: windowDays,
-      });
-      setBackdatePolicy(updated);
-    } catch (error) {
-      triggerHaptic();
-      setErrorMessage(getRequestMessage(error, "Unable to update backdate policy."));
-    } finally {
-      setBackdatePolicySaving(false);
-    }
-  }, [backdatePolicy, backdatePolicySaving]);
-
-  const toggleBackdatePolicy = useCallback(async () => {
-    if (!backdatePolicy || backdatePolicySaving) {
-      return;
-    }
-    setBackdatePolicySaving(true);
-    setErrorMessage(null);
-    try {
-      const nextAllowed = !backdatePolicy.allow_shop_backdated_inventory;
-      const updated = await updateAdminInventoryBackdatePolicy({
-        allow_shop_backdated_inventory: nextAllowed,
-        shop_backdate_window_days: nextAllowed ? (backdatePolicy.shop_backdate_window_days ?? 0) : 0,
-      });
-      setBackdatePolicy(updated);
-    } catch (error) {
-      triggerHaptic();
-      setErrorMessage(getRequestMessage(error, "Unable to update backdate policy."));
-    } finally {
-      setBackdatePolicySaving(false);
-    }
-  }, [backdatePolicy, backdatePolicySaving]);
 
   const loadShopData = useCallback(async (shopId: UUID) => {
     stockAbortRef.current?.abort();
@@ -1092,14 +1043,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       {/* Search + Save — only in today mode */}
       {isTodayPurchaseRate && (
         <View style={styles.row}>
-          <View style={[styles.search, { borderColor: palette.border, backgroundColor: palette.card }]}>
-            <MaterialCommunityIcons name="magnify" size={18} color={palette.textMuted} />
-            <TextInput
+          <View style={{ flex: 1 }}>
+            <SearchField
               value={search}
               onChangeText={setSearch}
               placeholder="Search inventory"
-              placeholderTextColor={palette.textMuted}
-              style={[styles.input, { color: palette.textPrimary }]}
+              palette={palette}
             />
           </View>
           <ActionButton
@@ -1146,7 +1095,7 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
               style={[
                 styles.prStatusPill,
                 {
-                  backgroundColor: updatedToday ? palette.inventorySoft : "#fee2e2",
+                  backgroundColor: updatedToday ? palette.inventorySoft : palette.dangerSoft,
                 },
               ]}
             >
@@ -1235,14 +1184,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   const renderCategories = () => (
     <View style={styles.section}>
       <View style={styles.row}>
-        <View style={[styles.search, { borderColor: palette.border, backgroundColor: palette.card }]}>
-          <MaterialCommunityIcons name="shape-plus" size={18} color={palette.textMuted} />
-          <TextInput
+        <View style={{ flex: 1 }}>
+          <SearchField
             value={categoryDraft}
             onChangeText={setCategoryDraft}
             placeholder="New category"
-            placeholderTextColor={palette.textMuted}
-            style={[styles.input, { color: palette.textPrimary }]}
+            palette={palette}
           />
         </View>
         <ActionButton label="Save" icon="content-save-outline" palette={palette} tone="primary" active loading={saving} onPress={() => void saveCategory()} />
@@ -1533,7 +1480,7 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           style={[
             styles.historyButton,
             {
-              backgroundColor: movementHistoryOpen ? "#FFFFFF" : palette.success,
+              backgroundColor: movementHistoryOpen ? palette.card : palette.success,
               borderColor: palette.success,
             },
           ]}
@@ -1541,9 +1488,9 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
           <MaterialCommunityIcons
             name={movementHistoryOpen ? "chevron-up" : "history"}
             size={20}
-            color={movementHistoryOpen ? palette.success : "#FFFFFF"}
+            color={movementHistoryOpen ? palette.success : palette.onPrimary}
           />
-          <Text style={[styles.historyButtonText, { color: movementHistoryOpen ? palette.success : "#FFFFFF" }]}>
+          <Text style={[styles.historyButtonText, { color: movementHistoryOpen ? palette.success : palette.onPrimary }]}>
             {movementHistoryOpen ? "Hide history" : "History"}
           </Text>
         </Pressable>
@@ -1633,6 +1580,23 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
                   <Text style={[styles.itemMeta, { color: palette.textMuted }]}>
                     {movement.movement_type === InventoryMovementType.ADD ? "Added" : `Used for ${movement.category_name ?? "category"}`} · {formatInventoryQuantity(movement.quantity, movement.unit)}
                   </Text>
+                  {movement.movement_type === InventoryMovementType.ADD && (movement.driver_name || movement.vehicle_number) ? (
+                    <View style={styles.movementTransportDetails}>
+                      {movement.driver_name ? (
+                        <Text selectable style={[styles.itemMeta, styles.movementTransportText, { color: palette.textMuted }]}>
+                          Driver: {movement.driver_name.trim()}
+                        </Text>
+                      ) : null}
+                      {movement.vehicle_number ? (
+                        <Text
+                          style={[styles.itemMeta, styles.movementTransportText, { color: palette.textPrimary }]}
+                          textBreakStrategy={Platform.OS === "android" ? "simple" : undefined}
+                        >
+                          Vehicle: {movement.vehicle_number.trim()}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               </View>
             ))
@@ -1669,53 +1633,6 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
       >
         <View style={styles.section}>{renderTabs()}</View>
 
-        <View style={[styles.policyCard, { borderColor: palette.border, backgroundColor: palette.card }]}>
-          <Text style={[styles.policyTitle, { color: palette.textPrimary }]}>Shop backdating</Text>
-          <Text style={[styles.policyCopy, { color: palette.textMuted }]}>
-            Allow branch users to record inventory with a past transaction date.
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void toggleBackdatePolicy()}
-            style={[
-              styles.policyToggle,
-              {
-                borderColor: backdatePolicy?.allow_shop_backdated_inventory ? palette.inventory : palette.border,
-                backgroundColor: backdatePolicy?.allow_shop_backdated_inventory ? palette.inventorySoft : palette.surfaceMuted,
-              },
-            ]}
-          >
-            <Text style={[styles.policyToggleText, { color: palette.textPrimary }]}>
-              {backdatePolicy?.allow_shop_backdated_inventory ? "Enabled for shops" : "Disabled for shops"}
-            </Text>
-          </Pressable>
-          {backdatePolicy?.allow_shop_backdated_inventory ? (
-            <View style={styles.policyChipRow}>
-              {[0, 1, 3, 7, 30].map((days) => {
-                const active = (backdatePolicy.shop_backdate_window_days ?? 0) === days;
-                return (
-                  <Pressable
-                    key={days}
-                    accessibilityRole="button"
-                    onPress={() => void saveBackdatePolicy(days)}
-                    style={[
-                      styles.policyChip,
-                      {
-                        borderColor: active ? palette.inventory : palette.border,
-                        backgroundColor: active ? palette.inventorySoft : palette.surfaceMuted,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.policyChipText, { color: active ? palette.inventoryStrong : palette.textPrimary }]}>
-                      {days === 0 ? "Today" : `${days}d`}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-        </View>
-
         <View style={styles.flex}>
           {errorMessage ? (
             <View style={[styles.errorBox, { borderColor: palette.danger, backgroundColor: palette.dangerSoft }]}>
@@ -1728,14 +1645,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
             <>
               <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
                 <View style={[styles.row, { gap: 12 }]}>
-                  <View style={[styles.search, { flex: 1, borderColor: palette.border, backgroundColor: palette.card }]}>
-                    <MaterialCommunityIcons name="magnify" size={18} color={palette.textMuted} />
-                    <TextInput
+                  <View style={{ flex: 1 }}>
+                    <SearchField
                       value={search}
                       onChangeText={setSearch}
                       placeholder="Search inventory"
-                      placeholderTextColor={palette.textMuted}
-                      style={[styles.input, { color: palette.textPrimary }]}
+                      palette={palette}
                     />
                   </View>
                   <ActionButton label="Add" icon="plus" palette={palette} tone="success" active onPress={openCreateEditor} />
@@ -1754,7 +1669,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
                 ListHeaderComponent={renderItemsHeader}
                 ListEmptyComponent={
                   !itemsLoading ? (
-                    <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
+                    <EmptyStateCard
+                      title="No items found"
+                      subtitle="No inventory items found."
+                      icon="package-variant-closed"
+                      palette={palette}
+                    />
                   ) : null
                 }
                 ListFooterComponent={renderItemsFooter}
@@ -1778,7 +1698,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
               ListHeaderComponent={renderPurchaseRateHeader}
               ListEmptyComponent={
                 !itemsLoading ? (
-                  <Text style={[styles.loadingText, { color: palette.textMuted }]}>No inventory items found.</Text>
+                  <EmptyStateCard
+                    title="No items found"
+                    subtitle="No inventory items found."
+                    icon="package-variant-closed"
+                    palette={palette}
+                  />
                 ) : null
               }
               ListFooterComponent={renderItemsFooter}
@@ -1801,7 +1726,12 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
               ListHeaderComponent={renderShopStockHeader}
               ListEmptyComponent={
                 !stockLoading ? (
-                  <Text style={[styles.loadingText, { color: palette.textMuted }]}>No branch stock rows found.</Text>
+                  <EmptyStateCard
+                    title="No branch stock"
+                    subtitle="No branch stock rows found."
+                    icon="warehouse"
+                    palette={palette}
+                  />
                 ) : null
               }
               ListFooterComponent={renderShopStockFooter}
@@ -1870,97 +1800,6 @@ export function AdminInventoryScreen({ navigation, route }: AdminInventoryScreen
   );
 }
 
-function ActionButton({
-  label,
-  icon,
-  palette,
-  tone,
-  active = false,
-  danger = false,
-  loading = false,
-  disabled = false,
-  onPress,
-}: {
-  label: string;
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
-  palette: ThemePalette;
-  tone?: "primary" | "neutral" | "danger" | "success" | "warning" | "info";
-  active?: boolean;
-  danger?: boolean;
-  loading?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  let fg = disabled ? palette.textMuted : danger ? palette.danger : active ? palette.onPrimary : palette.textPrimary;
-  let bg = disabled ? palette.surfaceMuted : danger ? palette.dangerSoft : active ? palette.inventory : palette.card;
-  let border = disabled ? palette.border : danger ? palette.danger : active ? palette.inventory : palette.border;
-
-  if (tone === "danger") {
-    fg = palette.danger;
-    bg = active ? palette.dangerSoft : palette.card;
-    border = palette.danger;
-  } else if (tone === "success") {
-    fg = active ? palette.onPrimary : palette.success;
-    bg = active ? palette.success : palette.successSoft;
-    border = palette.success;
-  } else if (tone === "warning") {
-    fg = active ? palette.onCash : palette.warning;
-    bg = active ? palette.cash : palette.warningSoft;
-    border = palette.warning;
-  } else if (tone === "info") {
-    fg = active ? palette.onPrimary : palette.primaryStrong;
-    bg = active ? palette.primary : palette.primarySoft;
-    border = palette.primaryStrong;
-  } else if (tone === "primary") {
-    fg = active ? palette.onPrimary : palette.primaryStrong;
-    bg = active ? palette.primary : palette.primarySoft;
-    border = palette.primary;
-  }
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: disabled || loading }}
-      disabled={disabled || loading}
-      onPress={onPress}
-      style={[styles.actionButton, { borderColor: border, backgroundColor: bg, opacity: loading ? 0.65 : 1 }]}
-    >
-      <MaterialCommunityIcons name={icon} size={16} color={fg} />
-      <Text numberOfLines={1} style={[styles.actionText, { color: fg }]}>{loading ? "..." : label}</Text>
-    </Pressable>
-  );
-}
-
-function IconButton({
-  icon,
-  label,
-  palette,
-  tone,
-  danger = false,
-  onPress,
-}: {
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
-  label: string;
-  palette: ThemePalette;
-  tone?: "primary" | "neutral" | "danger" | "success" | "warning" | "info";
-  danger?: boolean;
-  onPress: () => void;
-}) {
-  let fg = danger ? palette.danger : palette.textMuted;
-  if (!danger && tone) {
-    if (tone === "danger") fg = palette.danger;
-    else if (tone === "success") fg = palette.success;
-    else if (tone === "warning") fg = palette.warning;
-    else if (tone === "info") fg = palette.primaryStrong;
-    else if (tone === "primary") fg = palette.primary;
-  }
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.iconButton}>
-      <MaterialCommunityIcons name={icon} size={19} color={fg} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   keyboardAvoid: { flex: 1 },
@@ -2007,18 +1846,8 @@ const styles = StyleSheet.create({
   historyModeButton: { flex: 1, minHeight: 40, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   historyModeText: { fontSize: 12, fontWeight: "900", letterSpacing: 0 },
   historyDateRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  search: { minHeight: 48, flex: 1, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
-  input: { flex: 1, minHeight: 42, fontSize: 14, fontWeight: "700" },
   itemRow: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 12 },
   stockItemCard: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 12 },
-  policyCard: { marginHorizontal: 16, marginBottom: 8, borderWidth: 1, borderRadius: 12, padding: 12, gap: 10 },
-  policyTitle: { fontSize: 15, fontWeight: "800" },
-  policyCopy: { fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  policyToggle: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
-  policyToggleText: { fontSize: 13, fontWeight: "700" },
-  policyChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  policyChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
-  policyChipText: { fontSize: 12, fontWeight: "700" },
   stockItemHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   categoryUsageList: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 10, gap: 7 },
   categoryUsageRow: { minHeight: 44, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 8 },
@@ -2027,11 +1856,13 @@ const styles = StyleSheet.create({
   categoryUsageTotal: { alignItems: "flex-end", gap: 1 },
   categoryUsageLabel: { fontSize: 10, fontWeight: "900", letterSpacing: 0, textTransform: "uppercase" },
   categoryUsageValue: { fontSize: 15, fontWeight: "900", letterSpacing: 0 },
-  movementRow: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center", gap: 12 },
+  movementRow: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 12 },
   itemText: { flex: 1, minWidth: 0, gap: 2 },
   itemName: { fontSize: 14, fontWeight: "900", letterSpacing: 0 },
   itemSub: { fontSize: 13, fontWeight: "700", letterSpacing: 0 },
   itemMeta: { fontSize: 12, fontWeight: "700", letterSpacing: 0 },
+  movementTransportDetails: { marginTop: 6, gap: 2 },
+  movementTransportText: { flexShrink: 1, lineHeight: 18 },
   purchaseRateIntro: { fontSize: 13, fontWeight: "700", lineHeight: 18 },
   purchaseRateBlock: { marginTop: 8, gap: 4 },
   purchaseRateStatus: { fontSize: 11, fontWeight: "800", letterSpacing: 0 },
@@ -2047,9 +1878,6 @@ const styles = StyleSheet.create({
   quantityLabel: { fontSize: 10, fontWeight: "900", letterSpacing: 0, textTransform: "uppercase" },
   quantityValue: { fontSize: 16, fontWeight: "900", letterSpacing: 0 },
   rowActions: { flexDirection: "row", alignItems: "center", gap: 4 },
-  iconButton: { minWidth: 34, minHeight: 34, alignItems: "center", justifyContent: "center" },
-  actionButton: { minHeight: 40, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
-  actionText: { fontSize: 12, fontWeight: "900", letterSpacing: 0 },
   errorBox: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   errorText: { flex: 1, fontSize: 13, fontWeight: "700" },
   loadingText: { paddingVertical: 24, textAlign: "center", fontSize: 14, fontWeight: "800" },

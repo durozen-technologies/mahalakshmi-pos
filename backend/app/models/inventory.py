@@ -342,7 +342,7 @@ class InventoryMovement(Base, BaseModelMixin):
         nullable=False,
     )
     driver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vehicle_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     shop = relationship("Shop", back_populates="inventory_movements")
     item = relationship("InventoryItem", back_populates="movements")

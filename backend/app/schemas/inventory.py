@@ -199,8 +199,15 @@ class InventoryMovementPage(BaseModel):
 class InventoryAddRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
     driver_name: str = Field(min_length=1, max_length=100)
-    vehicle_number: str = Field(min_length=1, max_length=50)
+    vehicle_number: str = Field(min_length=2, max_length=120)
     occurred_at: datetime | None = None
+
+    @field_validator("driver_name", "vehicle_number", mode="before")
+    @classmethod
+    def normalize_transport_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            return " ".join(value.split())
+        return value
 
 
 class InventoryUseRequest(BaseModel):

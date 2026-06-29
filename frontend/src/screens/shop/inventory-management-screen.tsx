@@ -25,8 +25,8 @@ import {
   fetchShopInventoryRows,
   fetchShopInventoryMovements,
   fetchShopInventoryTransfers,
-  useShopInventoryStock,
-  useShopInventoryStockSplit,
+  useShopInventoryStock as postShopInventoryUse,
+  useShopInventoryStockSplit as postShopInventoryUseSplit,
   getActiveTransferShops,
   transferInventoryStock,
 } from "@/api/inventory";
@@ -44,6 +44,8 @@ import { LoadingState } from "@/components/ui/loading-state";
 import { Screen } from "@/components/ui/screen";
 import { TextField } from "@/components/ui/text-field";
 import { TransferShopPicker } from "./components/transfer-shop-picker";
+import { InventoryMovementHistoryCard } from "./components/inventory-movement-history-card";
+import { InventoryTransferHistoryCard } from "./components/inventory-transfer-history-card";
 import {
   getLocalizedItemName,
   useShopTranslation,
@@ -59,8 +61,8 @@ import {
   type TransferShopRead,
 } from "@/types/api";
 import { money } from "@/utils/decimal";
+import { groupInventoryMovements } from "@/utils/group-inventory-movements";
 import { toDateInputValue } from "@/utils/expense-history-filters";
-import { formatDateTime } from "@/utils/format";
 import { getItemThumbnailUri } from "@/utils/item-images";
 import type { InventoryManagementScreenProps } from "@/navigation/types";
 
@@ -88,17 +90,25 @@ function buildOccurredAtPayload(dateValue: string, timeValue: string) {
   return parsed.toISOString();
 }
 
+function movementOccurredAtForSave(
+  policy: InventoryBackdatePolicyRead | null,
+  movementDate: string,
+  movementTime: string,
+) {
+  if (!policy?.allow_shop_backdated_inventory) {
+    return undefined;
+  }
+  const todayLocal = toDateInputValue(new Date());
+  // ponytail: only send occurred_at for prior local dates; today uses server now and avoids timezone 422s
+  if (movementDate >= todayLocal) {
+    return undefined;
+  }
+  return buildOccurredAtPayload(movementDate, movementTime) ?? undefined;
+}
+
 function currentTimeDraft() {
   const now = new Date();
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-}
-
-function movementRecordedLabel(occurredAt: string, createdAt: string) {
-  const delta = Math.abs(new Date(createdAt).getTime() - new Date(occurredAt).getTime());
-  if (delta <= 60_000) {
-    return null;
-  }
-  return `Recorded ${formatDateTime(createdAt)}`;
 }
 
 type InventoryCursor = {
@@ -212,18 +222,26 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
 
   const historyCalendarColors = useMemo<CalendarPickerColors>(
     () => ({
-      overlay: "rgba(15, 23, 18, 0.42)",
+      overlay: "rgba(10, 17, 13, 0.42)", // tinted ink overlay
       card: "#FFFFFF",
-      surface: "#F6F2E8",
-      border: "#D8CCB6",
-      textPrimary: "#1D2A22",
-      textSecondary: "#526057",
-      textMuted: "#7A857E",
-      accent: HISTORY_BUTTON_GREEN,
-      accentSoft: "#DDEEE6",
+      surface: "#E6EFE9", // tailwind surface
+      border: "#B4C7BC", // tailwind border
+      textPrimary: "#0A110D", // tailwind ink
+      textSecondary: "#4B6356", // tailwind muted
+      textMuted: "#4B6356", // tailwind muted
+      accent: "#0F7642", // tailwind accent
+      accentSoft: "#D7F0E0", // tailwind accentSoft
       onAccent: "#FFFFFF",
     }),
     [],
+  );
+  const historyTabOptions = useMemo(
+    () =>
+      [
+        { key: "movements" as const, label: t("inventory.historyTabMovements") },
+        { key: "transfers" as const, label: t("inventory.historyTabTransfers") },
+      ],
+    [t],
   );
   const historyModeOptions = useMemo<{ key: MovementHistoryMode; label: string; icon: MaterialIconName }[]>(
     () => [
@@ -255,6 +273,19 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       movementHistoryParams.range_end_date ?? "",
     ].join(":"),
     [historyMode, movementHistoryParams],
+  );
+  const groupedMovements = useMemo(() => groupInventoryMovements(movements), [movements]);
+  const historyCardLabels = useMemo(
+    () => ({
+      added: t("inventory.movementAdded"),
+      used: t("inventory.movementUsed"),
+      unknownCategory: t("inventory.unknownCategory"),
+      driver: t("inventory.driverLabel"),
+      vehicle: t("inventory.vehicleNumber"),
+      recordedAt: (dateTime: string) => t("inventory.recordedAt", { dateTime }),
+      transferredTo: t("inventory.transferredTo"),
+    }),
+    [t],
   );
 
   const loadInventory = useCallback(async (refresh = false) => {
@@ -473,13 +504,6 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     setMovementTime(currentTimeDraft());
   }, [loadInventory]);
 
-  const movementOccurredAt = useMemo(() => {
-    if (!backdatePolicy?.allow_shop_backdated_inventory) {
-      return undefined;
-    }
-    return buildOccurredAtPayload(movementDate, movementTime) ?? undefined;
-  }, [backdatePolicy, movementDate, movementTime]);
-
   const movementDateBounds = useMemo(() => {
     const today = new Date();
     const maxDate = toDateInputValue(today);
@@ -596,7 +620,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       splitTotal,
       hasValidTotal,
       canSave: mode === InventoryMovementType.ADD
-        ? hasValidTotal && Boolean(driverName.trim()) && Boolean(vehicleNumber.trim())
+        ? hasValidTotal && Boolean(driverName.trim()) && vehicleNumber.trim().length >= 2
         : mode === "TRANSFER"
           ? hasValidTotal && withinAvailable && transferShopId !== null
           : useAutoTotal
@@ -605,7 +629,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     };
   }, [categoryQuantities, mode, quantity, selectedItem, driverName, vehicleNumber, transferShopId]);
 
-  const saveMovement = useCallback(async () => {
+  async function saveMovement() {
     if (!selectedItem) {
       return;
     }
@@ -631,21 +655,28 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       }
       return;
     }
+    const occurredAt = movementOccurredAtForSave(backdatePolicy, movementDate, movementTime);
     setSaving(true);
     try {
       let changedItem: InventoryItemStockRead;
-      const occurredAt = movementOccurredAt;
       if (mode === InventoryMovementType.ADD) {
-        if (!driverName.trim() || !vehicleNumber.trim()) {
+        const normalizedDriverName = driverName.replace(/\s+/g, " ").trim();
+        const normalizedVehicleNumber = vehicleNumber.replace(/\s+/g, " ").trim().toUpperCase();
+        if (!normalizedDriverName || !normalizedVehicleNumber) {
           Alert.alert(t("inventory.driverVehicleRequiredTitle" as any), t("inventory.driverVehicleRequiredMessage" as any));
+          setSaving(false);
+          return;
+        }
+        if (normalizedVehicleNumber.length < 2) {
+          Alert.alert(t("inventory.driverVehicleRequiredTitle" as any), t("inventory.vehicleNumberTooShort" as any));
           setSaving(false);
           return;
         }
         const result = await addShopInventoryStock(selectedItem.id, {
           quantity: rawQuantity,
-          driver_name: driverName.trim(),
-          vehicle_number: vehicleNumber.trim(),
-          occurred_at: occurredAt,
+          driver_name: normalizedDriverName,
+          vehicle_number: normalizedVehicleNumber,
+          ...(occurredAt ? { occurred_at: occurredAt } : {}),
         });
         changedItem = result.item;
         if (result.summary) {
@@ -662,11 +693,14 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
         await transferInventoryStock(selectedItem.id, {
           transfer_shop_id: transferShopId,
           quantity: rawQuantity,
-          occurred_at: occurredAt,
+          ...(occurredAt ? { occurred_at: occurredAt } : {}),
         });
         void loadInventory(true);
       } else if (selectedItem.category_usage.length === 0) {
-        const result = await useShopInventoryStock(selectedItem.id, { quantity: rawQuantity, occurred_at: occurredAt });
+        const result = await postShopInventoryUse(selectedItem.id, {
+          quantity: rawQuantity,
+          ...(occurredAt ? { occurred_at: occurredAt } : {}),
+        });
         changedItem = result.item;
         if (result.summary) {
           setItems(visibleStockRows(result.summary.items));
@@ -674,13 +708,13 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
           setItems((currentItems) => patchInventoryRow(currentItems, changedItem));
         }
       } else {
-        const result = await useShopInventoryStockSplit(selectedItem.id, {
+        const result = await postShopInventoryUseSplit(selectedItem.id, {
           total_quantity: rawQuantity,
           categories: selectedItem.category_usage.map((category) => ({
             category_id: category.category_id,
             quantity: categoryQuantities[category.category_id]?.trim() || "0",
           })),
-          occurred_at: occurredAt,
+          ...(occurredAt ? { occurred_at: occurredAt } : {}),
         });
         changedItem = result.item;
         if (result.summary) {
@@ -711,22 +745,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     } finally {
       setSaving(false);
     }
-  }, [
-    categoryQuantities,
-    closeMovement,
-    driverName,
-    historyOpen,
-    language,
-    loadInventory,
-    loadMovements,
-    mode,
-    quantity,
-    selectedItem,
-    splitState.canSave,
-    t,
-    transferShopId,
-    movementOccurredAt,
-  ]);
+  }
 
   if (loading && items.length === 0) {
     return <LoadingState fullscreen label={t("inventory.loading")} />;
@@ -817,219 +836,163 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: historyOpen }}
-          onPress={() => setHistoryOpen((current) => !current)}
-          className="flex-row items-center justify-center gap-2"
-          style={{
-            width: "100%",
-            minHeight: 52,
-            borderWidth: 1,
-            borderRadius: 12,
-            paddingHorizontal: 22,
-            backgroundColor: historyOpen ? "#FFFFFF" : HISTORY_BUTTON_GREEN,
-            borderColor: HISTORY_BUTTON_GREEN,
+          onPress={() => {
+            void import("expo-haptics").then((Haptics) => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+            });
+            setHistoryOpen((current) => !current);
           }}
+          className="min-h-12 w-full flex-row items-center justify-center gap-2 rounded-control border border-accent bg-accent px-5"
+          style={({ pressed }) => ({
+            opacity: pressed ? 0.92 : 1,
+            transform: [{ scale: pressed ? 0.98 : 1 }],
+          })}
         >
           <MaterialCommunityIcons
             name={historyOpen ? "chevron-up" : "history"}
             size={20}
-            color={historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF"}
+            color="#FFFFFF"
           />
-          <Text
-            className="text-sm font-extrabold"
-            style={{ color: historyOpen ? HISTORY_BUTTON_GREEN : "#FFFFFF" }}
-          >
+          <Text className="text-[15px] font-semibold text-white">
             {historyOpen ? t("inventory.hideHistory") : t("inventory.history")}
           </Text>
         </Pressable>
       </View>
       {historyOpen ? (
         <>
-          <Card className="gap-3 border-border bg-card">
-            <View className="flex-row gap-2 mb-1 bg-surface-muted rounded-xl p-1 border border-border">
-              {(
-                [
-                  { key: "movements", label: "Stock Add/Use" },
-                  { key: "transfers", label: "Stock Transfers" },
-                ] as const
-              ).map((tab) => {
-                const active = historyTab === tab.key;
-                return (
-                  <Pressable
-                    key={tab.key}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    onPress={() => setHistoryTab(tab.key)}
-                    className="flex-1 rounded-lg py-2 items-center justify-center"
-                    style={{ backgroundColor: active ? "#FFFFFF" : "transparent" }}
-                  >
-                    <Text
-                      className="text-xs font-extrabold"
-                      style={{ color: active ? HISTORY_BUTTON_GREEN : "#7A857E" }}
+          <Card className="gap-3 overflow-hidden border-border bg-card p-0">
+            <View className="border-b border-border/80 bg-surface px-3 py-3">
+              <Text className="text-sm font-bold text-ink">{t("inventory.movementHistory")}</Text>
+              <View className="mt-3 flex-row gap-2 rounded-xl border border-border bg-background p-1">
+                {historyTabOptions.map((tab) => {
+                  const active = historyTab === tab.key;
+                  return (
+                    <Pressable
+                      key={tab.key}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      onPress={() => setHistoryTab(tab.key)}
+                      className={`min-h-[44px] flex-1 items-center justify-center rounded-lg px-2 ${active ? "bg-card shadow-sm" : "bg-transparent"}`}
+                      style={({ pressed }) => ({
+                        opacity: pressed ? 0.78 : 1,
+                      })}
                     >
-                      {tab.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View className="flex-row gap-2">
-              {historyModeOptions.map((option) => {
-                const active = historyMode === option.key;
-                return (
-                  <Pressable
-                    key={option.key}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    onPress={() => setHistoryMode(option.key)}
-                    style={({ pressed }) => ({
-                      flex: 1,
-                      minHeight: 40,
-                      borderWidth: 1,
-                      borderRadius: 10,
-                      paddingHorizontal: 12,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                      borderColor: active ? HISTORY_BUTTON_GREEN : "#D8CCB6",
-                      backgroundColor: active ? HISTORY_BUTTON_GREEN : "#F6F2E8",
-                      opacity: pressed ? 0.78 : 1,
-                    })}
-                  >
-                    <MaterialCommunityIcons
-                      name={option.icon}
-                      size={16}
-                      color={active ? "#FFFFFF" : "#7A857E"}
-                    />
-                    <Text
-                      className="text-xs font-extrabold"
-                      style={{ color: active ? "#FFFFFF" : "#1D2A22" }}
-                    >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {historyMode === "date" ? (
-              <CalendarDateField
-                label={t("inventory.historyDate")}
-                value={historyDate}
-                colors={historyCalendarColors}
-                onPress={() => setHistoryCalendarTarget("date")}
-              />
-            ) : (
-              <View className="flex-row flex-wrap gap-3">
-                <CalendarDateField
-                  label={t("inventory.historyFrom")}
-                  value={historyRangeStart}
-                  colors={historyCalendarColors}
-                  icon="calendar-start"
-                  onPress={() => setHistoryCalendarTarget("start")}
-                />
-                <CalendarDateField
-                  label={t("inventory.historyTo")}
-                  value={historyRangeEnd}
-                  colors={historyCalendarColors}
-                  icon="calendar-end"
-                  onPress={() => setHistoryCalendarTarget("end")}
-                />
+                      <Text
+                        className={`text-center text-xs font-bold ${active ? "text-accent" : "text-muted"}`}
+                      >
+                        {tab.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            )}
+            </View>
+
+            <View className="gap-3 px-3 py-3">
+              <View className="flex-row rounded-xl border border-border bg-background p-1">
+                {historyModeOptions.map((option) => {
+                  const active = historyMode === option.key;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      onPress={() => setHistoryMode(option.key)}
+                      className={`min-h-[44px] flex-1 flex-row items-center justify-center gap-2 rounded-lg px-2 ${active ? "bg-card shadow-sm" : "bg-transparent"}`}
+                      style={({ pressed }) => ({
+                        opacity: pressed ? 0.78 : 1,
+                      })}
+                    >
+                      <MaterialCommunityIcons
+                        name={option.icon}
+                        size={16}
+                        color={active ? "#0F7642" : "#4B6356"} // accent and muted hexes for icon
+                      />
+                      <Text
+                        className={`text-xs font-bold ${active ? "text-accent" : "text-muted"}`}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View className="rounded-xl border border-accent/20 bg-accentSoft/40 p-2">
+                {historyMode === "date" ? (
+                  <CalendarDateField
+                    label={t("inventory.historyDate")}
+                    value={historyDate}
+                    colors={historyCalendarColors}
+                    onPress={() => setHistoryCalendarTarget("date")}
+                  />
+                ) : (
+                  <View className="flex-row gap-3">
+                    <CalendarDateField
+                      label={t("inventory.historyFrom")}
+                      value={historyRangeStart}
+                      colors={historyCalendarColors}
+                      icon="calendar-start"
+                      onPress={() => setHistoryCalendarTarget("start")}
+                    />
+                    <CalendarDateField
+                      label={t("inventory.historyTo")}
+                      value={historyRangeEnd}
+                      colors={historyCalendarColors}
+                      icon="calendar-end"
+                      onPress={() => setHistoryCalendarTarget("end")}
+                    />
+                  </View>
+                )}
+              </View>
+            </View>
           </Card>
-          <Text className="text-base font-extrabold text-ink">{t("inventory.movementHistory")}</Text>
+
           {movementsLoading ? (
-            <Card className="flex-row items-center gap-3 border-border bg-card">
-              <ActivityIndicator color="#244734" />
-              <Text className="text-sm font-semibold text-muted">{t("inventory.loading")}</Text>
-            </Card>
+            <LoadingState label={t("inventory.loadingHistory")} />
           ) : historyTab === "transfers" ? (
             transfers.length === 0 ? (
-              <Card className="border-border bg-card">
-                <Text className="text-sm font-semibold text-muted">No stock transfers found.</Text>
-              </Card>
+              <EmptyState
+                title={t("inventory.noTransfers")}
+                description={t("inventory.noRecentMovement")}
+              />
             ) : (
-              transfers.map((transfer) => {
-                const transferItemName = getLocalizedItemName(
-                  language,
-                  transfer.inventory_item_name ?? "",
-                  transfer.inventory_item_tamil_name ?? "",
-                );
-                return (
-                  <Card key={transfer.id} className="flex-row items-center gap-3">
-                    <MaterialCommunityIcons
-                      name="truck-delivery-outline"
-                      size={22}
-                      color="#B27B2B"
-                    />
-                    <View className="min-w-0 flex-1">
-                      <Text className="text-sm font-extrabold text-ink" numberOfLines={1}>
-                        {transferItemName}
-                      </Text>
-                      <Text className="mt-0.5 text-xs font-semibold text-muted" numberOfLines={1}>
-                        Transferred to: {transfer.transfer_shop_name} · {formatQuantity(transfer.quantity, transfer.unit as BaseUnit)}
-                      </Text>
-                      <Text className="mt-0.5 text-[11px] font-semibold text-muted">
-                        {formatDateTime(transfer.occurred_at)}
-                      </Text>
-                      {movementRecordedLabel(transfer.occurred_at, transfer.created_at) ? (
-                        <Text className="mt-0.5 text-[11px] font-semibold text-muted">
-                          {movementRecordedLabel(transfer.occurred_at, transfer.created_at)}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </Card>
-                );
-              })
-            )
-          ) : movements.length === 0 ? (
-            <Card className="border-border bg-card">
-              <Text className="text-sm font-semibold text-muted">{t("inventory.noStockMovement")}</Text>
-            </Card>
-          ) : (
-            movements.map((movement) => {
-              const movementItemName = getLocalizedItemName(
-                language,
-                movement.inventory_item_name ?? "",
-                movement.inventory_item_tamil_name ?? "",
-              );
-              const isAdd = movement.movement_type === InventoryMovementType.ADD;
-              const movementLabel = isAdd
-                ? t("inventory.movementAdded")
-                : movement.category_name
-                  ? t("inventory.movementUsedFor", { categoryName: movement.category_name })
-                  : t("inventory.used");
-              return (
-                <Card key={movement.id} className="flex-row items-center gap-3">
-                  <MaterialCommunityIcons
-                    name={isAdd ? "plus-circle-outline" : "minus-circle-outline"}
-                    size={22}
-                    color={isAdd ? "#168A5B" : "#9F4335"}
+              <View className="gap-2.5">
+                {transfers.map((transfer) => (
+                  <InventoryTransferHistoryCard
+                    key={transfer.id}
+                    transfer={transfer}
+                    itemName={getLocalizedItemName(
+                      language,
+                      transfer.inventory_item_name ?? "",
+                      transfer.inventory_item_tamil_name ?? "",
+                    )}
+                    formatQuantity={formatQuantity}
+                    labels={historyCardLabels}
                   />
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-sm font-extrabold text-ink" numberOfLines={1}>
-                      {movementItemName}
-                    </Text>
-                    <Text className="mt-0.5 text-xs font-semibold text-muted" numberOfLines={1}>
-                      {movementLabel} · {formatQuantity(movement.quantity, movement.unit)}
-                    </Text>
-                    {movement.driver_name || movement.vehicle_number ? (
-                      <Text className="mt-0.5 text-[11px] font-semibold text-muted" numberOfLines={1}>
-                        {movement.driver_name ? `Driver: ${movement.driver_name}` : ""}{movement.driver_name && movement.vehicle_number ? " · " : ""}{movement.vehicle_number ? `Vehicle: ${movement.vehicle_number}` : ""}
-                      </Text>
-                    ) : null}
-                    <Text className="mt-0.5 text-[11px] font-semibold text-muted">
-                      {formatDateTime(movement.occurred_at)}
-                    </Text>
-                    {movementRecordedLabel(movement.occurred_at, movement.created_at) ? (
-                      <Text className="mt-0.5 text-[11px] font-semibold text-muted">
-                        {movementRecordedLabel(movement.occurred_at, movement.created_at)}
-                      </Text>
-                    ) : null}
-                  </View>
-                </Card>
-              );
-            })
+                ))}
+              </View>
+            )
+          ) : groupedMovements.length === 0 ? (
+            <EmptyState
+              title={t("inventory.noStockMovement")}
+              description={t("inventory.noRecentMovement")}
+            />
+          ) : (
+            <View className="gap-2.5">
+              {groupedMovements.map((entry) => (
+                <InventoryMovementHistoryCard
+                  key={entry.key}
+                  entry={entry}
+                  itemName={getLocalizedItemName(
+                    language,
+                    entry.inventory_item_name ?? "",
+                    entry.inventory_item_tamil_name ?? "",
+                  )}
+                  formatQuantity={formatQuantity}
+                  labels={historyCardLabels}
+                />
+              ))}
+            </View>
           )}
         </>
       ) : null}
@@ -1057,7 +1020,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
               ) : null}
               {shopName ? (
                 <View className="rounded-control border border-border bg-card px-4 py-3">
-                  <Text className="text-xs font-extrabold uppercase tracking-[1px] text-muted">
+                  <Text className="text-xs font-bold uppercase tracking-[1px] text-muted">
                     {t("inventory.branchName", { branchName: shopName })}
                   </Text>
                 </View>
@@ -1110,21 +1073,26 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
               }}
             >
               <View
-                className="w-full self-center rounded-[20px] border border-border bg-card p-4 "
+                className="w-full self-center rounded-2xl border border-border bg-card p-4"
                 style={{ maxWidth: 460 }}
               >
                 {selectedItem ? (
-                  <View className="gap-3">
+                  <View className="gap-5">
                     <View className="flex-row items-start justify-between gap-3">
                       <View className="min-w-0 flex-1">
-                        <Text className="text-lg font-extrabold text-ink">
-                          {mode === InventoryMovementType.ADD ? t("inventory.addStock") : mode === "TRANSFER" ? "Transfer Stock" : t("inventory.useStock")}
+                        <Text className="text-lg font-bold text-ink">
+                          {mode === InventoryMovementType.ADD ? t("inventory.addStock") : mode === "TRANSFER" ? t("inventory.transferStock", { defaultValue: "Transfer stock" }) : t("inventory.useStock")}
                         </Text>
                         <Text className="mt-1 text-sm font-semibold text-muted" numberOfLines={2}>
                           {getLocalizedItemName(language, selectedItem.name, selectedItem.tamil_name)}
                         </Text>
                       </View>
-                      <Pressable accessibilityRole="button" onPress={closeMovement} className="h-10 w-10 items-center justify-center">
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={closeMovement}
+                        className="h-10 w-10 items-center justify-center"
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                      >
                         <MaterialCommunityIcons name="close" size={22} color="#1E2B22" />
                       </Pressable>
                     </View>
@@ -1132,16 +1100,16 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                     {backdatePolicy?.allow_shop_backdated_inventory ? (
                       <View className="gap-3 rounded-card border border-border bg-surface px-3 py-3">
                         <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
-                          Transaction date
+                          {t("inventory.transactionDate", { defaultValue: "Transaction date" })}
                         </Text>
                         <CalendarDateField
-                          label="Date"
+                          label={t("inventory.date", { defaultValue: "Date" })}
                           value={movementDate}
                           colors={historyCalendarColors}
                           onPress={() => setMovementCalendarOpen(true)}
                         />
                         <TextField
-                          label="Time"
+                          label={t("inventory.time", { defaultValue: "Time" })}
                           placeholder="HH:MM"
                           value={movementTime}
                           onChangeText={setMovementTime}
@@ -1156,7 +1124,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                         <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
                           {t("inventory.available")}
                         </Text>
-                        <Text className="mt-1 text-3xl font-extrabold text-ink">
+                        <Text className="mt-1 text-3xl font-bold text-ink" style={{ fontVariant: ["tabular-nums"] }}>
                           {formatQuantity(selectedItem.available_quantity, selectedItem.base_unit)}
                         </Text>
                       </View>
@@ -1164,9 +1132,9 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                     {mode === InventoryMovementType.USE && selectedItem.category_usage.length > 0 ? (
                       <View className="items-center rounded-card border border-border bg-card px-4 py-3">
                         <Text className="text-[11px] font-semibold uppercase tracking-[1px] text-muted">
-                          {selectedItem.base_unit === BaseUnit.KG ? "Total to use (kg)" : "Total to use (units)"}
+                          {selectedItem.base_unit === BaseUnit.KG ? t("inventory.totalToUseKg", { defaultValue: "Total to use (kg)" }) : t("inventory.totalToUseUnits", { defaultValue: "Total to use (units)" })}
                         </Text>
-                        <Text className="mt-1 text-3xl font-extrabold text-ink">
+                        <Text className="mt-1 text-3xl font-bold text-ink" style={{ fontVariant: ["tabular-nums"] }}>
                           {formatQuantity(splitState.splitTotal.toString(), selectedItem.base_unit)}
                         </Text>
                       </View>
@@ -1186,7 +1154,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                           autoFocus={mode === InventoryMovementType.USE}
                           selectTextOnFocus={false}
                           onFocus={() => focusMovementField(movementQuantityFieldRef.current)}
-                          className={mode === InventoryMovementType.USE || mode === "TRANSFER" ? "text-center text-2xl font-extrabold" : undefined}
+                          className={mode === InventoryMovementType.USE || mode === "TRANSFER" ? "text-center text-2xl font-bold" : undefined}
                         />
                         {mode === InventoryMovementType.ADD ? (
                           <View className="mt-4 gap-4">
@@ -1196,6 +1164,8 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                               value={driverName}
                               onChangeText={setDriverName}
                               selectTextOnFocus={false}
+                              autoCorrect={false}
+                              importantForAutofill="no"
                             />
                             <TextField
                               label={t("inventory.vehicleNumber" as any)}
@@ -1203,7 +1173,12 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                               value={vehicleNumber}
                               onChangeText={setVehicleNumber}
                               selectTextOnFocus={false}
-                              autoCapitalize="characters"
+                              autoCorrect={false}
+                              autoComplete="off"
+                              importantForAutofill="no"
+                              maxLength={120}
+                              containerClassName="items-stretch"
+                              className="py-2"
                             />
                           </View>
                         ) : null}
@@ -1235,7 +1210,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                       <View className="gap-2">
                         <View className="flex-row items-center justify-between gap-3">
                           <Text className="text-[11px] font-semibold uppercase text-muted">{t("inventory.category")}</Text>
-                          <Text className="text-[11px] font-semibold uppercase text-muted">Split</Text>
+                          <Text className="text-[11px] font-semibold uppercase text-muted">{t("inventory.quantity", { defaultValue: "Quantity" })}</Text>
                         </View>
                         <View className="gap-2">
                           {selectedItem.category_usage.map((category) => (
@@ -1272,7 +1247,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                                   underlineColorAndroid="transparent"
                                   selectionColor="#244734"
                                   cursorColor="#244734"
-                                  className="min-w-0 flex-1 text-center text-xl font-extrabold text-ink"
+                                  className="min-w-0 flex-1 text-center text-xl font-bold text-ink"
                                 />
                                 <Text className="ml-2 text-xs font-semibold uppercase text-muted">{selectedItem.base_unit}</Text>
                               </View>
@@ -1325,7 +1300,7 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
 
       <CalendarDatePickerModal
         visible={movementCalendarOpen}
-        title="Transaction date"
+        title={t("inventory.transactionDate", { defaultValue: "Transaction date" })}
         value={movementDate}
         colors={historyCalendarColors}
         onSelect={(selectedDate) => {

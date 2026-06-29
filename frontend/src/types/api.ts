@@ -878,24 +878,3 @@ export interface InventoryTransferCreate {
   quantity: string;
   occurred_at?: string | null;
 }
-
-export interface InventoryTransferRead {
-  id: UUID;
-  source_shop_id: UUID;
-  transfer_shop_id: UUID;
-  inventory_item_id: UUID;
-  quantity: string;
-  unit: BaseUnit;
-  occurred_at: string;
-  created_at: string;
-  source_shop_name?: string | null;
-  transfer_shop_name?: string | null;
-  inventory_item_name?: string | null;
-  inventory_item_tamil_name?: string | null;
-}
-
-export interface InventoryTransferPage {
-  items: InventoryTransferRead[];
-  limit: number;
-  has_more: boolean;
-}

@@ -318,6 +318,12 @@ function getResponseMessage(data: unknown) {
   if (typeof data.message === "string") {
     return data.message;
   }
+  if (isRecord(data.error)) {
+    const nestedMessage = data.error.message;
+    if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+      return nestedMessage;
+    }
+  }
   if (typeof data.error === "string") {
     return data.error;
   }

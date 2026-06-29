@@ -7,6 +7,7 @@ import type { ShopRead, UUID } from "@/types/api";
 import { type ThemePalette } from "../admin-dashboard-theme";
 import type { ShopDashboardRow } from "../hooks/use-admin-dashboard-data";
 import { AdminLogoutCard, BranchControlCard } from "./admin-dashboard-tab-cards";
+import { ShopBackdatingPolicySection } from "./shop-backdating-policy-section";
 import {
   DashboardErrorBanner,
   EmptyStateCard,
@@ -55,6 +56,7 @@ export const AdminSettingsTab = memo(function AdminSettingsTab({
         text="Open a branch to update access or delete a shop that has no billing or price history."
         palette={palette}
       />
+      <ShopBackdatingPolicySection palette={palette} />
       <Pressable
         onPress={onCreateBranch}
         style={[

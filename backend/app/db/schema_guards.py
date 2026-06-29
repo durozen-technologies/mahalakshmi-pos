@@ -100,6 +100,41 @@ def _ensure_item_tamil_name_column(sync_conn: Connection) -> None:
         sync_conn.execute(text("ALTER TABLE items ADD COLUMN tamil_name VARCHAR(120)"))
 
 
+def _ensure_inventory_vehicle_number_column(sync_conn: Connection) -> None:
+    """Keep direct app starts compatible with the inventory movement model.
+
+    Alembic is the canonical schema path, but local and manually started
+    backends can point at a database that has not been migrated yet. A stale or
+    manually narrowed transport column is exactly the kind of drift that turns
+    valid vehicle details into bad persisted data, so repair it at startup.
+    """
+    inspector = inspect(sync_conn)
+    if "inventory_movements" not in set(inspector.get_table_names()):
+        return
+
+    columns = {column["name"]: column["type"] for column in inspector.get_columns("inventory_movements")}
+    column_type = columns.get("vehicle_number")
+    dialect = sync_conn.dialect.name
+
+    if column_type is None:
+        if dialect == "postgresql":
+            sync_conn.execute(
+                text("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS vehicle_number VARCHAR(120)")
+            )
+        else:
+            sync_conn.execute(text("ALTER TABLE inventory_movements ADD COLUMN vehicle_number VARCHAR(120)"))
+        return
+
+    current_length = getattr(column_type, "length", None)
+    if current_length is not None and current_length >= 120:
+        return
+
+    if dialect == "postgresql":
+        sync_conn.execute(
+            text("ALTER TABLE inventory_movements ALTER COLUMN vehicle_number TYPE VARCHAR(120)")
+        )
+
+
 def _ensure_item_category_schema(sync_conn: Connection) -> None:
     """Compatibility guard for direct API starts before Alembic has run.
 

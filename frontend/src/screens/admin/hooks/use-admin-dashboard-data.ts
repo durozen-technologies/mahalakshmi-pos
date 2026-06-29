@@ -377,11 +377,11 @@ export function useAdminDashboardData({
     try {
       const batchRequest = missingBillIds.length
         ? fetchAdminBillDetails(missingBillIds).then((bills) => {
-            bills.forEach((bill) => {
-              billDetailCacheRef.current.set(bill.id, bill);
-              results.set(bill.id, bill);
-            });
-          })
+          bills.forEach((bill) => {
+            billDetailCacheRef.current.set(bill.id, bill);
+            results.set(bill.id, bill);
+          });
+        })
         : Promise.resolve();
 
       await Promise.all([batchRequest, ...pendingRequests]);
