@@ -70,3 +70,4 @@ tmp/
 todo.txt
 diff.txt
 *.zip
+test_shop_endpoint.py

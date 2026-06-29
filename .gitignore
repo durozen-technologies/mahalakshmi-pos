@@ -25,6 +25,12 @@ Desktop.ini
 .cursor/
 .cursorrules
 .git.backup/
+# Agent harness (keep .github/workflows/ tracked)
+.github/skills/
+.github/hooks/
+AGENTS.md
+PRODUCT.md
+DESIGN.md
 
 # Environment and secrets
 .env
@@ -295,6 +301,7 @@ tmp/
 todo.txt
 diff.txt
 *.zip
+
 
 # Ignore alternative package manager lock files (using nub with lock.yaml)
 package-lock.json
