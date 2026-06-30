@@ -30,7 +30,7 @@ import {
   type OverallReportStatement,
   type OverallReportUsedStockBreakdown,
 } from "@/types/api";
-import { toMoneyString, toQuantityString } from "@/utils/decimal";
+import { money, toMoneyString, toQuantityString } from "@/utils/decimal";
 
 import { adminElevation, type ThemePalette } from "./admin-dashboard-theme";
 import { AdminHeaderActions } from "./components/admin-header-actions";
@@ -515,7 +515,14 @@ export function AdminOverallReportPreviewScreen({
             </View>
             <View style={[styles.summaryRow, styles.summaryRowTotal, { borderTopColor: palette.border }]}>
               <Text style={[styles.summaryLabelTotal, { color: palette.textPrimary }]}>Balance Amount</Text>
-              <Text style={[styles.summaryValueTotal, { color: palette.primary }]}>{formatReportMoney(statement.sales_minus_expense_amount)}</Text>
+              <Text style={[styles.summaryValueTotal, { color: palette.primary }]}>
+                {formatReportMoney(
+                  money(statement.sales_amount)
+                    .minus(money(statement.purchase_amount))
+                    .minus(money(statement.expense_amount))
+                    .toString(),
+                )}
+              </Text>
             </View>
           </View>
         )}

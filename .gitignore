@@ -301,6 +301,8 @@ tmp/
 todo.txt
 diff.txt
 *.zip
+test_shop_endpoint.py
+/WhatsApp Image*
 
 
 # Ignore alternative package manager lock files (using nub with lock.yaml)

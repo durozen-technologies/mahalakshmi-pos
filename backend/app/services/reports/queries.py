@@ -82,6 +82,14 @@ from app.services.reports.pdf import (
 )
 
 
+def _over_report_balance_amount(
+    sales: Decimal | str | int | float,
+    purchase: Decimal | str | int | float,
+    expense: Decimal | str | int | float,
+) -> Decimal:
+    return _decimal(sales) - _decimal(purchase) - _decimal(expense)
+
+
 async def build_overall_report(
     db: AsyncSession,
     *,
@@ -688,7 +696,11 @@ def _write_over_report_statement(
             ("Total Sales", _money(statement.sales_amount)),
             ("Total Purchase", _money(statement.purchase_amount)),
             ("Total Expense Amount", _money(statement.expense_amount)),
-            ("Balance Amount", _money(statement.sales_minus_expense_amount)),
+            ("Balance Amount", _money(_over_report_balance_amount(
+                statement.sales_amount,
+                statement.purchase_amount,
+                statement.expense_amount,
+            ))),
         ])
 
 
@@ -1244,13 +1256,13 @@ async def _generate_over_report_fpdf_pdf(
                 day_sales = _decimal(stmt.sales_amount)
                 day_purchase = _decimal(stmt.purchase_amount)
                 day_expense = _decimal(stmt.expense_amount)
-                day_balance = day_sales - day_expense
+                day_balance = _over_report_balance_amount(day_sales, day_purchase, day_expense)
                 _fpdf_draw_day_summary_card(pdf, day_label, day_sales, day_purchase, day_expense, day_balance)
 
         total_sales = sum((_decimal(s.sales_amount) for s in statements), Decimal("0"))
         total_purchase = sum((_decimal(s.purchase_amount) for s in statements), Decimal("0"))
         total_expense = sum((_decimal(s.expense_amount) for s in statements), Decimal("0"))
-        total_balance = total_sales - total_expense
+        total_balance = _over_report_balance_amount(total_sales, total_purchase, total_expense)
         _fpdf_draw_grand_total_summary(pdf, total_sales, total_purchase, total_expense, total_balance, table_width=sum(widths))
 
     return bytes(pdf.output())
