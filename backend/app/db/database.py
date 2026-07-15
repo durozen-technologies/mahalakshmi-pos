@@ -27,21 +27,28 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-def _build_engine_config(database_url: str) -> tuple[URL | str, dict[str, str]]:
+def _first_query_value(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        return str(value[0]) if value else ""
+    return str(value) if value is not None else ""
+
+
+def _build_engine_config(database_url: str) -> tuple[URL | str, dict[str, object]]:
     url = make_url(database_url)
-    connect_args: dict[str, str] = {}
+    connect_args: dict[str, object] = {}
 
     if url.drivername in {"postgres", "postgresql"}:
         url = url.set(drivername="postgresql+asyncpg")
 
-    sslmode = url.query.get("sslmode")
-    # url.query.get may return a str or a tuple/list of str depending on how URL was parsed.
-    if sslmode:
-        if isinstance(sslmode, (list, tuple)):
-            sslmode = sslmode[0] if sslmode else ""
-        if sslmode:
-            connect_args["ssl"] = sslmode
-            url = url.set(query={key: value for key, value in url.query.items() if key != "sslmode"})
+    if url.drivername != "postgresql+asyncpg":
+        return url, connect_args
+
+    query = dict(url.query)
+    ssl = _first_query_value(query.pop("ssl", None))
+    sslmode = _first_query_value(query.pop("sslmode", None))
+    if ssl or sslmode:
+        connect_args["ssl"] = ssl or sslmode
+        url = url.set(query=query)
 
     return url, connect_args
 

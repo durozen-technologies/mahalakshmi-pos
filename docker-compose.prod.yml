@@ -92,7 +92,7 @@ services:
     environment:
       APP_NAME: ${BACKEND_APP_NAME:-Meat Billing System API}
       SECRET_KEY: ${BACKEND_SECRET_KEY:?Set BACKEND_SECRET_KEY}
-      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-meat_billing}}
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-meat_billing}?ssl=prefer}
       PRODUCTION: ${BACKEND_PRODUCTION:-True}
       ALLOWED_HOSTS: ${BACKEND_ALLOWED_HOSTS:?Set BACKEND_ALLOWED_HOSTS}
       CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-["*"]}

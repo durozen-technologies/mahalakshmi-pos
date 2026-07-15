@@ -4,12 +4,13 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import create_engine, pool
+from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import models as _models  # noqa: F401
 from app.core.config import get_settings
-from app.db.database import Base
+from app.db.database import Base, _build_engine_config
 
 config = context.config
 
@@ -23,15 +24,15 @@ def get_database_url() -> str:
     return str(get_settings().database_url)
 
 
-def is_async_database_url(database_url: str) -> bool:
-    return "+asyncpg" in database_url
-
-
 def get_alembic_database_url() -> str:
     database_url = get_database_url()
     if database_url.startswith("sqlite+aiosqlite:"):
         return database_url.replace("sqlite+aiosqlite:", "sqlite:", 1)
     return database_url
+
+
+def is_async_engine_url(database_url: URL | str) -> bool:
+    return "+asyncpg" in str(database_url)
 
 
 def run_migrations_offline() -> None:
@@ -58,14 +59,11 @@ def do_run_migrations(connection) -> None:
         context.run_migrations()
 
 
-async def run_async_migrations() -> None:
-    section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = get_alembic_database_url()
-
-    connectable = async_engine_from_config(
-        section,
-        prefix="sqlalchemy.",
+async def run_async_migrations(database_url: URL | str, connect_args: dict[str, object]) -> None:
+    connectable = create_async_engine(
+        database_url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:
@@ -75,17 +73,15 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    database_url = get_alembic_database_url()
-    if is_async_database_url(database_url):
-        asyncio.run(run_async_migrations())
+    database_url, connect_args = _build_engine_config(get_alembic_database_url())
+    if is_async_engine_url(database_url):
+        asyncio.run(run_async_migrations(database_url, connect_args))
         return
 
-    section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = database_url
-    connectable = engine_from_config(
-        section,
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        database_url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     with connectable.connect() as connection:
