@@ -36,8 +36,11 @@ POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data
 The backend connects with:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:<password>@postgres:5432/meat_billing?ssl=require
+DATABASE_URL=postgresql+asyncpg://postgres:<password>@postgres:5432/meat_billing
 ```
+
+Deploys ensure `pg_hba.conf` allows same-network Docker service traffic before backend
+migrations run.
 
 ## Persistence
 

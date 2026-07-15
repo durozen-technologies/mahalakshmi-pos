@@ -262,6 +262,31 @@ bootstrap_infra() {
   exit 1
 }
 
+ensure_postgres_internal_hba() {
+  local pg_cid
+  pg_cid="$(service_container_id postgres)"
+  if [[ -z "${pg_cid}" ]]; then
+    log "Postgres container missing; cannot apply internal pg_hba rule"
+    return 1
+  fi
+
+  log "Ensuring Postgres allows internal Docker network connections"
+  docker exec -u postgres "${pg_cid}" sh -eu -c '
+    hba_file="$(PGPASSWORD="${POSTGRES_PASSWORD}" psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -Atc "SHOW hba_file")"
+    rule="host all all samenet scram-sha-256"
+    if ! grep -Eq "^[[:space:]]*host[[:space:]]+all[[:space:]]+all[[:space:]]+samenet[[:space:]]+scram-sha-256([[:space:]]|$)" "${hba_file}"; then
+      tmp="${hba_file}.tmp"
+      {
+        printf "%s\n" "${rule}"
+        cat "${hba_file}"
+      } > "${tmp}"
+      cat "${tmp}" > "${hba_file}"
+      rm -f "${tmp}"
+    fi
+    PGPASSWORD="${POSTGRES_PASSWORD}" psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -Atc "SELECT pg_reload_conf()" >/dev/null
+  '
+}
+
 sync_compose_project() {
   log "Applying compose/network changes (postgres only, no image pull)"
   if [[ "${COMPOSE_V2}" == "true" ]]; then
@@ -439,6 +464,7 @@ deploy_app() {
   local final_caddy_tag="${CADDY_TAG_PREVIOUS}"
 
   bootstrap_infra
+  ensure_postgres_internal_hba
 
   if [[ "${deploy_backend}" == "true" || "${sync_compose}" == "true" ]]; then
     if ! apply_rustfs_config; then

@@ -28,10 +28,14 @@ class DatabaseConfigTests(unittest.TestCase):
         self.assertEqual(connect_args, {"ssl": "require"})
         self.assertNotIn("sslmode", url.query)
 
-    def test_prod_compose_default_requires_ssl(self) -> None:
+    def test_prod_compose_default_uses_internal_postgres_url(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
 
-        self.assertIn("?ssl=require}", compose_path.read_text(encoding="utf-8"))
+        self.assertIn(
+            "DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+asyncpg://",
+            compose_path.read_text(encoding="utf-8"),
+        )
+        self.assertNotIn("?ssl=", compose_path.read_text(encoding="utf-8"))
 
     def test_prod_compose_requires_non_default_shop_password_secret(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
@@ -52,6 +56,14 @@ class DatabaseConfigTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('"BACKEND_SHOP_DEFAULT_PASSWORD": os.environ["BACKEND_SHOP_DEFAULT_PASSWORD"]', workflow)
+
+    def test_deploy_script_allows_internal_postgres_network(self) -> None:
+        script_path = Path(__file__).resolve().parents[2] / "scripts" / "deploy-prod.sh"
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("ensure_postgres_internal_hba", script)
+        self.assertIn("host all all samenet scram-sha-256", script)
+        self.assertIn("SELECT pg_reload_conf()", script)
 
 
 if __name__ == "__main__":
