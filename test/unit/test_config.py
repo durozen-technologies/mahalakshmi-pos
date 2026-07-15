@@ -12,7 +12,7 @@ def _production_settings_kwargs() -> dict[str, object]:
     return {
         "production": True,
         "secret_key": "x" * 32,
-        "database_url": "postgresql+asyncpg://postgres:secret@postgres:5432/meat_billing?ssl=prefer",
+        "database_url": "postgresql+asyncpg://postgres:secret@postgres:5432/meat_billing?ssl=require",
         "allowed_hosts_raw": '["example.com","backend"]',
         "rustfs_endpoint_url": "http://rustfs:9000",
         "rustfs_access_key_id": "access-key",

@@ -36,7 +36,7 @@ POSTGRES_DATA_DIR=/home/ubuntu/pos-postgress/data
 The backend connects with:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:<password>@postgres:5432/meat_billing?ssl=prefer
+DATABASE_URL=postgresql+asyncpg://postgres:<password>@postgres:5432/meat_billing?ssl=require
 ```
 
 ## Persistence

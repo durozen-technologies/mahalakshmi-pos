@@ -28,10 +28,10 @@ class DatabaseConfigTests(unittest.TestCase):
         self.assertEqual(connect_args, {"ssl": "require"})
         self.assertNotIn("sslmode", url.query)
 
-    def test_prod_compose_default_requests_ssl_with_fallback(self) -> None:
+    def test_prod_compose_default_requires_ssl(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
 
-        self.assertIn("?ssl=prefer}", compose_path.read_text(encoding="utf-8"))
+        self.assertIn("?ssl=require}", compose_path.read_text(encoding="utf-8"))
 
     def test_prod_compose_requires_non_default_shop_password_secret(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
