@@ -45,6 +45,13 @@ class MigrationTests(unittest.TestCase):
 
         self.assertNotIn("ix_expense_entries_created_at", source)
 
+    def test_quantity_constraint_migration_guards_removed_shop_tamil_name(self) -> None:
+        migration = MIGRATION_VERSIONS_DIR / "d199bf838d3f_drop_inventory_movement_quantity_.py"
+        source = migration.read_text(encoding="utf-8")
+
+        self.assertIn('"tamil_name" in _column_names("shops")', source)
+        self.assertIn("ck_inventory_movements_quantity_positive", source)
+
 
 if __name__ == "__main__":
     unittest.main()
