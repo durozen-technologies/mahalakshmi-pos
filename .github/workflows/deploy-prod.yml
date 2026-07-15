@@ -199,6 +199,7 @@ jobs:
           RUSTFS_SECRET_KEY: ${{ secrets.RUSTFS_SECRET_KEY }}
           RUSTFS_SERVER_DOMAINS: ${{ secrets.RUSTFS_SERVER_DOMAINS }}
           BACKEND_SECRET_KEY: ${{ secrets.BACKEND_SECRET_KEY }}
+          BACKEND_SHOP_DEFAULT_PASSWORD: ${{ secrets.BACKEND_SHOP_DEFAULT_PASSWORD }}
           CADDY_ACME_EMAIL: ${{ secrets.CADDY_ACME_EMAIL }}
           BACKEND_RUSTFS_BUCKET_NAME: ${{ secrets.BACKEND_RUSTFS_BUCKET_NAME }}
           BACKEND_ALLOWED_HOSTS: '["${{ secrets.CADDY_PUBLIC_HOST }}","127.0.0.1","localhost","backend"]'
@@ -208,7 +209,7 @@ jobs:
           missing=()
           for key in CADDY_PUBLIC_HOST DOCKERHUB_USERNAME POSTGRES_PASSWORD \
             RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY RUSTFS_SERVER_DOMAINS \
-            BACKEND_SECRET_KEY CADDY_ACME_EMAIL; do
+            BACKEND_SECRET_KEY BACKEND_SHOP_DEFAULT_PASSWORD CADDY_ACME_EMAIL; do
             if [ -z "${!key}" ]; then
               missing+=("${key}")
             fi
@@ -249,6 +250,7 @@ jobs:
               "RUSTFS_SECRET_KEY": os.environ["RUSTFS_SECRET_KEY"],
               "RUSTFS_SERVER_DOMAINS": os.environ["RUSTFS_SERVER_DOMAINS"],
               "BACKEND_SECRET_KEY": os.environ["BACKEND_SECRET_KEY"],
+              "BACKEND_SHOP_DEFAULT_PASSWORD": os.environ["BACKEND_SHOP_DEFAULT_PASSWORD"],
               "BACKEND_PRODUCTION": "True",
               "BACKEND_ALLOWED_HOSTS": os.environ["BACKEND_ALLOWED_HOSTS"],
               "BACKEND_CORS_ORIGINS": os.environ["BACKEND_CORS_ORIGINS"],

@@ -28,6 +28,17 @@ class MigrationTests(unittest.TestCase):
                 f"{path.name} revision id is too long for alembic_version.version_num",
             )
 
+    def test_removed_master_data_revision_remains_as_compatibility_head(self) -> None:
+        revisions = {}
+        for path in sorted(MIGRATION_VERSIONS_DIR.glob("*.py")):
+            module = _load_migration_module(path)
+            revisions[getattr(module, "revision", "")] = getattr(module, "down_revision", None)
+
+        self.assertEqual(
+            revisions["0030_master_data_org_scope"],
+            "b4c5d6e7f8a9",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

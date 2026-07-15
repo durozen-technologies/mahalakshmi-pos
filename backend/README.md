@@ -104,6 +104,7 @@ Important backend defaults from [`app/core/config.py`](app/core/config.py):
 Production validation rules:
 
 - `SECRET_KEY` must be strong and at least 32 characters
+- `SHOP_DEFAULT_PASSWORD` must be changed from `ml123`
 - wildcard `ALLOWED_HOSTS` is rejected
 - wildcard CORS is collapsed to an empty list
 - RustFS settings must be supplied together if enabled

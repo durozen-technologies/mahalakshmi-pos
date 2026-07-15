@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import unittest
+# ruff: noqa: I001 - test.support must run before importing app modules.
+
 from pathlib import Path
+import unittest
 
 import test.support  # noqa: F401 - adds backend/ to sys.path
-
 from app.db.database import _build_engine_config
 
 
@@ -31,6 +32,26 @@ class DatabaseConfigTests(unittest.TestCase):
         compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
 
         self.assertIn("?ssl=prefer}", compose_path.read_text(encoding="utf-8"))
+
+    def test_prod_compose_requires_non_default_shop_password_secret(self) -> None:
+        compose_path = Path(__file__).resolve().parents[2] / "docker-compose.prod.yml"
+
+        self.assertIn(
+            "SHOP_DEFAULT_PASSWORD: ${BACKEND_SHOP_DEFAULT_PASSWORD:?Set BACKEND_SHOP_DEFAULT_PASSWORD}",
+            compose_path.read_text(encoding="utf-8"),
+        )
+
+    def test_deploy_workflow_writes_shop_password_secret(self) -> None:
+        workflow_path = (
+            Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy-prod.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "BACKEND_SHOP_DEFAULT_PASSWORD: ${{ secrets.BACKEND_SHOP_DEFAULT_PASSWORD }}",
+            workflow,
+        )
+        self.assertIn('"BACKEND_SHOP_DEFAULT_PASSWORD": os.environ["BACKEND_SHOP_DEFAULT_PASSWORD"]', workflow)
 
 
 if __name__ == "__main__":

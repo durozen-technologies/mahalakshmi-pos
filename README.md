@@ -357,6 +357,7 @@ Password: <POSTGRES_PASSWORD secret>
 | `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | Object storage |
 | `RUSTFS_SERVER_DOMAINS` | RustFS virtual-host domains, comma-separated (e.g. `16.112.68.20:9000,16.112.68.20:9001`). Console-only `:9001` values are expanded to `:9000` on deploy. Backend sends the `:9000` Host header while connecting to `rustfs:9000` internally. |
 | `BACKEND_SECRET_KEY` | 32+ char JWT secret |
+| `BACKEND_SHOP_DEFAULT_PASSWORD` | Non-default initial password for generated shop logins |
 | `BACKEND_RUSTFS_BUCKET_NAME` | Optional |
 
 There is **no** `BACKEND_ALLOWED_HOSTS` secret — CI generates it from `CADDY_PUBLIC_HOST`.
