@@ -52,6 +52,13 @@ class MigrationTests(unittest.TestCase):
         self.assertIn('"tamil_name" in _column_names("shops")', source)
         self.assertIn("ck_inventory_movements_quantity_positive", source)
 
+    def test_backdate_config_followup_does_not_recreate_policy_table(self) -> None:
+        migration = MIGRATION_VERSIONS_DIR / "acc38e8c9926_add_shop_backdating_config.py"
+        source = migration.read_text(encoding="utf-8")
+
+        self.assertNotIn("create_table", source)
+        self.assertIn("a3b8c4d5e6f7 already creates", source)
+
 
 if __name__ == "__main__":
     unittest.main()
