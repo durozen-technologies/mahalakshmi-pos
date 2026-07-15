@@ -195,8 +195,6 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
   const [mode, setMode] = useState<MovementMode>(InventoryMovementType.ADD);
   const [transferShopId, setTransferShopId] = useState<UUID | null>(null);
   const [quantity, setQuantity] = useState("");
-  const [driverName, setDriverName] = useState("");
-  const [vehicleNumber, setVehicleNumber] = useState("");
   const movementScrollRef = useRef<ScrollViewType>(null);
   const movementScrollOffsetRef = useRef(0);
   const movementQuantityFieldRef = useRef<View | null>(null);
@@ -497,8 +495,6 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     setMode(nextMode);
     setTransferShopId(null);
     setQuantity("");
-    setDriverName("");
-    setVehicleNumber("");
     setCategoryQuantities({});
     setMovementDate(toDateInputValue(new Date()));
     setMovementTime(currentTimeDraft());
@@ -517,8 +513,6 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     setSelectedItem(null);
     setTransferShopId(null);
     setQuantity("");
-    setDriverName("");
-    setVehicleNumber("");
     setCategoryQuantities({});
     setMovementCalendarOpen(false);
     setKeyboardInset(0);
@@ -620,14 +614,14 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
       splitTotal,
       hasValidTotal,
       canSave: mode === InventoryMovementType.ADD
-        ? hasValidTotal && Boolean(driverName.trim()) && vehicleNumber.trim().length >= 2
+        ? hasValidTotal
         : mode === "TRANSFER"
           ? hasValidTotal && withinAvailable && transferShopId !== null
           : useAutoTotal
             ? !hasInvalidSplit && splitTotal.greaterThan(0) && withinAvailable
             : hasValidTotal && withinAvailable,
     };
-  }, [categoryQuantities, mode, quantity, selectedItem, driverName, vehicleNumber, transferShopId]);
+  }, [categoryQuantities, mode, quantity, selectedItem, transferShopId]);
 
   async function saveMovement() {
     if (!selectedItem) {
@@ -660,22 +654,8 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
     try {
       let changedItem: InventoryItemStockRead;
       if (mode === InventoryMovementType.ADD) {
-        const normalizedDriverName = driverName.replace(/\s+/g, " ").trim();
-        const normalizedVehicleNumber = vehicleNumber.replace(/\s+/g, " ").trim().toUpperCase();
-        if (!normalizedDriverName || !normalizedVehicleNumber) {
-          Alert.alert(t("inventory.driverVehicleRequiredTitle" as any), t("inventory.driverVehicleRequiredMessage" as any));
-          setSaving(false);
-          return;
-        }
-        if (normalizedVehicleNumber.length < 2) {
-          Alert.alert(t("inventory.driverVehicleRequiredTitle" as any), t("inventory.vehicleNumberTooShort" as any));
-          setSaving(false);
-          return;
-        }
         const result = await addShopInventoryStock(selectedItem.id, {
           quantity: rawQuantity,
-          driver_name: normalizedDriverName,
-          vehicle_number: normalizedVehicleNumber,
           ...(occurredAt ? { occurred_at: occurredAt } : {}),
         });
         changedItem = result.item;
@@ -1156,32 +1136,6 @@ export function InventoryManagementScreen(_: InventoryManagementScreenProps) {
                           onFocus={() => focusMovementField(movementQuantityFieldRef.current)}
                           className={mode === InventoryMovementType.USE || mode === "TRANSFER" ? "text-center text-2xl font-bold" : undefined}
                         />
-                        {mode === InventoryMovementType.ADD ? (
-                          <View className="mt-4 gap-4">
-                            <TextField
-                              label={t("inventory.driverName" as any)}
-                              placeholder={t("inventory.driverNamePlaceholder" as any)}
-                              value={driverName}
-                              onChangeText={setDriverName}
-                              selectTextOnFocus={false}
-                              autoCorrect={false}
-                              importantForAutofill="no"
-                            />
-                            <TextField
-                              label={t("inventory.vehicleNumber" as any)}
-                              placeholder={t("inventory.vehicleNumberPlaceholder" as any)}
-                              value={vehicleNumber}
-                              onChangeText={setVehicleNumber}
-                              selectTextOnFocus={false}
-                              autoCorrect={false}
-                              autoComplete="off"
-                              importantForAutofill="no"
-                              maxLength={120}
-                              containerClassName="items-stretch"
-                              className="py-2"
-                            />
-                          </View>
-                        ) : null}
                         {mode === "TRANSFER" ? (
                           <View className="mt-4">
                             <TransferShopPicker

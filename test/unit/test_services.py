@@ -1632,6 +1632,43 @@ class ServiceUnitTests(BackendTestCase):
 
         self.run_async(scenario())
 
+    def test_inventory_add_stock_allows_missing_transport_details(self) -> None:
+        _actor, shop = self.run_async(self.harness.create_shop_user())
+
+        async def scenario() -> None:
+            with self.harness.session_factory() as session:
+                db = AsyncSessionAdapter(session)
+                current_shop = session.scalar(select(Shop).where(Shop.id == shop.id))
+                category = await create_inventory_category(
+                    db, InventoryCategoryCreate(name="Transport Optional")
+                )
+                item = await create_inventory_management_item(
+                    db,
+                    InventoryItemCreate(
+                        name="Optional Transport Stock",
+                        tamil_name="விருப்ப போக்குவரத்து சரக்கு",
+                        unit_type=UnitType.WEIGHT,
+                        base_unit=BaseUnit.KG,
+                        category_ids=[category.id],
+                    ),
+                )
+                await allocate_shop_inventory_items(db, current_shop, [item.id])
+
+                result = await add_shop_inventory_stock(
+                    db,
+                    current_shop,
+                    item.id,
+                    InventoryAddRequest(quantity=Decimal("3")),
+                )
+                page = await list_inventory_movements(db, shop_id=current_shop.id, item_id=item.id, limit=10)
+
+                self.assertIsNone(result.movement.driver_name)
+                self.assertIsNone(result.movement.vehicle_number)
+                self.assertIsNone(page.items[0].driver_name)
+                self.assertIsNone(page.items[0].vehicle_number)
+
+        self.run_async(scenario())
+
     def test_inventory_add_stock_persists_full_vehicle_number(self) -> None:
         _actor, shop = self.run_async(self.harness.create_shop_user())
         long_vehicle = "Ashok Leyland Dost TN-38-AZ-1234 Extra Long Vehicle Description"
@@ -1671,6 +1708,12 @@ class ServiceUnitTests(BackendTestCase):
                 self.assertEqual(page.items[0].vehicle_number, long_vehicle)
 
         self.run_async(scenario())
+
+    def test_inventory_add_request_allows_missing_transport_details(self) -> None:
+        payload = InventoryAddRequest(quantity=Decimal("3"))
+
+        self.assertIsNone(payload.driver_name)
+        self.assertIsNone(payload.vehicle_number)
 
     def test_inventory_add_request_rejects_single_character_vehicle_number(self) -> None:
         with self.assertRaises(ValidationError):

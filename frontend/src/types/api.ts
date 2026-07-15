@@ -250,8 +250,8 @@ export interface InventoryMovementPage {
 
 export interface InventoryAddRequest {
   quantity: string;
-  driver_name: string;
-  vehicle_number: string;
+  driver_name?: string | null;
+  vehicle_number?: string | null;
   occurred_at?: string | null;
 }
 

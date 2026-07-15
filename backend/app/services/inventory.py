@@ -1836,8 +1836,8 @@ async def add_shop_inventory_stock(
         inventory_item_id=item.id,
         movement_type=InventoryMovementType.ADD,
         quantity=quantity,
-        driver_name=payload.driver_name.strip(),
-        vehicle_number=payload.vehicle_number.strip(),
+        driver_name=payload.driver_name.strip() if payload.driver_name else None,
+        vehicle_number=payload.vehicle_number.strip() if payload.vehicle_number else None,
         occurred_at=occurred_at,
     )
     db.add(movement)

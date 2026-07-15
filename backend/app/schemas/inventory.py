@@ -198,8 +198,8 @@ class InventoryMovementPage(BaseModel):
 
 class InventoryAddRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
-    driver_name: str = Field(min_length=1, max_length=100)
-    vehicle_number: str = Field(min_length=2, max_length=120)
+    driver_name: str | None = Field(default=None, min_length=1, max_length=100)
+    vehicle_number: str | None = Field(default=None, min_length=2, max_length=120)
     occurred_at: datetime | None = None
 
     @field_validator("driver_name", "vehicle_number", mode="before")
