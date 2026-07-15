@@ -39,6 +39,12 @@ class MigrationTests(unittest.TestCase):
             "b4c5d6e7f8a9",
         )
 
+    def test_driver_vehicle_migration_does_not_repeat_de470_index_churn(self) -> None:
+        migration = MIGRATION_VERSIONS_DIR / "1fb8087fddba_add_driver_and_vehicle_to_inventory_.py"
+        source = migration.read_text(encoding="utf-8")
+
+        self.assertNotIn("ix_expense_entries_created_at", source)
+
 
 if __name__ == "__main__":
     unittest.main()
