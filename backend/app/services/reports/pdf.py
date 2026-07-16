@@ -272,7 +272,8 @@ def _fpdf_over_report_sheet_widths(
     )
 
 
-_REPORT_APP_DIR = Path(__file__).resolve().parent.parent
+# pdf.py lives at app/services/reports/ — parents[2] is the app package root
+_REPORT_APP_DIR = Path(__file__).resolve().parents[2]
 _REPORT_FONTS_DIR = _REPORT_APP_DIR / "fonts"
 _REPORT_ASSET_FONTS_DIR = _REPORT_APP_DIR / "assets" / "fonts"
 
